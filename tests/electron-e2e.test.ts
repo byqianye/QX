@@ -85,7 +85,10 @@ describe("packaged Electron E2E flow", () => {
     directories.push(directory);
     const config = JSON.stringify({
       spider: "fixture.jar",
-      sites: [{ key: "douban", api: "csp_Douban", ext: "fixture" }],
+      sites: [
+        { key: "douban", api: "csp_Douban", ext: "fixture" },
+        { key: "douban-alt", api: "csp_Douban", ext: "fixture" },
+      ],
     });
     const playbackConfig = JSON.stringify({
       spider: "fixture.jar",
@@ -103,21 +106,35 @@ describe("packaged Electron E2E flow", () => {
     const uiServer = new DesktopSpiderUiServer({
       importer,
       playbackProxyOrigins: ["http://127.0.0.1:43123"],
-      parserCandidates: [{
-        id: "fixture-parser",
-        name: "Fixture parser",
-        type: "json",
-        endpoint: "https://parser.example.invalid/resolve",
-        enabled: true,
-        priority: 1,
-        timeout: 100,
-      }],
+      parserCandidates: [
+        {
+          id: "fixture-parser-first",
+          name: "Fixture parser first",
+          type: "json",
+          endpoint: "https://parser.example.invalid/first",
+          enabled: true,
+          priority: 1,
+          timeout: 100,
+        },
+        {
+          id: "fixture-parser-second",
+          name: "Fixture parser second",
+          type: "json",
+          endpoint: "https://parser.example.invalid/second",
+          enabled: true,
+          priority: 2,
+          timeout: 100,
+        },
+      ],
       parserAllowedOrigins: ["http://127.0.0.1:43123", "https://parser.example.invalid"],
-      parserFetch: async () => new Response(JSON.stringify({
-        parse: 0,
-        url: "http://127.0.0.1:43123/media/fixture.m3u8",
-        headers: {},
-      }), { headers: { "content-type": "application/json" } }),
+      parserFetch: async (input) => String(input).endsWith("/first")
+        ? new Response("fixture parser failed", { status: 503 })
+        : new Response(JSON.stringify({
+          parse: 0,
+          url: "http://127.0.0.1:43123/media/fixture.m3u8",
+          headers: {},
+        }), { headers: { "content-type": "application/json" } }),
+      playbackFallbackMode: "auto",
     });
     resources.push(uiServer);
     await uiServer.start();
@@ -135,6 +152,12 @@ describe("packaged Electron E2E flow", () => {
       waitForSidecarExit: async () => true,
       verifySubtitleTracks: true,
       verifyPlaybackHealth: true,
+      verifyParserFallback: true,
+      verifyPlaybackFallback: true,
+      verifyAggregateSearch: true,
+      verifyFakeMpv: true,
+      fakeMpv: async () => true,
+      resourceCleanup: async () => ({ proxySessions: 0, snifferSessions: 0 }),
     });
 
     expect(result).toMatchObject({
@@ -153,6 +176,12 @@ describe("packaged Electron E2E flow", () => {
         noBackgroundPlayer: true,
         subtitleTracks: true,
         playbackHealth: true,
+        aggregateSearch: true,
+        parserFallback: true,
+        playbackFallback: true,
+        fakeMpvExit: true,
+        proxyCleanup: true,
+        snifferCleanup: true,
       },
     });
   });
@@ -228,8 +257,13 @@ class SessionFixture implements DesktopSpiderSessionPort {
   public async detailContent(ids: string[]): Promise<SpiderResponse> {
     const item: Record<string, unknown> = { vod_id: ids[0], vod_name: "Fixture Detail" };
     if (this.api === "csp_PlayableFixture") {
-      item.vod_play_from = "主线$$$备用线";
-      item.vod_play_url = "第一集$direct-hls#第二集$headered$$$电影$direct-mp4";
+      if (ids[0] === "fixture:fallback") {
+        item.vod_play_from = "故障线路$$$备用线路";
+        item.vod_play_url = "第一集$fallback-fail$$$第一集$fallback-good";
+      } else {
+        item.vod_play_from = "主线$$$备用线";
+        item.vod_play_url = "第一集$direct-hls#第二集$headered$$$电影$direct-mp4";
+      }
     }
     return ok({ list: [item] });
   }
@@ -257,6 +291,26 @@ class SessionFixture implements DesktopSpiderSessionPort {
       } as const;
       this.view.playback = playback;
       return ok({ parse: 0, url: playback.url, header: playback.headers, subtitles: fixtureSubtitles() });
+    }
+    if (id === "fallback-fail") {
+      return {
+        id: "fixture",
+        ok: false,
+        error: { code: "JVM_SPIDER_ERROR", message: "fixture first line failed" },
+      };
+    }
+    if (id === "fallback-good") {
+      const url = "http://127.0.0.1:43123/media/fixture.m3u8";
+      this.view.playback = {
+        available: true,
+        label: "Fallback fixture",
+        message: "fallback line succeeded",
+        parse: 0,
+        url,
+        headers: {},
+        subtitles: fixtureSubtitles(),
+      };
+      return ok({ parse: 0, url, header: {}, subtitles: fixtureSubtitles() });
     }
     if (id === "parse-one") {
       this.view.playback = {

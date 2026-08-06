@@ -617,9 +617,48 @@ checkpoint: complete G47 subtitle tracks
 checkpoint: complete G48 stream health fallback
 ```
 
-## G49（未开始）
+## G49（已完成）
 
-播放增强综合验收。
+### 目标
+
+完成播放增强综合验收，建立完全本地 fixture，覆盖 parse=1、解析回退、Referer、LocalProxy、主/子 m3u8、Rules、sniff 回退、字幕、线路回退、调试时间线和关闭清理。
+
+### 状态
+
+已完成。packaged E2E 首次启动与重启均通过；所有媒体、解析器、Douban 兼容接口和 fake-mpv 均为本地受控 fixture。线路回退使用有界候选和总超时，并在显式回退尝试前清除来源健康冷却，避免健康熔断挡住已授权的备用线路。
+
+阶段更新：阶段 2：播放增强闭环完成。
+
+### 验收范围
+
+- 导入、信任、多站点、聚合搜索、详情、线路、选集；
+- parse=1、第一解析器失败/第二解析器成功、sniff 备用路径；
+- Referer、LocalProxy、Rules、字幕、HLS 主/子清单；
+- 第一线路失败、第二线路成功、独立窗口、调试面板和错误恢复；
+- 无外部浏览器、无后台播放器、sidecar/Proxy/sniff/fake-mpv 清理。
+
+### 安全边界
+
+parse 和 Proxy 都不是开放代理；sniff 不提供 Node、文件系统或共享 Cookie；mpv 使用 `shell: false`；字幕不把文本作为 HTML 注入；Rules 绑定来源/会话/路径；回退有最大尝试次数、去重和总超时。
+
+### 验证结果
+
+- `npm run typecheck`：通过；
+- `npm test`：43 个测试文件、237 个测试通过；
+- `npm run electron:build`：通过，使用既有 development-fallback JDK；
+- `npm run electron:e2e:package`：首次启动和重启均通过，解析回退、sniff 回退、线路回退、Rules、字幕、聚合搜索、fake-mpv 和资源清理均为 true；
+- 真实 mpv smoke：仍受外部 `QX_MPV_PATH` 环境控制，本 Goal 只验证 fake-mpv 合同，不宣称 mpv 随包；
+- 未 push。
+
+### 文档
+
+- `docs/spike-49-playback-enhancement-acceptance.md`
+
+### checkpoint
+
+```text
+checkpoint: complete G49 playback enhancement acceptance
+```
 
 DEX-1 ~ DEX-5（实验支线）
 

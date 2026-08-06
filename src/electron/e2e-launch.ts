@@ -10,7 +10,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
 
-import { defaultDoubanEndpoint } from "../spikes/douban-probe.js";
 import {
   resolvePackagedExecutable,
   runPackagedExecutable,
@@ -18,37 +17,38 @@ import {
 } from "./packaged-process.js";
 import { createMediaFixtureServer } from "./media-fixture.js";
 
-const config = JSON.stringify({
-  spider: "csp_Douban.jvm.jar",
-  sites: [{
-    key: "douban",
-    name: "Douban",
-    type: 3,
-    api: "csp_Douban",
-    ext: process.env.QX_DOUBAN_ENDPOINT ?? defaultDoubanEndpoint,
-  }],
-});
 const workDirectory = mkdtempSync(join(tmpdir(), "qx-packaged-e2e-"));
 const configFile = join(workDirectory, "config.json");
 const userData = join(workDirectory, "user-data");
 const firstResult = join(workDirectory, "first-result.json");
 const secondResult = join(workDirectory, "second-result.json");
-writeFileSync(configFile, config, "utf8");
+let config = "";
 
 let configServer: Server | undefined;
 const mediaFixture = createMediaFixtureServer();
 
 function parserEnvironment(): Record<string, string> {
   return {
-    QX_PARSE_CANDIDATES_JSON: JSON.stringify([{
-      id: "fixture-parser",
-      name: "Fixture parser",
-      type: "json",
-      endpoint: mediaFixture.parserUrl,
-      enabled: true,
-      priority: 1,
-      timeout: 5_000,
-    }]),
+    QX_PARSE_CANDIDATES_JSON: JSON.stringify([
+      {
+        id: "fixture-parser-first",
+        name: "Fixture parser first",
+        type: "json",
+        endpoint: mediaFixture.parserFailureUrl,
+        enabled: true,
+        priority: 1,
+        timeout: 5_000,
+      },
+      {
+        id: "fixture-parser-second",
+        name: "Fixture parser second",
+        type: "json",
+        endpoint: mediaFixture.parserUrl,
+        enabled: true,
+        priority: 2,
+        timeout: 5_000,
+      },
+    ]),
     QX_PARSE_ALLOWED_ORIGINS: mediaFixture.baseUrl,
   };
 }
@@ -71,6 +71,26 @@ function playbackRuleEnvironment(configJson: string): Record<string, string> {
 
 try {
   await mediaFixture.start();
+  config = JSON.stringify({
+    spider: "csp_Douban.jvm.jar",
+    sites: [
+      {
+        key: "douban",
+        name: "Local Douban fixture",
+        type: 3,
+        api: "csp_Douban",
+        ext: mediaFixture.doubanEndpoint,
+      },
+      {
+        key: "douban-alt",
+        name: "Local Douban fixture 2",
+        type: 3,
+        api: "csp_Douban",
+        ext: mediaFixture.doubanEndpoint,
+      },
+    ],
+  });
+  writeFileSync(configFile, config, "utf8");
   const playbackConfig = JSON.stringify({
     spider: "csp_PlayableFixture.jvm.jar",
     sites: [{
@@ -93,6 +113,10 @@ try {
     QX_E2E_USER_DATA: userData,
     QX_E2E_PLAYBACK_CONFIG: playbackConfig,
     QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,
+    QX_PLAYBACK_FALLBACK_MODE: "auto",
+    QX_E2E_HLS_MASTER_URL: mediaFixture.hlsMasterUrl,
+    QX_E2E_HLS_CHILD_URL: mediaFixture.hlsChildUrl,
+    QX_E2E_FAKE_MPV: "1",
     QX_SNIFF_ENABLED: "1",
     QX_E2E_SNIFF_URL: mediaFixture.sniffUrl,
     ...parserEnvironment(),
@@ -112,6 +136,10 @@ try {
     QX_E2E_USER_DATA: userData,
     QX_E2E_PLAYBACK_CONFIG: playbackConfig,
     QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,
+    QX_PLAYBACK_FALLBACK_MODE: "auto",
+    QX_E2E_HLS_MASTER_URL: mediaFixture.hlsMasterUrl,
+    QX_E2E_HLS_CHILD_URL: mediaFixture.hlsChildUrl,
+    QX_E2E_FAKE_MPV: "1",
     QX_SNIFF_ENABLED: "1",
     QX_E2E_SNIFF_URL: mediaFixture.sniffUrl,
     ...parserEnvironment(),

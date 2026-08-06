@@ -23,10 +23,14 @@ export interface MediaFixtureServer {
   readonly baseUrl: string;
   readonly mp4Url: string;
   readonly hlsUrl: string;
+  readonly hlsMasterUrl: string;
+  readonly hlsChildUrl: string;
   readonly protectedHlsUrl: string;
   readonly playerUrl: string;
   readonly sniffUrl: string;
   readonly parserUrl: string;
+  readonly parserFailureUrl: string;
+  readonly doubanEndpoint: string;
   readonly subtitleVttUrl: string;
   readonly subtitleSrtUrl: string;
   readonly subtitleAssUrl: string;
@@ -49,6 +53,12 @@ export function createMediaFixtureServer(host = "127.0.0.1"): MediaFixtureServer
     get hlsUrl() {
       return `${resource.baseUrl}/media/fixture.m3u8`;
     },
+    get hlsMasterUrl() {
+      return `${resource.baseUrl}/media/master.m3u8`;
+    },
+    get hlsChildUrl() {
+      return `${resource.baseUrl}/media/fixture.m3u8`;
+    },
     get protectedHlsUrl() {
       return `${resource.baseUrl}/protected/fixture.m3u8`;
     },
@@ -60,6 +70,12 @@ export function createMediaFixtureServer(host = "127.0.0.1"): MediaFixtureServer
     },
     get parserUrl() {
       return `${resource.baseUrl}/parser/resolve`;
+    },
+    get parserFailureUrl() {
+      return `${resource.baseUrl}/parser/fail`;
+    },
+    get doubanEndpoint() {
+      return `${resource.baseUrl}/api/v2/subject_collection/subject_real_time_hotest/items`;
     },
     get subtitleVttUrl() {
       return `${resource.baseUrl}/subtitles/fixture.vtt`;
@@ -113,6 +129,11 @@ async function handleRequest(
     return;
   }
 
+  if (url.pathname === "/media/master.m3u8") {
+    serveMasterPlaylist(request, response);
+    return;
+  }
+
   if (url.pathname === "/protected/fixture.m3u8") {
     if (!hasProtectedHeaders(request)) {
       response.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
@@ -126,6 +147,11 @@ async function handleRequest(
   if (url.pathname === "/player") {
     const id = url.searchParams.get("id");
     const headered = id === "headered";
+    if (id === "fallback-fail") {
+      response.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
+      response.end("fixture first line failed");
+      return;
+    }
     if (id === "parse-one") {
       const body = Buffer.from(JSON.stringify({
         parse: 1,
@@ -140,9 +166,23 @@ async function handleRequest(
       else response.end(body);
       return;
     }
+    if (id === "parse-sniff") {
+      const body = Buffer.from(JSON.stringify({
+        parse: 1,
+        url: fixture.sniffUrl,
+        header: { "X-QX-Parse-Scenario": "sniff" },
+      }), "utf8");
+      response.writeHead(200, {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": body.length,
+      });
+      if (request.method === "HEAD") response.end();
+      else response.end(body);
+      return;
+    }
     const mediaUrl = id === "headered"
       ? fixture.protectedHlsUrl
-      : id === "direct-hls" ? fixture.hlsUrl : fixture.mp4Url;
+      : id === "direct-hls" || id === "fallback-good" ? fixture.hlsUrl : fixture.mp4Url;
     const body = Buffer.from(JSON.stringify({
       parse: 0,
       url: mediaUrl,
@@ -260,6 +300,11 @@ async function handleRequest(
   }
 
   if (url.pathname === "/parser/resolve") {
+    if (request.headers["x-qx-parse-scenario"] === "sniff") {
+      response.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
+      response.end("fixture parser intentionally failed for sniff fallback");
+      return;
+    }
     const body = Buffer.from(JSON.stringify({
       parse: 0,
       url: fixture.hlsUrl,
@@ -271,6 +316,28 @@ async function handleRequest(
     });
     if (request.method === "HEAD") response.end();
     else response.end(body);
+    return;
+  }
+
+  if (url.pathname === "/parser/fail") {
+    response.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
+    response.end("fixture parser first candidate failed");
+    return;
+  }
+
+  if (url.pathname === "/subject_search") {
+    serveDoubanSearch(response, request);
+    return;
+  }
+
+  const doubanDetail = /^\/api\/v2\/(movie|tv)\/([^/]+)$/.exec(url.pathname);
+  if (doubanDetail) {
+    serveDoubanDetail(request, response, doubanDetail[1] === "movie", doubanDetail[2] ?? "");
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/v2/")) {
+    serveDoubanCollection(request, response, url.pathname.includes("subject_collection"));
     return;
   }
 
@@ -365,6 +432,104 @@ function servePlaylist(request: IncomingMessage, response: ServerResponse, prefi
     "content-length": body.length,
     "cache-control": "no-store",
     "access-control-allow-origin": "*",
+  });
+  if (request.method === "HEAD") response.end();
+  else response.end(body);
+}
+
+function serveMasterPlaylist(request: IncomingMessage, response: ServerResponse): void {
+  serveText(request, response, [
+    "#EXTM3U",
+    "#EXT-X-VERSION:7",
+    "#EXT-X-STREAM-INF:BANDWIDTH=1280000,RESOLUTION=640x360",
+    "/media/fixture.m3u8",
+    "",
+  ].join("\n"), "application/vnd.apple.mpegurl; charset=utf-8");
+}
+
+function serveDoubanSearch(response: ServerResponse, request: IncomingMessage): void {
+  const body = Buffer.from([
+    "<!doctype html><html><script>",
+    `window.__DATA__ = ${JSON.stringify({
+      count: 1,
+      start: Number(new URL(request.url ?? "/", "http://127.0.0.1").searchParams.get("start") ?? "0"),
+      text: "fixture",
+      total: 1,
+      items: [{
+        id: "36246195",
+        title: "Local Douban Fixture",
+        cover_url: "https://img.example.invalid/local-fixture.jpg",
+        rating: { value: 8.2, rating_info: "" },
+        abstract: "local aggregate search fixture",
+      }],
+    })};`,
+    "</script></html>",
+  ].join(""), "utf8");
+  response.writeHead(200, {
+    "content-type": "text/html; charset=utf-8",
+    "content-length": body.length,
+  });
+  if (request.method === "HEAD") response.end();
+  else response.end(body);
+}
+
+function serveDoubanDetail(
+  request: IncomingMessage,
+  response: ServerResponse,
+  isMovie: boolean,
+  id: string,
+): void {
+  if (!isMovie || id !== "36246195") {
+    response.writeHead(404, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({ error: "fixture detail not found" }));
+    return;
+  }
+  serveJson(request, response, {
+    id,
+    title: "Local Douban Fixture",
+    cover_url: "https://img.example.invalid/local-fixture.jpg",
+    rating: { value: 8.2 },
+    genres: ["Fixture"],
+    countries: ["CN"],
+    year: "2026",
+    directors: [{ name: "Fixture Director" }],
+    actors: [{ name: "Fixture Actor" }],
+    intro: "Local-only packaged E2E detail fixture",
+    pubdate: ["2026-01-01"],
+  });
+}
+
+function serveDoubanCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  collection: boolean,
+): void {
+  serveJson(request, response, collection
+    ? {
+        subject_collection_items: [{
+          id: "36246195",
+          title: "Local Douban Fixture",
+          pic: { normal: "https://img.example.invalid/local-fixture.jpg" },
+          rating: { value: 8.2 },
+        }],
+        total: 1,
+      }
+    : {
+        items: [{
+          id: "36246195",
+          title: "Local Douban Fixture",
+          pic: { normal: "https://img.example.invalid/local-fixture.jpg" },
+          rating: { value: 8.2 },
+        }],
+        total: 1,
+      });
+}
+
+function serveJson(request: IncomingMessage, response: ServerResponse, value: unknown): void {
+  const body = Buffer.from(JSON.stringify(value), "utf8");
+  response.writeHead(200, {
+    "content-type": "application/json; charset=utf-8",
+    "content-length": body.length,
   });
   if (request.method === "HEAD") response.end();
   else response.end(body);

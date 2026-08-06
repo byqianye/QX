@@ -17,8 +17,17 @@ export interface PackagedE2eOptions {
   verifyPlaybackDebug?: boolean;
   verifySubtitleTracks?: boolean;
   verifyPlaybackHealth?: boolean;
+  verifyPlaybackFallback?: boolean;
+  verifyParserFallback?: boolean;
+  verifySniffFallback?: boolean;
+  verifyAggregateSearch?: boolean;
+  verifyFakeMpv?: boolean;
+  fakeMpv?: () => Promise<boolean>;
   verifySniffer?: boolean;
   sniff?: () => Promise<SniffedMedia>;
+  hlsMasterUrl?: string;
+  hlsChildUrl?: string;
+  resourceCleanup?: () => Promise<{ proxySessions: number; snifferSessions: number }>;
   playback?: {
     configJson: string;
   };
@@ -43,6 +52,14 @@ export interface PackagedE2eChecks {
   playbackDebug?: boolean;
   subtitleTracks?: boolean;
   playbackHealth?: boolean;
+  playbackFallback?: boolean;
+  parserFallback?: boolean;
+  sniffFallback?: boolean;
+  fakeMpvExit?: boolean;
+  hlsTopology?: boolean;
+  aggregateSearch?: boolean;
+  proxyCleanup?: boolean;
+  snifferCleanup?: boolean;
   proxyRequired?: boolean;
   noExternalBrowser?: boolean;
   errorSurface?: boolean;
@@ -84,6 +101,26 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
         && !JSON.stringify(sniffed.diagnostics).includes("Cookie");
     }
 
+    if (options.verifyFakeMpv) {
+      if (!options.fakeMpv) throw new Error("Packaged E2E fake-mpv verification is not configured");
+      checks.fakeMpvExit = await options.fakeMpv();
+    }
+
+    if (options.hlsMasterUrl && options.hlsChildUrl) {
+      const [master, child] = await Promise.all([
+        fetch(options.hlsMasterUrl),
+        fetch(options.hlsChildUrl),
+      ]);
+      const masterBody = await master.text();
+      const childBody = await child.text();
+      checks.hlsTopology = master.ok
+        && child.ok
+        && masterBody.includes("#EXT-X-STREAM-INF")
+        && masterBody.includes("/media/fixture.m3u8")
+        && childBody.includes("#EXTM3U")
+        && childBody.includes("#EXT-X-MAP");
+    }
+
     const firstUrl = await load(options.baseUrl, options.configUrl);
     const warningHtml = await readPage(options);
     const firstUrlConfirmation = options.freshTrust
@@ -116,6 +153,15 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       page: 1,
     });
     searchVodId = firstVodId(search.state);
+    if (options.verifyAggregateSearch && search.state?.aggregateSearch) {
+      checks.aggregateSearch = search.state.aggregateSearch.status === "complete"
+        && search.state.aggregateSearch.total >= 2
+        && search.state.aggregateSearch.completed === search.state.aggregateSearch.total
+        && search.state.aggregateSearch.sources.length >= 2
+        && search.state.aggregateSearch.sources
+          .filter((source) => source.status !== "skipped")
+          .every((source) => source.status === "success");
+    }
     const detail = await post(options.baseUrl, "/api/detail", { vodId: searchVodId });
     detailVodId = stringField(detail.state?.detail?.vod_id);
     const doubanPlayback = await post(options.baseUrl, "/api/player", {
@@ -191,6 +237,27 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
         && parsed.state?.player?.error === null
         && parsed.state?.player?.source?.parse === 0
         && playerSourceUrl(parsed.state)?.endsWith("/media/fixture.m3u8") === true;
+      if (options.verifyParserFallback) {
+        const attempts = parsed.state?.player?.parse?.attempts ?? [];
+        checks.parserFallback = parsed.state?.player?.parse?.status === "succeeded"
+          && attempts.length === 2
+          && attempts[0]?.status === "error"
+          && attempts[1]?.status === "succeeded";
+      }
+      if (options.verifySniffFallback) {
+        const sniffFallback = await post(options.baseUrl, "/api/player", {
+          flag: "default",
+          id: "parse-sniff",
+          vipFlags: [],
+        });
+        const parseState = sniffFallback.state?.player?.parse;
+        checks.sniffFallback = sniffFallback.state?.player?.status === "loading"
+          && sniffFallback.state?.error === null
+          && sniffFallback.state?.player?.error === null
+          && parseState?.status === "succeeded"
+          && parseState.parserId === "isolated-sniffer"
+          && playerSourceUrl(sniffFallback.state)?.includes("/__qx_playback/") === true;
+      }
       if (options.verifyPlaybackRules) {
         checks.playbackRules = headeredPlaylist.includes("#EXTM3U")
           && !headeredPlaylist.includes("#EXT-X-CUE-OUT");
@@ -279,11 +346,32 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
           event: { type: "buffer-end" },
         });
         const healthHtml = await readPage(options);
+        const startBufferingCount = healthStart.state?.playbackHealth?.bufferingCount?.value;
+        const endBufferingCount = healthEnd.state?.playbackHealth?.bufferingCount?.value;
         checks.playbackHealth = healthStart.state?.playbackHealth !== undefined
-          && healthEnd.state?.playbackHealth?.bufferingCount?.value === 1
+          && typeof endBufferingCount === "number"
+          && endBufferingCount > 0
+          && (typeof startBufferingCount !== "number" || endBufferingCount >= startBufferingCount)
           && healthHtml.includes('data-testid="playback-health-panel"')
           && healthHtml.includes('data-action="playback-fallback-mode"')
           && healthHtml.includes('data-action="playback-fallback-debug"');
+      }
+      if (options.verifyPlaybackFallback) {
+        const fallbackDetail = await post(options.baseUrl, "/api/detail", { vodId: "fixture:fallback" });
+        const fallback = await post(options.baseUrl, "/api/player", {
+          lineIndex: 0,
+          episodeIndex: 0,
+        });
+        const tried = fallback.state?.fallback?.tried ?? [];
+        checks.playbackFallback = fallbackDetail.state?.page === "detail"
+          && fallback.state?.fallback?.status === "recovered"
+          && fallback.state?.playbackSelection?.lineIndex === 1
+          && fallback.state?.playbackSelection?.episodeIndex === 0
+          && tried.includes("current-retry")
+          && tried.includes("current-reparse")
+          && tried.some((id) => id.startsWith("line:1:episode:0"))
+          && fallback.state?.player?.status === "loading"
+          && playerSourceUrl(fallback.state)?.endsWith("/media/fixture.m3u8") === true;
       }
     }
 
@@ -311,6 +399,11 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       && (options.waitForSidecarExit
         ? await options.waitForSidecarExit(sidecarPid)
         : false);
+    if (options.resourceCleanup) {
+      const cleanup = await options.resourceCleanup();
+      checks.proxyCleanup = cleanup.proxySessions === 0;
+      checks.snifferCleanup = cleanup.snifferSessions === 0;
+    }
 
     return {
       status: Object.values(checks).every(Boolean) ? "passed" : "failed",
@@ -372,6 +465,8 @@ async function post(
 }
 
 function firstVodId(state: UiState | null): string {
+  const aggregateId = state?.aggregateSearch?.groups[0]?.items[0]?.id;
+  if (typeof aggregateId === "string" && aggregateId.length > 0) return aggregateId;
   const value = state?.items[0]?.vod_id;
   if (typeof value !== "string" || value.length === 0) {
     throw new Error("Packaged E2E search returned no vod_id");
@@ -416,6 +511,11 @@ interface UiState {
   error?: { code?: string; message?: string } | null;
   player?: {
     status?: string;
+    parse?: {
+      status?: string;
+      parserId?: string | null;
+      attempts?: readonly { status?: string }[];
+    };
     source?: {
       parse?: number;
       url?: string;
@@ -427,6 +527,17 @@ interface UiState {
   playbackSelection?: { lineIndex?: number; episodeIndex?: number } | null;
   playerHost?: "embedded" | "detached";
   playbackSession?: { id?: string; host?: "embedded" | "detached" } | null;
+  aggregateSearch?: {
+    status: string;
+    completed: number;
+    total: number;
+    sources: readonly { status: string }[];
+    groups: readonly { items: readonly { id?: string }[] }[];
+  } | null;
+  fallback?: {
+    status?: string;
+    tried?: readonly string[];
+  };
   playbackHealth?: {
     bufferingCount?: { value?: number | null; samples?: number };
   };

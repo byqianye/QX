@@ -48,7 +48,7 @@ import {
   type ParseUiState,
 } from "./parse-chain.js";
 import type { PlaybackRule } from "./playback-rules.js";
-import type { IsolatedSniffer } from "../electron/isolated-sniffer.js";
+import { sanitizeSnifferHeaders, type IsolatedSniffer } from "../electron/isolated-sniffer.js";
 import { isRemoteSubtitleTrack, type SubtitleTrack } from "../subtitles.js";
 import {
   PlaybackFallbackCoordinator,
@@ -104,6 +104,7 @@ export interface DesktopSpiderSessionPort {
     vipFlags?: string[],
     timeoutMs?: number,
   ): Promise<SpiderResponse>;
+  retrySourceHealth?(): void;
   stopPlayback?(): Promise<void>;
   destroy(): Promise<void>;
 }
@@ -266,6 +267,10 @@ export class DesktopSpiderUiController {
       playbackHealth: this.publicPlaybackHealth(),
       fallback: this.fallbackCoordinator.state,
     };
+  }
+
+  public get playbackProxySessionCount(): number {
+    return this.playbackProxy.activeSessionCount;
   }
 
   public confirmImport(): DesktopSpiderUiState {
@@ -667,6 +672,7 @@ export class DesktopSpiderUiController {
       this.fallbackCoordinator.stop("回退线路不存在");
       return false;
     }
+    this.session.retrySourceHealth?.();
     const nextState = await this.runPlayerAttempt(nextRequest, true);
     return nextState.player.source !== null && nextState.player.status !== "error";
   }
@@ -887,7 +893,7 @@ export class DesktopSpiderUiController {
             sourceId: this.session.view.source,
             playbackSessionId,
             initialUrl: playback.url,
-            headers: playback.headers,
+            headers: sanitizeSnifferHeaders(playback.headers),
             allowedOrigins: [
               ...this.parserAllowedOrigins,
               ...(mediaOrigin ? [mediaOrigin] : []),
@@ -902,7 +908,7 @@ export class DesktopSpiderUiController {
           resolved = {
             parse: 0,
             url: sniffed.url,
-            headers: { ...playback.headers, ...sniffed.headers },
+            headers: sanitizeSnifferHeaders(playback.headers, sniffed.headers),
           };
         } catch (snifferError) {
           const snifferCode = isRecord(snifferError) && typeof snifferError.code === "string"
@@ -1089,6 +1095,18 @@ export class DesktopSpiderUiServer {
   public get url(): string {
     if (!this.boundUrl) throw new Error("Desktop Spider UI server is not running");
     return this.boundUrl;
+  }
+
+  public get resourceCounts(): { playbackProxySessions: number; snifferSessions: number } {
+    const controllers = this.importer
+      ? [...this.importedUiBySession.values()]
+      : this.directUi
+        ? [this.directUi]
+        : [];
+    return {
+      playbackProxySessions: controllers.reduce((total, ui) => total + ui.playbackProxySessionCount, 0),
+      snifferSessions: this.sniffer?.activeSessionCount ?? 0,
+    };
   }
 
   public attachPlayerHost(): DesktopSpiderUiState | null {

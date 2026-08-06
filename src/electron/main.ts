@@ -24,6 +24,7 @@ import {
   runPackagedE2e,
   type PackagedE2eResult,
 } from "./e2e-runner.js";
+import { runFakeMpvExitProbe } from "./fake-mpv-probe.js";
 import { resolveElectronRuntime } from "./runtime.js";
 import { DesktopShellRuntime } from "./shell-runtime.js";
 import {
@@ -575,6 +576,10 @@ async function runE2e(baseUrl: string): Promise<void> {
       },
       getSidecarPid: () => lastClient?.pid ?? null,
       waitForSidecarExit: waitForProcessExit,
+      resourceCleanup: async () => ({
+        proxySessions: uiServer?.resourceCounts.playbackProxySessions ?? 0,
+        snifferSessions: uiServer?.resourceCounts.snifferSessions ?? isolatedSniffer?.activeSessionCount ?? 0,
+      }),
       reloadWindow: async () => {
         if (!mainWindow || mainWindow.isDestroyed()) throw new Error("Main window is unavailable for playback probe");
         await mainWindow.loadURL(baseUrl);
@@ -609,6 +614,14 @@ async function runE2e(baseUrl: string): Promise<void> {
       verifyPlaybackDebug: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifySubtitleTracks: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifyPlaybackHealth: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
+      verifyPlaybackFallback: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
+      verifyParserFallback: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
+      verifySniffFallback: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG) && ISOLATED_SNIFFER_ENABLED,
+      verifyAggregateSearch: true,
+      verifyFakeMpv: process.env.QX_E2E_FAKE_MPV === "1",
+      ...(process.env.QX_E2E_FAKE_MPV === "1" ? { fakeMpv: runFakeMpvExitProbe } : {}),
+      ...(process.env.QX_E2E_HLS_MASTER_URL ? { hlsMasterUrl: process.env.QX_E2E_HLS_MASTER_URL } : {}),
+      ...(process.env.QX_E2E_HLS_CHILD_URL ? { hlsChildUrl: process.env.QX_E2E_HLS_CHILD_URL } : {}),
       verifySniffer: ISOLATED_SNIFFER_ENABLED,
       ...(ISOLATED_SNIFFER_ENABLED
         ? {

@@ -175,6 +175,10 @@ export class PlaybackProxyServer {
     return this.boundUrl;
   }
 
+  public get activeSessionCount(): number {
+    return this.sessions.size;
+  }
+
   public async start(): Promise<void> {
     if (this.server) return;
     const server = createServer((request, response) => {

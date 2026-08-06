@@ -309,6 +309,10 @@ export class DesktopSpiderSession implements MediaSource {
     await this.client?.stopPlayback?.();
   }
 
+  public retrySourceHealth(): void {
+    if (this.activeSiteKey) this.options.health?.retry(this.activeSiteKey);
+  }
+
   public async init(context: SourceInitContext): Promise<void> {
     const siteKey = context.siteKey ?? firstSiteKey(this.options.config);
     if (!siteKey) throw new MediaSourceError("SPIDER_SITE_NOT_FOUND", "Spider site key is required");

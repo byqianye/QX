@@ -142,6 +142,10 @@ jvmDescribe("JVM-native playerContent vertical slice", () => {
 
       expect(response).toMatchObject({ ok: false, error: { code: "JVM_SPIDER_ERROR" } });
       expect(sidecar.isRunning).toBe(true);
+      await expect(sidecar.playerContent("default", "after-error", [])).resolves.toMatchObject({
+        ok: true,
+        result: { url: "https://media.example.invalid/fixture.m3u8" },
+      });
     } finally {
       await sidecar.destroy();
     }

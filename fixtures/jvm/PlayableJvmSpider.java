@@ -85,8 +85,13 @@ public final class PlayableJvmSpider implements Spider {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("vod_id", id);
         item.put("vod_name", "Playable Fixture");
-        item.put("vod_play_from", "主线$$$备用线");
-        item.put("vod_play_url", "第一集$direct-hls#第二集$headered$$$电影$direct-mp4");
+        if ("fixture:fallback".equals(id)) {
+            item.put("vod_play_from", "故障线路$$$备用线路");
+            item.put("vod_play_url", "第一集$fallback-fail$$$第一集$fallback-good");
+        } else {
+            item.put("vod_play_from", "主线$$$备用线");
+            item.put("vod_play_url", "第一集$direct-hls#第二集$headered$$$电影$direct-mp4");
+        }
 
         return JsonCodec.stringify(Map.of("list", List.of(item)));
     }

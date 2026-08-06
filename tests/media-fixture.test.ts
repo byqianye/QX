@@ -50,6 +50,16 @@ describe("local media fixture server", () => {
     expect((await segment.arrayBuffer()).byteLength).toBeGreaterThan(0);
   });
 
+  it("serves a local HLS master playlist and its child playlist", async () => {
+    const master = await fetch(fixture.hlsMasterUrl);
+    const child = await fetch(fixture.hlsChildUrl);
+
+    expect(master.status).toBe(200);
+    expect(await master.text()).toContain("#EXT-X-STREAM-INF");
+    expect(child.status).toBe(200);
+    expect(await child.text()).toContain("#EXT-X-MAP");
+  });
+
   it("returns deterministic playerContent results for MP4, HLS and headered cases", async () => {
     const mp4 = await fetch(`${fixture.playerUrl}?id=direct-mp4`);
     const hls = await fetch(`${fixture.playerUrl}?id=direct-hls`);
@@ -65,6 +75,17 @@ describe("local media fixture server", () => {
         "User-Agent": "G22-fixture",
       },
     });
+  });
+
+  it("returns bounded parse and fallback fixture failures", async () => {
+    const parseSniff = await fetch(`${fixture.playerUrl}?id=parse-sniff`);
+    const fallback = await fetch(`${fixture.playerUrl}?id=fallback-fail`);
+
+    await expect(parseSniff.json()).resolves.toMatchObject({
+      parse: 1,
+      header: { "X-QX-Parse-Scenario": "sniff" },
+    });
+    expect(fallback.status).toBe(503);
   });
 
   it("requires the protected HLS headers and accepts them when injected", async () => {
@@ -100,5 +121,17 @@ describe("local media fixture server", () => {
     expect(await protocol.text()).toContain("file:///");
     const infinite = await fetch(`${fixture.sniffUrl}?mode=infinite`);
     expect(await infinite.text()).toContain("setInterval");
+  });
+
+  it("serves the local Douban-compatible aggregate fixture", async () => {
+    const home = await fetch(fixture.doubanEndpoint);
+    const search = await fetch(`${fixture.baseUrl}/subject_search?search_text=fixture&start=0`);
+    const detail = await fetch(`${fixture.baseUrl}/api/v2/movie/36246195`);
+
+    await expect(home.json()).resolves.toMatchObject({
+      subject_collection_items: [{ id: "36246195" }],
+    });
+    expect(await search.text()).toContain("window.__DATA__");
+    await expect(detail.json()).resolves.toMatchObject({ id: "36246195" });
   });
 });

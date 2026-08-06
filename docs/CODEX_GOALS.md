@@ -225,7 +225,7 @@ npm run electron:e2e:package
 继承 G26 Open Design Token，实现主题、窗口和页面状态的安全持久化与恢复。
 
 ### 状态
-已完成安全 JSON 状态存储、原子替换、损坏备份、安全默认值、敏感字段拒绝、显示器工作区 bounds 修正、UI server 页面状态 API、renderer 主题/页面恢复和 Electron 窗口事件接入。专项测试、19 个测试文件/109 个测试、Electron 编译和两轮 packaged E2E 均已通过。
+已完成安全 JSON 状态存储、原子替换、损坏备份、安全默认值、敏感字段拒绝、显示器工作区 bounds 修正、UI server 页面状态 API、renderer 主题/页面恢复和 Electron 窗口事件接入。专项测试、19 个测试文件/109 个测试、Electron 编译和修复后的 3 次 packaged E2E 均已通过；renderer 恢复探针等待请求稳定后再进入播放检查。
 
 ### 依赖
 - G26 / Open Design UI checkpoint
@@ -246,10 +246,10 @@ npm run electron:e2e:package
 - 单元、集成、renderer、完整回归和打包 E2E 通过；sidecar/fixture/窗口资源无残留
 
 ### 验证结果
-- `npx vitest run tests/desktop-state.test.ts tests/spider-import.test.ts tests/vue-renderer.test.ts`：22 tests passed
+- `npx vitest run tests/desktop-state.test.ts tests/spider-import.test.ts tests/vue-renderer.test.ts`：23 tests passed
 - `npm run typecheck`：通过
 - `npm test`：19 files / 109 tests passed
-- `npm run electron:e2e:package`：first/restarted 两轮通过，并验证持久化 JSON 合同和敏感字段未写入
+- `npm run electron:e2e:package`：修复后连续 3 次通过；每次均包含 first/restarted 两轮，并验证持久化 JSON 合同和敏感字段未写入
 
 ### 验证命令
 ```powershell

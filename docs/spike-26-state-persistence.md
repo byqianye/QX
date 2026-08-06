@@ -57,4 +57,4 @@ npm run electron:e2e:package
 
 真实 Jellyfin 凭据、完整配置内容和播放 token 不参与本地状态验证。
 
-专项结果：22 个 G27 相关测试通过；全量 19 个测试文件/109 个测试通过；Electron 编译和两轮 packaged E2E 通过；sidecar、fixture 和项目进程均已清理。
+专项结果：23 个 G27 相关测试通过；全量 19 个测试文件/109 个测试通过；Electron 编译和修复后的 3 次 packaged E2E（每次含首次与重启流程）通过；sidecar、fixture 和项目进程均已清理。

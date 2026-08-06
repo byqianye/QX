@@ -13,7 +13,10 @@ const props = withDefaults(defineProps<{
   playerStatus?: string;
   error?: AppError;
   diagnostic?: RendererError | null;
-}>(), { code: null, source: "当前来源", playerStatus: "idle" });
+  showDebug?: boolean;
+}>(), { code: null, source: "当前来源", playerStatus: "idle", showDebug: false });
+
+const emit = defineEmits<{ openDebug: [] }>();
 
 const effectiveError = computed(() => props.error ?? toAppError(props.diagnostic));
 const diagnosticSteps = computed(() => [
@@ -26,7 +29,13 @@ const diagnosticSteps = computed(() => [
 </script>
 
 <template>
-  <AppErrorDetails v-if="effectiveError" :error="effectiveError" test-id="diagnostic-panel" />
+  <AppErrorDetails
+    v-if="effectiveError"
+    :error="effectiveError"
+    test-id="diagnostic-panel"
+    :show-debug="props.showDebug"
+    @open-debug="emit('openDebug')"
+  />
   <details v-else class="diagnostic-panel" data-testid="diagnostic-panel" data-od-id="diagnostic-panel">
     <summary>查看诊断</summary>
     <dl>
@@ -36,6 +45,9 @@ const diagnosticSteps = computed(() => [
       <div v-if="message"><dt>说明</dt><dd>{{ message }}</dd></div>
       <div v-for="step in diagnosticSteps" :key="step.label" data-diagnostic-step><dt>{{ step.label }}</dt><dd>{{ step.value }}</dd></div>
     </dl>
+    <div v-if="props.showDebug" class="diagnostic-actions">
+      <button type="button" class="button-secondary" data-action="open-playback-debug" @click="emit('openDebug')">播放调试</button>
+    </div>
     <p class="meta">诊断摘要已脱敏，不包含 token、Cookie、完整播放地址或本机路径。</p>
   </details>
 </template>

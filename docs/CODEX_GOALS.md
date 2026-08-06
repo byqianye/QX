@@ -529,7 +529,41 @@ npm run mpv:smoke
 checkpoint: complete G45 mpv backend
 ```
 
-## G46—G49（未开始）
+## G46（已完成）
+### 目标
+建立播放调试面板和有限长度 `PlaybackEvent` 时间线，支持 D/设置/错误详情入口、脱敏复制与导出。
+### 状态
+已完成。普通键盘 D 可开关面板，输入框聚焦时不触发；面板展示 Source、Engine、Site、Playback Session、线路、剧集、playerContent、parse、Rules、sniff、LocalProxy、后端、起播时间、缓冲、错误、回退和 capability。时间线最多保留 200 条事件，JSON/文本导出不上传。
+### 依赖
+- G45 PlayerBackend 合同
+### 范围
+- `renderer/src/playback-debug.ts`：`PlaybackEvent`、状态推导、上限、脱敏和导出格式
+- `renderer/src/PlaybackDebugPanel.vue`：面板、时间线、复制和本地导出
+- `renderer/src/SpiderView.vue`、`DiagnosticPanel.vue`、`ErrorState.vue`、`AppErrorDetails.vue`：三种入口与键盘焦点保护
+- `src/electron/e2e-runner.ts`、`src/electron/main.ts`：packaged UI 面板检查
+- renderer/纯逻辑测试和 packaged E2E
+### 验证结果
+- `tests/playback-debug.test.ts`、`tests/playback-debug-ui.test.ts`、既有 `tests/vue-renderer.test.ts`：通过
+- `npm test`：37 files / 212 tests passed
+- `npm run typecheck`：通过
+- `npm run electron:build`：通过
+- `npm run electron:e2e:package`：首次启动与重启轮次均通过，`playbackDebug=true`，既有 parser/proxy/sniffer/player/lifecycle 检查保持通过
+### 验证命令
+```powershell
+npx vitest run tests/playback-debug.test.ts tests/playback-debug-ui.test.ts tests/vue-renderer.test.ts
+npm run typecheck
+npm test
+npm run electron:build
+npm run electron:e2e:package
+```
+### 文档
+- `docs/spike-46-playback-debug-panel.md`
+### checkpoint
+```text
+checkpoint: complete G46 playback debug panel
+```
+
+## G47—G49（未开始）
 
 按串行 Gate 继续：播放调试面板、字幕轨道、流健康与自动线路回退、综合播放增强验收。
 

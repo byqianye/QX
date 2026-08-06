@@ -14,6 +14,7 @@ export interface PackagedE2eOptions {
   evaluateWindow?: (script: string) => Promise<unknown>;
   readWindowHtml?: () => Promise<string>;
   verifyPlaybackRules?: boolean;
+  verifyPlaybackDebug?: boolean;
   verifySniffer?: boolean;
   sniff?: () => Promise<SniffedMedia>;
   playback?: {
@@ -37,6 +38,7 @@ export interface PackagedE2eChecks {
   parseChain?: boolean;
   isolatedSniffer?: boolean;
   playbackRules?: boolean;
+  playbackDebug?: boolean;
   proxyRequired?: boolean;
   noExternalBrowser?: boolean;
   errorSurface?: boolean;
@@ -244,6 +246,9 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
           && headeredDom.hlsLoaded
           && headeredDom.readyState >= 1;
       }
+      if (options.verifyPlaybackDebug) {
+        checks.playbackDebug = await probePlaybackDebug(options);
+      }
     }
 
     const repeated = await load(options.baseUrl, options.configJson);
@@ -420,6 +425,37 @@ async function probeWindow(
     throw new Error(`Packaged playback probe returned an invalid result: ${html.length}`);
   }
   return value as { hasVideo: boolean; readyState: number; src: string; hlsLoaded: boolean };
+}
+
+async function probePlaybackDebug(options: PackagedE2eOptions): Promise<boolean> {
+  if (!options.evaluateWindow) return false;
+  const value = await options.evaluateWindow(`(() => new Promise((resolve) => {
+    const wait = () => window.setTimeout(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', bubbles: true }));
+      window.setTimeout(() => {
+        const panel = document.querySelector('[data-testid="playback-debug-panel"]');
+        const fields = [...document.querySelectorAll('[data-debug-field]')].map((node) => node.getAttribute('data-debug-field'));
+        const text = panel?.textContent || '';
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', bubbles: true }));
+        const input = document.querySelector('#search-key');
+        input?.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', bubbles: true }));
+        window.setTimeout(() => resolve({
+          opened: Boolean(panel),
+          fieldCount: fields.length,
+          hasTimeline: Boolean(panel?.querySelector('[data-testid="playback-debug-timeline"]')),
+          inputDidNotOpen: !document.querySelector('[data-testid="playback-debug-panel"]'),
+          redacted: !/token|cookie|authorization|private\\.example|127\\.0\\.0\\.1|Users\\\\/i.test(text),
+        }), 25);
+      }, 25);
+    }, 25);
+    wait();
+  }))()`);
+  return isRecord(value)
+    && value.opened === true
+    && value.fieldCount === 17
+    && value.hasTimeline === true
+    && value.inputDidNotOpen === true
+    && value.redacted === true;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

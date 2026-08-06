@@ -23,6 +23,7 @@ const emit = defineEmits<{
   switchLine: [];
   back: [];
   settings: [];
+  openDebug: [];
 }>();
 
 const isProxyRequired = computed(() => props.error.code === "PLAYBACK_PROXY_REQUIRED");
@@ -52,6 +53,10 @@ const guidance = computed(() => {
       <button v-if="props.showSettings" type="button" class="button-secondary" data-action="error-settings" :disabled="props.pending" @click="emit('settings')">打开设置</button>
     </div>
     <span class="error-code">{{ props.error.code }}</span>
-    <AppErrorDetails :error="props.error" />
+    <AppErrorDetails
+      :error="props.error"
+      :show-debug="isPlayback"
+      @open-debug="emit('openDebug')"
+    />
   </section>
 </template>

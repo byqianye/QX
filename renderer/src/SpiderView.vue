@@ -13,6 +13,8 @@ import PlaybackSelector from "./PlaybackSelector.vue";
 import SettingsSection from "./SettingsSection.vue";
 import SourceSwitcher from "./SourceSwitcher.vue";
 import TopSearchBar from "./TopSearchBar.vue";
+import PlaybackDebugPanel from "./PlaybackDebugPanel.vue";
+import { PlaybackDebugTimeline } from "./playback-debug.js";
 import { displaySource } from "./safe-display.js";
 import type {
   RendererNavigation,
@@ -55,6 +57,9 @@ const emit = defineEmits<{
 const view = ref<"browse" | "settings">(props.initialNavigation === "settings" ? "settings" : "browse");
 const theme = ref<"system" | "light" | "dark">(props.initialTheme ?? "light");
 const systemTheme = ref<"light" | "dark">("light");
+const debugOpen = ref(false);
+const debugVersion = ref(0);
+const debugTimeline = new PlaybackDebugTimeline();
 let systemMediaQuery: MediaQueryList | null = null;
 
 const resolvedTheme = computed(() => theme.value === "system" ? systemTheme.value : theme.value);
@@ -64,13 +69,16 @@ function syncSystemTheme(event?: MediaQueryList | MediaQueryListEvent): void {
 }
 
 onMounted(() => {
-  if (typeof window.matchMedia !== "function") return;
-  systemMediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-  syncSystemTheme(systemMediaQuery);
-  systemMediaQuery.addEventListener?.("change", syncSystemTheme);
+  window.addEventListener("keydown", handleDebugKeydown);
+  if (typeof window.matchMedia === "function") {
+    systemMediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    syncSystemTheme(systemMediaQuery);
+    systemMediaQuery.addEventListener?.("change", syncSystemTheme);
+  }
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("keydown", handleDebugKeydown);
   systemMediaQuery?.removeEventListener?.("change", syncSystemTheme);
   systemMediaQuery = null;
 });
@@ -97,6 +105,19 @@ const activePage = computed(() => view.value === "settings" ? "settings" : props
 const retryable = computed(() => props.state.error.error?.retryable === true);
 const hasPlayback = computed(() => props.state.detail.playbackCatalog !== null || props.state.playback.player.source !== null);
 const playerDetached = computed(() => props.state.playback.session?.host === "detached");
+const debugSnapshot = computed(() => {
+  debugVersion.value;
+  return debugTimeline.snapshot(props.state);
+});
+
+watch(
+  () => [props.state, props.pending] as const,
+  () => {
+    debugTimeline.recordState(props.state, props.pending);
+    debugVersion.value += 1;
+  },
+  { deep: true, immediate: true },
+);
 
 watch(theme, () => {
   emit("viewState", {
@@ -131,6 +152,22 @@ function playFirstEpisode(): void {
   const line = selectedLine.value;
   const episode = line?.episodes[0];
   if (line && episode) emit("play", line.index, episode.index);
+}
+
+function openDebug(): void {
+  debugOpen.value = true;
+}
+
+function closeDebug(): void {
+  debugOpen.value = false;
+}
+
+function handleDebugKeydown(event: KeyboardEvent): void {
+  if (event.key.toLowerCase() !== "d" || event.ctrlKey || event.metaKey || event.altKey) return;
+  const target = event.target instanceof HTMLElement ? event.target : null;
+  if (target?.closest("input, textarea, select, [contenteditable=\"true\"]")) return;
+  event.preventDefault();
+  debugOpen.value = !debugOpen.value;
 }
 
 function persistNavigation(navigation: RendererNavigation): void {
@@ -187,6 +224,8 @@ function navigationFromPage(page: string): RendererNavigation {
           </div>
         </header>
 
+        <PlaybackDebugPanel v-if="debugOpen" :snapshot="debugSnapshot" @close="closeDebug" />
+
         <SourceSwitcher
           :source="props.state.spider.source"
           :api="props.state.spider.api"
@@ -225,6 +264,8 @@ function navigationFromPage(page: string): RendererNavigation {
               :message="props.state.error.error?.message ?? props.persistenceDiagnostic?.message"
               :error="props.state.error.error ?? undefined"
               :diagnostic="props.persistenceDiagnostic"
+              :show-debug="true"
+              @open-debug="openDebug"
             />
           </SettingsSection>
           <SettingsSection title="隐私" description="凭据、Cookie、完整播放地址和本机路径不在界面回显。">
@@ -244,6 +285,7 @@ function navigationFromPage(page: string): RendererNavigation {
               @switch-line="emit('switch')"
               @back="navigate('home')"
               @settings="navigate('settings')"
+              @open-debug="openDebug"
             />
           </div>
 
@@ -300,6 +342,8 @@ function navigationFromPage(page: string): RendererNavigation {
               :player-status="props.state.playback.player.status"
               :code="props.state.error.error?.code"
               :error="props.state.error.error ?? undefined"
+              :show-debug="true"
+              @open-debug="openDebug"
             />
           </section>
           <section v-else class="playback-stage playback-stage-empty" data-testid="playback-panel">

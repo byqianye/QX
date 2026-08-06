@@ -4,7 +4,8 @@ import { ref } from "vue";
 import { formatDiagnostic } from "./error.js";
 import type { AppError } from "./state.js";
 
-const props = defineProps<{ error: AppError; testId?: string }>();
+const props = withDefaults(defineProps<{ error: AppError; testId?: string; showDebug?: boolean }>(), { showDebug: false });
+const emit = defineEmits<{ openDebug: [] }>();
 const copyState = ref<"idle" | "copied" | "unavailable">("idle");
 
 async function copyDiagnostic(): Promise<void> {
@@ -44,6 +45,7 @@ async function copyDiagnostic(): Promise<void> {
     </dl>
     <div class="diagnostic-actions">
       <button type="button" class="button-secondary" data-action="copy-diagnostic" @click="copyDiagnostic">复制诊断</button>
+      <button v-if="props.showDebug" type="button" class="button-secondary" data-action="open-playback-debug" @click="emit('openDebug')">播放调试</button>
       <span v-if="copyState === 'copied'" class="meta" data-testid="diagnostic-copy-status">已复制</span>
       <span v-else-if="copyState === 'unavailable'" class="meta" data-testid="diagnostic-copy-status">当前环境无法访问剪贴板</span>
     </div>

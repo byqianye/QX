@@ -139,6 +139,22 @@ p { margin-bottom: 12px; }
 .text-button:hover:not(:disabled) { color: var(--accent-hover); text-decoration: underline; transform: none; }
 .button-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
+.playback-debug-panel { margin: 0 0 24px; border-left: 3px solid var(--accent); }
+.playback-debug-header, .playback-debug-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.playback-debug-header h2 { margin-bottom: 4px; }
+.playback-debug-actions { margin: 16px 0; }
+.playback-debug-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin: 0; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+.playback-debug-summary > div { min-width: 0; padding: 10px 12px; background: var(--surface); }
+.playback-debug-summary dt, .playback-debug-event-details dt { color: var(--muted); font-size: 11px; }
+.playback-debug-summary dd, .playback-debug-event-details dd { margin: 2px 0 0; overflow-wrap: anywhere; color: var(--fg-2); font-family: var(--font-mono); font-size: 12px; }
+.playback-debug-timeline-section { margin-top: 20px; }
+.playback-debug-section-heading h3 { margin-bottom: 8px; }
+.playback-debug-timeline { display: grid; gap: 8px; max-height: 360px; margin: 0; padding: 0 4px 0 24px; overflow: auto; }
+.playback-debug-timeline > li { padding: 10px 12px; background: var(--bg); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); }
+.playback-debug-event-heading { display: flex; justify-content: space-between; gap: 12px; }
+.playback-debug-event-meta { display: block; margin-top: 2px; color: var(--muted); font-family: var(--font-mono); font-size: 11px; overflow-wrap: anywhere; }
+.playback-debug-event-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--border-soft); }
+
 .app-shell { display: flex; min-height: 100vh; background: var(--bg); }
 
 .app-sidebar {

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { app, BrowserWindow, dialog, screen } from "electron";
 
 import { JsonFileTrustPersistence, ImportTrustStore } from "../config/trust.js";
+import { ConfigHistoryStore, JsonFileConfigHistoryPersistence } from "../config/history.js";
 import { DesktopSpiderImportController } from "../desktop/spider-import.js";
 import { DesktopSpiderSession } from "../desktop/spider-session.js";
 import { DesktopSpiderUiServer } from "../desktop/spider-ui.js";
@@ -12,8 +13,9 @@ import {
   restoreWindowBounds,
   type PersistedWindowState,
 } from "../desktop/state-persistence.js";
-import { DesktopSpiderClient } from "../spider/desktop-client.js";
-import { findJvmSpider } from "../spider/jvm-spiders.js";
+import type { DesktopSpiderClientPort } from "../desktop/spider-client-port.js";
+import { EngineRouter } from "../engine/engine-router.js";
+import { readJellyfinEnvironment } from "../jellyfin/jellyfin-adapter.js";
 import { resolveJavaExecutable } from "../spikes/java-probe.js";
 import {
   runPackagedE2e,
@@ -41,7 +43,8 @@ let playerWindowUrl: string | undefined;
 let uiServer: DesktopSpiderUiServer | undefined;
 let cleanupPromise: Promise<void> | undefined;
 let quitting = false;
-let lastClient: DesktopSpiderClient | undefined;
+let lastClient: DesktopSpiderClientPort | undefined;
+let engineRouter: EngineRouter | undefined;
 let desktopStateStore: JsonFileDesktopStateStore | undefined;
 let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -54,6 +57,9 @@ function createShell(): DesktopShellRuntime {
   const trustStore = new ImportTrustStore(
     new JsonFileTrustPersistence(join(app.getPath("userData"), "trusted-sources.json")),
   );
+  const configHistory = new ConfigHistoryStore(
+    new JsonFileConfigHistoryPersistence(join(app.getPath("userData"), "config-history.json")),
+  );
 
   return new DesktopShellRuntime({
     resolveRuntime: () => resolveElectronRuntime(
@@ -62,22 +68,32 @@ function createShell(): DesktopShellRuntime {
       { allowBundledJre: !forceBundledJreDisabled() },
     ),
     createServer: (runtime) => {
+      const router = new EngineRouter({ maxActiveSessions: 4, idleSessionMs: 30_000 });
+      const jellyfinConfig = readJellyfinEnvironment(process.env);
+      engineRouter = router;
       const importer = new DesktopSpiderImportController({
         trustStore,
+        history: configHistory,
+        autoRefresh: process.env.QX_CONFIG_AUTO_REFRESH === "1",
+        refreshIntervalMs: numberEnvironment("QX_CONFIG_REFRESH_INTERVAL_MS", 6 * 60 * 60 * 1000),
         requestTimeoutMs: REQUEST_TIMEOUT_MS,
         preferredSiteKey: () => stateStore.state.page.siteKey,
-        createSession: (source, config, site) => new DesktopSpiderSession({
+        createSession: (source, config, site, assessment, health) => new DesktopSpiderSession({
           source,
           config,
           trustStore,
+          ...(assessment ? { assessment } : {}),
+          ...(health ? { health } : {}),
           requestTimeoutMs: REQUEST_TIMEOUT_MS,
-          createClient: (selectedSite) => {
-            const client = new DesktopSpiderClient({
-              api: selectedSite.api ?? site.api ?? "",
+          createClient: async (selectedSite, context) => {
+            if (!context) throw new Error(`Missing engine binding for ${selectedSite.api ?? site.api ?? ""}`);
+            const client = await router.acquireClient(context.binding, context, {
               javaExecutable: runtime.javaExecutable,
               hostJar: runtime.hostJar,
               spiderJar: runtime.spiderJar,
-              spiderClass: findJvmSpider(selectedSite.api)?.className ?? runtime.spiderClass,
+              spiderClass: runtime.spiderClass,
+              pythonExecutable: process.env.QX_PYTHON ?? "python",
+              ...(jellyfinConfig ? { jellyfinConfig } : {}),
               requestTimeoutMs: REQUEST_TIMEOUT_MS,
               startupTimeoutMs: STARTUP_TIMEOUT_MS,
             });
@@ -118,10 +134,11 @@ function forceBundledJreDisabled(): boolean {
 
 async function closeShell(): Promise<void> {
   if (!cleanupPromise) {
-    cleanupPromise = (async () => {
-      await closePlayerWindow();
-      await shell?.close();
-    })();
+      cleanupPromise = (async () => {
+        await closePlayerWindow();
+        await shell?.close();
+        await engineRouter?.destroyAll();
+      })();
   }
   await cleanupPromise;
 }
@@ -311,8 +328,8 @@ async function runE2e(baseUrl: string): Promise<void> {
         return { url: startedAgain.url };
       },
       closeWindow: async () => {
-        const window = mainWindow;
-        if (window && !window.isDestroyed()) window.close();
+        // Keep the main window alive until the runner writes its result. The
+        // final app.quit() below then performs the normal before-quit cleanup.
         await closeShell();
       },
       getSidecarPid: () => lastClient?.pid ?? null,

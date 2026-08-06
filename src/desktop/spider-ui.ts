@@ -36,6 +36,8 @@ import {
   type PageStatePatch,
 } from "./state-persistence.js";
 import type { SpiderResponse } from "../spider/rpc.js";
+import type { SourceCapabilities } from "../source/media-source.js";
+import type { AggregateSearchSnapshot } from "../search/aggregate-search.js";
 
 const require = createRequire(import.meta.url);
 
@@ -47,6 +49,7 @@ export type {
 
 export interface DesktopSpiderSessionPort {
   readonly view: DesktopSpiderView;
+  readonly capabilities?: SourceCapabilities;
   confirmImport(): void;
   open(siteKey: string, ext: string): Promise<SpiderResponse>;
   homeContent(filter?: boolean, timeoutMs?: number): Promise<SpiderResponse>;
@@ -70,6 +73,7 @@ export interface DesktopSpiderSessionPort {
     vipFlags?: string[],
     timeoutMs?: number,
   ): Promise<SpiderResponse>;
+  stopPlayback?(): Promise<void>;
   destroy(): Promise<void>;
 }
 
@@ -103,6 +107,7 @@ export interface DesktopSpiderUiState {
   error: { code: string; message: string } | null;
   sidecarRunning: boolean;
   playback: DesktopSpiderPlaybackState;
+  capabilities: SourceCapabilities;
   player: PlaybackState;
   canPlay: boolean;
   items: readonly Record<string, unknown>[];
@@ -111,6 +116,8 @@ export interface DesktopSpiderUiState {
   playbackSelection: PlaybackSelection | null;
   playerHost: PlayerHostMode;
   playbackSession: DesktopPlaybackSession | null;
+  scrollTop: number;
+  aggregateSearch: AggregateSearchSnapshot | null;
 }
 
 export interface DesktopSpiderUiOptions {
@@ -132,6 +139,8 @@ export class DesktopSpiderUiController {
   private playbackSelection: PlaybackSelection | null = null;
   private playerHost: PlayerHostMode = "embedded";
   private playbackSession: DesktopPlaybackSession | null = null;
+  private scrollTop = 0;
+  private aggregateSearchValue: AggregateSearchSnapshot | null = null;
   private readonly playerController = new EmbeddedPlaybackController();
   private readonly playbackProxy: PlaybackProxyServer;
   private proxySession: PlaybackProxySession | undefined;
@@ -148,6 +157,7 @@ export class DesktopSpiderUiController {
 
   public get state(): DesktopSpiderUiState {
     const view = this.session.view;
+    const capabilities = this.session.capabilities ?? view.capabilities ?? fallbackCapabilities(view);
     const status = this.localStatus ?? view.status;
     return {
       page: status === "destroyed" ? "closed" : this.page,
@@ -160,13 +170,16 @@ export class DesktopSpiderUiController {
       sidecarRunning: view.sidecarRunning,
       playback: publicPlaybackState(view.playback),
       player: this.playerController.state,
-      canPlay: view.playback.available,
+      capabilities: { ...capabilities },
+      canPlay: capabilities.playback && view.playback.available,
       items: this.items.map((item) => ({ ...item })),
       detail: this.detailItem ? { ...this.detailItem } : null,
       playbackCatalog: clonePlaybackCatalog(this.playbackCatalog),
       playbackSelection: this.playbackSelection ? { ...this.playbackSelection } : null,
       playerHost: this.playerHost,
       playbackSession: clonePlaybackSession(this.playbackSession),
+      scrollTop: this.scrollTop,
+      aggregateSearch: this.aggregateSearchValue,
     };
   }
 
@@ -187,6 +200,8 @@ export class DesktopSpiderUiController {
       this.items = [];
       this.detailItem = null;
       this.clearPlaybackCatalog();
+      this.scrollTop = 0;
+      this.aggregateSearchValue = null;
     });
   }
 
@@ -198,6 +213,8 @@ export class DesktopSpiderUiController {
         this.page = "home";
         this.items = listFrom(response);
         this.detailItem = null;
+        this.scrollTop = 0;
+        this.aggregateSearchValue = null;
       },
     );
   }
@@ -216,6 +233,8 @@ export class DesktopSpiderUiController {
         this.page = "category";
         this.items = listFrom(response);
         this.detailItem = null;
+        this.scrollTop = 0;
+        this.aggregateSearchValue = null;
       },
     );
   }
@@ -233,6 +252,8 @@ export class DesktopSpiderUiController {
         this.page = "search";
         this.items = listFrom(response);
         this.detailItem = null;
+        this.scrollTop = 0;
+        this.aggregateSearchValue = null;
       },
     );
   }
@@ -246,6 +267,8 @@ export class DesktopSpiderUiController {
         this.detailItem = listFrom(response)[0] ?? null;
         this.playbackCatalog = this.detailItem ? parseVodPlayback(this.detailItem) : null;
         this.playbackSelection = null;
+        this.scrollTop = 0;
+        this.aggregateSearchValue = null;
       },
     );
   }
@@ -257,6 +280,24 @@ export class DesktopSpiderUiController {
     timeoutMs?: number,
   ): Promise<DesktopSpiderUiState> {
     return this.playPlayer(flag, id, vipFlags, timeoutMs);
+  }
+
+  public setAggregateSearch(snapshot: AggregateSearchSnapshot): DesktopSpiderUiState {
+    this.page = "search";
+    this.aggregateSearchValue = snapshot;
+    this.items = snapshot.groups.map((group) => {
+      const representative = group.items[0];
+      return {
+        ...(representative?.raw ?? {}),
+        vod_id: group.items.length === 1 ? representative?.id ?? group.key : group.key,
+        vod_name: group.name,
+        source_ids: [...group.sourceIds],
+      };
+    });
+    this.detailItem = null;
+    this.playbackCatalog = null;
+    this.playbackSelection = null;
+    return this.state;
   }
 
   public playEpisode(
@@ -309,9 +350,15 @@ export class DesktopSpiderUiController {
     return this.state;
   }
 
+  public setScrollTop(scrollTop: number): DesktopSpiderUiState {
+    this.scrollTop = Math.max(0, Math.min(10_000_000, Math.floor(scrollTop)));
+    return this.state;
+  }
+
   public async stopPlayer(): Promise<DesktopSpiderUiState> {
     this.playerController.stop();
     await this.releasePlaybackProxy();
+    await this.session.stopPlayback?.();
     this.playerHost = "embedded";
     this.playbackSession = null;
     return this.state;
@@ -329,7 +376,10 @@ export class DesktopSpiderUiController {
     this.playerHost = "embedded";
     return this.run(
       "player",
-      () => this.session.playerContent(flag, id, vipFlags, timeoutMs),
+      async () => {
+        await this.session.stopPlayback?.();
+        return this.session.playerContent(flag, id, vipFlags, timeoutMs);
+      },
       async () => {
         this.page = "detail";
         const playback = this.session.view.playback;
@@ -401,6 +451,7 @@ export class DesktopSpiderUiController {
   public async releaseResources(): Promise<void> {
     this.playerController.stop();
     await this.releasePlaybackProxy();
+    await this.session.stopPlayback?.();
     this.clearPlaybackSession();
   }
 
@@ -523,6 +574,7 @@ export class DesktopSpiderUiServer {
   private boundUrl: string | undefined;
   private boundSession: DesktopSpiderSessionPort | undefined;
   private importedUi: DesktopSpiderUiController | undefined;
+  private readonly importedUiBySession = new Map<DesktopSpiderSessionPort, DesktopSpiderUiController>();
 
   public constructor(options: DesktopSpiderUiServerOptions) {
     if ((options.ui === undefined) === (options.importer === undefined)) {
@@ -571,8 +623,9 @@ export class DesktopSpiderUiServer {
 
   public async close(): Promise<void> {
     if (this.importer) {
-      await this.importedUi?.releaseResources();
+      await this.releaseImportedUiResources();
       await this.importer.close();
+      this.importedUiBySession.clear();
     } else {
       await this.directUi?.close();
     }
@@ -598,7 +651,7 @@ export class DesktopSpiderUiServer {
         if (this.importer && (this.importer.state.status !== "ready" || !ui)) {
           writeHtml(response, renderDesktopSpiderImportUi(this.importer.state));
         } else if (ui) {
-          writeHtml(response, renderDesktopSpiderUi(ui.state));
+          writeHtml(response, renderDesktopSpiderUi(this.visibleState(ui) ?? ui.state));
         } else {
           writeJson(response, { error: "Import UI is not ready" }, 409);
         }
@@ -621,12 +674,45 @@ export class DesktopSpiderUiServer {
       if (this.importer && url.pathname.startsWith("/api/import/")) {
         switch (url.pathname) {
           case "/api/import/load":
+            await this.releaseImportedUiResources();
             await this.importer.import(stringValue(body.input, ""));
             this.persistImportedSite(this.importer.selectedSiteKey);
             break;
           case "/api/import/select":
             this.importer.selectSite(stringValue(body.siteKey, ""));
             this.persistImportedSite(this.importer.selectedSiteKey);
+            break;
+          case "/api/import/site-enabled":
+            this.importer.setSiteEnabled(stringValue(body.siteKey, ""), booleanValue(body.enabled, false));
+            break;
+          case "/api/import/site-search":
+            this.importer.setSiteSearchEnabled(stringValue(body.siteKey, ""), booleanValue(body.enabled, false));
+            break;
+          case "/api/import/site-alias":
+            this.importer.setSiteAlias(stringValue(body.siteKey, ""), stringValue(body.alias, ""));
+            break;
+          case "/api/import/site-clear-cache":
+            this.importer.clearSiteCache(stringValue(body.siteKey, ""));
+            break;
+          case "/api/import/site-reinitialize":
+            await this.importer.reinitializeSite(stringValue(body.siteKey, ""));
+            break;
+          case "/api/import/site-retry":
+            this.importer.retrySite(stringValue(body.siteKey, ""));
+            break;
+          case "/api/import/site-reorder":
+            this.importer.reorderSites(stringList(body.siteKeys));
+            break;
+          case "/api/import/refresh":
+            await this.importer.refreshConfiguration();
+            break;
+          case "/api/import/refresh-approve":
+            await this.importer.approveConfigurationRefresh(
+              typeof body.versionId === "string" ? body.versionId : undefined,
+            );
+            break;
+          case "/api/import/refresh-reject":
+            this.importer.rejectConfigurationRefresh();
             break;
           case "/api/import/confirm":
             this.importer.confirm();
@@ -644,6 +730,10 @@ export class DesktopSpiderUiServer {
 
       if (url.pathname === "/api/view-state") {
         this.stateStore?.patch(statePatchFromRequest(body));
+        const ui = this.activeUi();
+        if (typeof body.scrollTop === "number" && Number.isFinite(body.scrollTop)) {
+          ui?.setScrollTop(body.scrollTop);
+        }
         this.writeCurrentState(response);
         return;
       }
@@ -657,7 +747,7 @@ export class DesktopSpiderUiServer {
         case "/api/open":
           if (this.importer) {
             const siteKey = this.importer.selectedSiteKey;
-            if (!siteKey) throw new Error("No supported JVM-native Spider site is selected");
+            if (!siteKey) throw new Error("No supported media source site is selected");
             await ui.open(siteKey, this.importer.selectedExt);
           } else {
             await ui.open(this.siteKey as string, this.ext as string);
@@ -691,11 +781,17 @@ export class DesktopSpiderUiServer {
           {
             const key = stringValue(body.key, "");
             const page = numberValue(body.page, 1);
-            await ui.search(
-              key,
-              Boolean(body.quick),
-              page,
-            );
+            if (this.importer) {
+              const sourceIds = stringList(body.sourceIds);
+              await this.importer.aggregateSearch(key, {
+                page,
+                quick: Boolean(body.quick),
+                ...(sourceIds.length > 0 ? { sourceIds } : {}),
+                onUpdate: (snapshot) => { ui.setAggregateSearch(snapshot); },
+              });
+            } else {
+              await ui.search(key, Boolean(body.quick), page);
+            }
             this.persistPage({
               navigation: "search",
               search: { key, page },
@@ -711,23 +807,26 @@ export class DesktopSpiderUiServer {
           }
           break;
         case "/api/player/detach":
-          ui.detachPlayer();
+          (this.playbackUi() ?? ui).detachPlayer();
           break;
         case "/api/player/open":
-          if (ui.state.playerHost === "detached") await this.onPlayerOpen?.();
+          if ((this.playbackUi() ?? ui).state.playerHost === "detached") await this.onPlayerOpen?.();
           break;
         case "/api/player/attach":
-          ui.attachPlayer();
+          (this.playbackUi() ?? ui).attachPlayer();
           await this.onPlayerAttach?.();
           break;
         case "/api/player/stop":
-          await ui.stopPlayer();
+          await (this.playbackUi() ?? ui).stopPlayer();
           await this.onPlayerStop?.();
           break;
         case "/api/player/sync":
-          ui.syncPlayerState(playerMediaSyncFromRequest(body));
+          (this.playbackUi() ?? ui).syncPlayerState(playerMediaSyncFromRequest(body));
           break;
         case "/api/player":
+          if (this.playbackUi() && this.playbackUi() !== ui) {
+            await this.playbackUi()?.stopPlayer();
+          }
           if (Object.prototype.hasOwnProperty.call(body, "lineIndex")
             || Object.prototype.hasOwnProperty.call(body, "episodeIndex")) {
             await ui.playEpisode(
@@ -745,7 +844,7 @@ export class DesktopSpiderUiServer {
           break;
         case "/api/switch":
           if (this.importer) {
-            await this.importedUi?.releaseResources();
+            await this.releaseImportedUiResources();
             await this.importer.cancel();
           } else {
             await ui.switchSource();
@@ -753,7 +852,7 @@ export class DesktopSpiderUiServer {
           break;
         case "/api/close":
           if (this.importer) {
-            await this.importedUi?.releaseResources();
+            await this.releaseImportedUiResources();
             await this.importer.close();
           } else {
             await ui.close();
@@ -780,33 +879,63 @@ export class DesktopSpiderUiServer {
   private activeUi(): DesktopSpiderUiController | undefined {
     if (!this.importer) return this.directUi;
     const session = this.importer.session;
-    if (session !== this.boundSession) {
-      this.boundSession = session;
-      this.importedUi = session
-        ? new DesktopSpiderUiController({
-          session,
-          ...(this.playbackProxyOrigins ? { playbackProxyOrigins: this.playbackProxyOrigins } : {}),
-        })
-        : undefined;
+    if (!session) {
+      this.boundSession = undefined;
+      this.importedUi = undefined;
+      return undefined;
+    }
+    this.boundSession = session;
+    this.importedUi = this.importedUiBySession.get(session);
+    if (!this.importedUi) {
+      this.importedUi = new DesktopSpiderUiController({
+        session,
+        ...(this.playbackProxyOrigins ? { playbackProxyOrigins: this.playbackProxyOrigins } : {}),
+      });
+      this.importedUiBySession.set(session, this.importedUi);
     }
     return this.importedUi;
   }
 
+  private playbackUi(): DesktopSpiderUiController | undefined {
+    for (const ui of this.importedUiBySession.values()) {
+      if (ui.state.playbackSession) return ui;
+    }
+    return undefined;
+  }
+
+  private async releaseImportedUiResources(): Promise<void> {
+    await Promise.all([...this.importedUiBySession.values()].map((ui) => ui.releaseResources()));
+  }
+
   private writeCurrentState(response: ServerResponse): void {
     const ui = this.activeUi();
+    const visibleState = this.visibleState(ui);
     const persistence = this.stateStore?.rendererState();
     if (this.importer) {
       writeJson(response, {
         import: this.importer.state,
-        state: ui?.state ?? null,
+        state: visibleState,
         ...(persistence ? { persistence } : {}),
       });
     } else {
       writeJson(response, {
-        state: ui?.state ?? null,
+        state: visibleState,
         ...(persistence ? { persistence } : {}),
       });
     }
+  }
+
+  private visibleState(ui: DesktopSpiderUiController | undefined): DesktopSpiderUiState | null {
+    if (!ui) return null;
+    const current = ui.state;
+    const playback = this.playbackUi();
+    if (!playback || playback === ui || !playback.state.playbackSession) return current;
+    return {
+      ...current,
+      player: playback.state.player,
+      playerHost: playback.state.playerHost,
+      playbackSession: playback.state.playbackSession,
+    };
   }
 
   private persistPage(patch: PageStatePatch): void {
@@ -955,6 +1084,13 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
         <p>${escapeHtml(state.error.message)}</p>
       </section>`
     : "";
+  const aggregateSearch = state.aggregateSearch
+    ? `<section data-testid="aggregate-search-progress">
+        <strong>聚合搜索：${escapeHtml(state.aggregateSearch.query)}</strong>
+        <p>进度 ${state.aggregateSearch.completed}/${state.aggregateSearch.total} · 结果 ${state.aggregateSearch.groups.length} 组 · 状态 ${escapeHtml(state.aggregateSearch.status)}</p>
+        <p>${state.aggregateSearch.sources.map((source) => `${escapeHtml(source.label)}：${escapeHtml(source.status)}（${source.count}）`).join(" · ")}</p>
+      </section>`
+    : "";
   const start = state.status === "idle" || (state.status === "error" && !state.sidecarRunning)
     ? `<button data-action="open">启动 Spider</button>`
     : "";
@@ -1032,6 +1168,7 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
       </header>
       ${warning}
       ${error}
+      ${aggregateSearch}
       ${navigation}
       <form data-testid="search-form" data-action="search-form">
         <label>搜索 <input name="key" autocomplete="off"></label>
@@ -1177,6 +1314,10 @@ function listFrom(response: SpiderResponse): Record<string, unknown>[] {
 
 function stringValue(value: unknown, fallback: string): string {
   return typeof value === "string" ? value : fallback;
+}
+
+function booleanValue(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
 }
 
 function optionalString(value: unknown): string | null {
@@ -1347,6 +1488,20 @@ function errorLabel(code: string): string {
   if (code === "SPIDER_TIMEOUT") return "请求超时";
   if (code === "JVM_SPIDER_ERROR") return "Spider 请求失败";
   return "Spider 调用错误";
+}
+
+function fallbackCapabilities(view: DesktopSpiderView): SourceCapabilities {
+  return {
+    home: true,
+    category: true,
+    search: true,
+    detail: true,
+    playback: view.playback.available,
+    localProxy: false,
+    filters: true,
+    pagination: true,
+    engine: "fixture",
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

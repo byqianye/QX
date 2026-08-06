@@ -1,9 +1,36 @@
+import { randomUUID } from "node:crypto";
+
 import { inspectImport, ImportTrustStore, type ImportAssessment } from "../config/trust.js";
 import type { TvBoxConfig, TvBoxSite } from "../config/decoder.js";
-import { DesktopSpiderClient } from "../spider/desktop-client.js";
-import { findJvmSpider } from "../spider/jvm-spiders.js";
-import { routeSpiderApi, type SpiderResponse } from "../spider/rpc.js";
+import type { DesktopSpiderClientPort } from "./spider-client-port.js";
+import {
+  sourceCapabilitiesForApi,
+  type JvmSpiderDefinition,
+} from "../spider/jvm-spiders.js";
+import type { SpiderResponse } from "../spider/rpc.js";
+import { resolveDesktopSourceBinding, type DesktopSourceBinding } from "./source-router.js";
+import {
+  MediaSourceError,
+  type CategoryRequest,
+  type HomeResult,
+  type MediaSource,
+  type PlayerRequest,
+  type PlayerResult,
+  type SearchRequest,
+  type SourceCapabilities,
+  type SourceInitContext,
+  type VodDetail,
+  type VodPage,
+} from "../source/media-source.js";
+import {
+  normalizeHomeResult,
+  normalizePlayerResult,
+  normalizeVodDetails,
+  normalizeVodPage,
+  unwrapSpiderResponse,
+} from "../source/normalizers.js";
 import { validatePlaybackSource } from "./playback.js";
+import type { SourceHealthRegistry, HealthOperation } from "../health/source-health.js";
 
 export type DesktopSpiderSessionStatus =
   | "confirmation_required"
@@ -37,14 +64,28 @@ export interface DesktopSpiderView {
   error: { code: string; message: string } | null;
   sidecarRunning: boolean;
   playback: DesktopSpiderPlaybackState;
+  capabilities?: SourceCapabilities;
 }
 
 export interface DesktopSpiderSessionOptions {
   source: string;
   config: TvBoxConfig;
   trustStore: ImportTrustStore;
-  createClient: (site: TvBoxSite) => DesktopSpiderClient;
+  assessment?: ImportAssessment;
+  health?: SourceHealthRegistry;
+  createClient: (
+    site: TvBoxSite,
+    context?: DesktopSpiderClientContext,
+  ) => DesktopSpiderClientPort | Promise<DesktopSpiderClientPort>;
   requestTimeoutMs?: number;
+}
+
+export interface DesktopSpiderClientContext {
+  sourceId: string;
+  siteKey: string;
+  sessionId: string;
+  binding: DesktopSourceBinding;
+  definition?: JvmSpiderDefinition;
 }
 
 const NO_PLAYBACK: DesktopSpiderPlaybackState = {
@@ -65,15 +106,20 @@ const PLAYBACK_PROXY_REQUIRED: DesktopSpiderPlaybackState = {
   message: "该地址需要 LocalProxy 才能播放。",
 };
 
-export class DesktopSpiderSession {
+export class DesktopSpiderSession implements MediaSource {
   private readonly options: DesktopSpiderSessionOptions;
+  private readonly sessionId = randomUUID();
   private assessment: ImportAssessment;
-  private client: DesktopSpiderClient | undefined;
+  private client: DesktopSpiderClientPort | undefined;
+  private activeDefinition: JvmSpiderDefinition | undefined;
+  private activeCapabilities: SourceCapabilities | undefined;
+  private activeSiteKey: string | undefined;
   private viewState: DesktopSpiderView;
 
   public constructor(options: DesktopSpiderSessionOptions) {
     this.options = options;
-    this.assessment = inspectImport(options.source, options.config, options.trustStore);
+    this.assessment = options.assessment
+      ?? inspectImport(options.source, options.config, options.trustStore);
     this.viewState = {
       source: options.source,
       api: null,
@@ -89,22 +135,29 @@ export class DesktopSpiderSession {
     return this.assessment;
   }
 
+  public get capabilities(): SourceCapabilities {
+    if (this.activeCapabilities) return this.activeCapabilities;
+    if (this.activeDefinition) return this.activeDefinition.capabilities;
+    return sourceCapabilitiesForApi(this.viewState.api ?? firstSiteApi(this.options.config));
+  }
+
   public get view(): DesktopSpiderView {
     return {
       ...this.viewState,
       error: this.viewState.error ? { ...this.viewState.error } : null,
       playback: { ...this.viewState.playback },
+      capabilities: { ...this.capabilities },
     };
   }
 
   public confirmImport(): void {
     this.assertNotDestroyed();
-    this.options.trustStore.trust(this.options.source);
-    this.assessment = inspectImport(
-      this.options.source,
-      this.options.config,
-      this.options.trustStore,
-    );
+    this.options.trustStore.trustAssessment(this.assessment);
+    this.assessment = {
+      ...this.assessment,
+      requiresConfirmation: false,
+      lastTrustedAt: Date.now(),
+    };
     this.viewState.status = "idle";
     this.viewState.warning = null;
     this.viewState.error = null;
@@ -119,23 +172,39 @@ export class DesktopSpiderSession {
 
     const site = this.findSite(siteKey);
     const api = site.api;
-    const definition = typeof api === "string" ? findJvmSpider(api) : undefined;
-    if (typeof api !== "string" || routeSpiderApi(api) !== "java" || !definition) {
+    const binding = resolveDesktopSourceBinding(this.options.config, site);
+    if (!binding) {
       throw this.fail(
-        `Unsupported JVM-native desktop Spider: ${String(api)}`,
+        `Unsupported desktop Spider source: ${String(api)}`,
         "UNSUPPORTED_SPIDER_ENGINE",
       );
     }
 
-    this.viewState.api = api;
-    this.viewState.playback = definition.playback === "player" ? PLAYABLE_PENDING : NO_PLAYBACK;
+    this.viewState.api = typeof api === "string" ? api : null;
+    this.activeSiteKey = siteKey;
+    this.activeDefinition = binding.definition;
+    this.activeCapabilities = binding.capabilities;
+    this.viewState.playback = binding.capabilities.playback ? PLAYABLE_PENDING : NO_PLAYBACK;
     this.viewState.status = "initializing";
     this.viewState.warning = null;
     this.viewState.error = null;
 
     try {
-      this.client = this.options.createClient(site);
-      const response = await this.client.init(ext, this.options.requestTimeoutMs);
+      this.client = await this.options.createClient(site, {
+        sourceId: this.options.source,
+        siteKey,
+        sessionId: this.sessionId,
+        binding,
+        ...(binding.definition ? { definition: binding.definition } : {}),
+      });
+      const init = () => this.client?.init(ext, this.options.requestTimeoutMs)
+        ?? Promise.reject(new Error("Desktop Spider client is unavailable"));
+      const response = this.options.health && this.activeSiteKey
+        ? await this.options.health.track(this.activeSiteKey, "init", init, (value) => (
+          value.ok ? undefined : new Error(value.error?.message ?? "Spider initialization failed")
+        ))
+        : await init();
+      if (this.client.capabilities) this.activeCapabilities = this.client.capabilities;
       this.viewState.sidecarRunning = this.client.isRunning;
       if (!response.ok) {
         this.setRpcError(response);
@@ -152,7 +221,7 @@ export class DesktopSpiderSession {
   }
 
   public homeContent(filter = false, timeoutMs = this.options.requestTimeoutMs): Promise<SpiderResponse> {
-    return this.invoke((client) => client.homeContent(filter, timeoutMs));
+    return this.invoke(undefined, (client) => client.homeContent(filter, timeoutMs));
   }
 
   public categoryContent(
@@ -162,7 +231,7 @@ export class DesktopSpiderSession {
     extend: Record<string, string> = {},
     timeoutMs = this.options.requestTimeoutMs,
   ): Promise<SpiderResponse> {
-    return this.invoke((client) => client.categoryContent(typeId, page, filter, extend, timeoutMs));
+    return this.invoke(undefined, (client) => client.categoryContent(typeId, page, filter, extend, timeoutMs));
   }
 
   public searchContent(
@@ -171,7 +240,7 @@ export class DesktopSpiderSession {
     page = 1,
     timeoutMs = this.options.requestTimeoutMs,
   ): Promise<SpiderResponse> {
-    return this.invoke((client) => client.searchContent(key, quick, page, timeoutMs));
+    return this.invoke(undefined, (client) => client.searchContent(key, quick, page, timeoutMs));
   }
 
   public detailContent(
@@ -179,7 +248,7 @@ export class DesktopSpiderSession {
     timeoutMs = this.options.requestTimeoutMs,
   ): Promise<SpiderResponse> {
     this.viewState.playback = playbackPendingFor(this.viewState.api);
-    return this.invoke((client) => client.detailContent(ids, timeoutMs));
+    return this.invoke("detail", (client) => client.detailContent(ids, timeoutMs));
   }
 
   public async playerContent(
@@ -188,15 +257,14 @@ export class DesktopSpiderSession {
     vipFlags: string[] = [],
     timeoutMs = this.options.requestTimeoutMs,
   ): Promise<SpiderResponse> {
-    const definition = findJvmSpider(this.viewState.api ?? undefined);
-    if (!definition || definition.playback !== "player") {
+    if (!this.capabilities.playback) {
       throw this.fail(
-        "csp_Douban does not provide a full-content playback URL",
+        "The current Spider does not provide a full-content playback URL",
         "PLAYBACK_UNAVAILABLE",
       );
     }
 
-    const response = await this.invoke((client) =>
+    const response = await this.invoke("player", (client) =>
       client.playerContent(flag, id, vipFlags, timeoutMs));
     if (!response.ok) return response;
 
@@ -235,6 +303,68 @@ export class DesktopSpiderSession {
     return response;
   }
 
+  public async stopPlayback(): Promise<void> {
+    await this.client?.stopPlayback?.();
+  }
+
+  public async init(context: SourceInitContext): Promise<void> {
+    const siteKey = context.siteKey ?? firstSiteKey(this.options.config);
+    if (!siteKey) throw new MediaSourceError("SPIDER_SITE_NOT_FOUND", "Spider site key is required");
+    const site = this.findSite(siteKey);
+    const ext = context.ext ?? (typeof site.ext === "string" ? site.ext : "");
+    const response = await this.open(siteKey, ext);
+    if (!response.ok) {
+      throw new MediaSourceError(
+        response.error?.code ?? "SPIDER_RPC_ERROR",
+        response.error?.message ?? "Spider initialization failed",
+      );
+    }
+  }
+
+  public async home(): Promise<HomeResult> {
+    return normalizeHomeResult(unwrapSpiderResponse(await this.homeContent(), "home"));
+  }
+
+  public async category(request: CategoryRequest): Promise<VodPage> {
+    const page = request.page ?? 1;
+    return normalizeVodPage(
+      unwrapSpiderResponse(
+        await this.categoryContent(
+          request.typeId,
+          page,
+          request.filter ?? false,
+          { ...(request.extend ?? {}) },
+        ),
+        "category",
+      ),
+      page,
+    );
+  }
+
+  public async search(request: SearchRequest): Promise<VodPage> {
+    const page = request.page ?? 1;
+    return normalizeVodPage(
+      unwrapSpiderResponse(
+        await this.searchContent(request.key, request.quick ?? false, page),
+        "search",
+      ),
+      page,
+    );
+  }
+
+  public async detail(ids: string[]): Promise<VodDetail[]> {
+    return normalizeVodDetails(unwrapSpiderResponse(await this.detailContent(ids), "detail"));
+  }
+
+  public async player(request: PlayerRequest): Promise<PlayerResult> {
+    const response = await this.playerContent(
+      request.flag,
+      request.id,
+      [...(request.vipFlags ?? [])],
+    );
+    return normalizePlayerResult(unwrapSpiderResponse(response, "player"));
+  }
+
   public async destroy(): Promise<void> {
     if (this.viewState.status === "destroyed") return;
     await this.destroyClient();
@@ -243,13 +373,19 @@ export class DesktopSpiderSession {
   }
 
   private async invoke(
-    operation: (client: DesktopSpiderClient) => Promise<SpiderResponse>,
+    healthOperation: HealthOperation | undefined,
+    action: (client: DesktopSpiderClientPort) => Promise<SpiderResponse>,
   ): Promise<SpiderResponse> {
     const client = this.assertConnected();
     this.viewState.status = "loading";
     this.viewState.error = null;
     try {
-      const response = await operation(client);
+      const run = () => action(client);
+      const response = this.options.health && healthOperation && this.activeSiteKey
+        ? await this.options.health.track(this.activeSiteKey, healthOperation, run, (value) => (
+          value.ok ? undefined : new Error(value.error?.message ?? `Spider ${healthOperation} failed`)
+        ))
+        : await run();
       this.viewState.sidecarRunning = client.isRunning;
       if (response.ok) {
         this.viewState.status = "ready";
@@ -273,7 +409,7 @@ export class DesktopSpiderSession {
     return site;
   }
 
-  private assertConnected(): DesktopSpiderClient {
+  private assertConnected(): DesktopSpiderClientPort {
     this.assertNotDestroyed();
     if (!this.client || !this.client.isRunning) {
       throw this.fail("Desktop Spider session is not connected", "SPIDER_NOT_CONNECTED");
@@ -298,7 +434,9 @@ export class DesktopSpiderSession {
   private setThrownError(error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
     const isTimeout = error instanceof Error
-      && (error.name === "JvmSidecarTimeoutError" || /timeout/i.test(message));
+      && (readErrorCode(error) === "JVM_SPIDER_TIMEOUT"
+        || error.name === "JvmSidecarTimeoutError"
+        || /timeout/i.test(message));
     this.viewState.status = "error";
     this.viewState.error = {
       code: isTimeout ? "SPIDER_TIMEOUT" : "SPIDER_RUNTIME_ERROR",
@@ -318,15 +456,31 @@ export class DesktopSpiderSession {
     this.client = undefined;
     if (!client) {
       this.viewState.sidecarRunning = false;
+      this.activeDefinition = undefined;
+      this.activeCapabilities = undefined;
       return;
     }
     await client.destroy();
     this.viewState.sidecarRunning = false;
+    this.activeDefinition = undefined;
+    this.activeCapabilities = undefined;
   }
 }
 
 function playbackPendingFor(api: string | null): DesktopSpiderPlaybackState {
-  return findJvmSpider(api ?? undefined)?.playback === "player" ? PLAYABLE_PENDING : NO_PLAYBACK;
+  return sourceCapabilitiesForApi(api ?? undefined).playback ? PLAYABLE_PENDING : NO_PLAYBACK;
+}
+
+function firstSiteApi(config: TvBoxConfig): string | undefined {
+  const sites = Array.isArray(config.sites) ? config.sites : [];
+  return sites.find((site) => typeof site.api === "string")?.api as string | undefined;
+}
+
+function firstSiteKey(config: TvBoxConfig): string | undefined {
+  const sites = Array.isArray(config.sites) ? config.sites : [];
+  const site = sites.find((candidate) => typeof candidate.api === "string");
+  if (!site) return undefined;
+  return typeof site.key === "string" && site.key.length > 0 ? site.key : site.api;
 }
 
 function playbackUnavailableFor(code: string, message: string): DesktopSpiderPlaybackState {
@@ -375,4 +529,9 @@ function playbackHeaders(value: unknown): Record<string, string> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readErrorCode(error: Error): string | undefined {
+  const candidate = error as Error & { code?: unknown };
+  return typeof candidate.code === "string" ? candidate.code : undefined;
 }

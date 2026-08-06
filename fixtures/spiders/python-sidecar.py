@@ -1,11 +1,13 @@
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import asyncio
+import inspect
 import json
+import sys
 
 
 state = {"ext": None}
 
 
-def dispatch(request):
+async def dispatch(request):
     method = request["method"]
     params = request.get("params", {})
 
@@ -13,53 +15,55 @@ def dispatch(request):
         state["ext"] = params.get("ext")
         return {"initialized": True}
     if method == "home":
-        return {"method": "home", "ext": state["ext"]}
+        return {"class": [{"type_id": "fixture", "type_name": "Python"}], "list": [{
+            "vod_id": "python-home",
+            "vod_name": state["ext"] or "Python",
+        }]}
+    if method == "category":
+        return {"page": params.get("page", 1), "list": [{
+            "vod_id": params.get("typeId", "python"),
+            "vod_name": "Python category",
+        }]}
     if method == "search":
-        return {
-            "method": "search",
-            "word": params.get("wd"),
-            "quick": params.get("quick", False),
-        }
+        await asyncio.sleep(0)
+        return {"page": params.get("page", 1), "list": [{
+            "vod_id": "python-search",
+            "vod_name": params.get("key", params.get("wd", "")),
+        }]}
+    if method == "detail":
+        return {"list": [{"vod_id": item, "vod_name": "Python detail"}
+                         for item in params.get("ids", [])]}
     if method == "player":
-        return {"method": "player", "flag": params.get("flag"), "id": params.get("id")}
+        return {"parse": 0, "url": "https://media.example.invalid/python.mp4", "header": {}}
+    if method == "localProxy":
+        return {"url": params.get("url", ""), "status": 200, "headers": {}, "body": "python-proxy"}
     if method == "destroy":
         return {"destroyed": True}
     raise ValueError(f"unsupported method: {method}")
 
 
-class Handler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        if self.path != "/rpc":
-            self.send_error(404)
-            return
-
-        size = int(self.headers.get("Content-Length", "0"))
-        request = json.loads(self.rfile.read(size).decode("utf-8"))
-        try:
-            response = {"id": request["id"], "ok": True, "result": dispatch(request)}
-        except Exception as error:
-            response = {
-                "id": request.get("id", "unknown"),
-                "ok": False,
-                "error": {"code": "SPIDER_ERROR", "message": str(error)},
-            }
-
-        body = json.dumps(response, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *_args):
-        return
+def emit(value):
+    sys.stdout.write(json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n")
+    sys.stdout.flush()
 
 
-server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-print(json.dumps({"ready": True, "port": server.server_port}), flush=True)
-try:
-    server.serve_forever()
-except KeyboardInterrupt:
-    pass
-finally:
-    server.server_close()
+emit({"type": "ready", "protocol": "python-spider-rpc/1"})
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    request = None
+    try:
+        request = json.loads(line)
+        result = dispatch(request)
+        if inspect.isawaitable(result):
+            result = asyncio.run(result)
+        response = {"id": request["id"], "ok": True, "result": result}
+    except Exception as error:
+        response = {
+            "id": request.get("id", "unknown") if isinstance(request, dict) else "unknown",
+            "ok": False,
+            "error": {"code": "PYTHON_SPIDER_ERROR", "message": str(error)},
+        }
+    emit(response)
+    if isinstance(request, dict) and request.get("method") == "destroy":
+        break

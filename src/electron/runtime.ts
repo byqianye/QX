@@ -8,7 +8,7 @@ export interface ElectronRuntime {
   javaExecutable: string;
   hostJar: string;
   spiderJar: string;
-  spiderClass: "com.qx.spike.fixture.DoubanJvmSpider";
+  spiderClass: string;
   runtimeSource: "bundled-jre" | "external-java";
 }
 

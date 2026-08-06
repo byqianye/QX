@@ -1,6 +1,7 @@
 package com.qx.spike.host;
 
 import java.io.BufferedReader;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
@@ -8,11 +9,15 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.file.Files;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 
 public final class JvmSpiderHost {
     private static final PrintWriter OUTPUT = new PrintWriter(
@@ -23,6 +28,7 @@ public final class JvmSpiderHost {
 
     public static void main(String[] args) throws Exception {
         Options options = Options.parse(args);
+        rejectAndroidDex(options.spiderJar);
         URL spiderUrl = Path.of(options.spiderJar).toUri().toURL();
         try (URLClassLoader loader = new URLClassLoader(
                 new URL[]{spiderUrl},
@@ -122,6 +128,32 @@ public final class JvmSpiderHost {
                 }
             } finally {
                 if (!destroyed) invoke(destroy, spider);
+            }
+        }
+    }
+
+    private static void rejectAndroidDex(String spiderJar) throws Exception {
+        Path path = Path.of(spiderJar);
+        try (InputStream input = Files.newInputStream(path)) {
+            byte[] magic = input.readNBytes(4);
+            if (magic.length == 4
+                    && magic[0] == 'd'
+                    && magic[1] == 'e'
+                    && magic[2] == 'x'
+                    && magic[3] == '\n') {
+                throw new IllegalArgumentException(
+                        "ANDROID_DEX_UNSUPPORTED: Android DEX Spider artifacts are not supported");
+            }
+        }
+
+        try (JarFile jar = new JarFile(spiderJar)) {
+            Enumeration<JarEntry> entries = jar.entries();
+            while (entries.hasMoreElements()) {
+                String name = entries.nextElement().getName();
+                if (name.matches("(?:.*/)?classes\\d*\\.dex")) {
+                    throw new IllegalArgumentException(
+                            "ANDROID_DEX_UNSUPPORTED: Android DEX Spider artifacts are not supported");
+                }
             }
         }
     }

@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { TvBoxConfig } from "../src/config/decoder.js";
-import { ImportTrustStore } from "../src/config/trust.js";
+import { ImportTrustStore, inspectImport } from "../src/config/trust.js";
 import { DesktopSpiderSession } from "../src/desktop/spider-session.js";
 import { resolveJavaExecutable } from "../src/spikes/java-probe.js";
 import { buildJvmArtifacts, removeJvmArtifacts } from "../src/spikes/jvm-build.js";
@@ -736,7 +736,11 @@ jvmDescribe("JVM-native csp_Douban minimum port", () => {
     requests.length = 0;
     const source = "http://127.0.0.1/config.json";
     const trustStore = new ImportTrustStore();
-    trustStore.trust(source);
+    const config: TvBoxConfig = {
+      spider: "fixture-spider.jar",
+      sites: [{ key: "douban", name: "Douban", type: 3, api: "csp_Douban" }],
+    };
+    trustStore.trustAssessment(inspectImport(source, config, trustStore));
     const session = createDesktopSession(source, trustStore);
 
     try {

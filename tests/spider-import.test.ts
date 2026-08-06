@@ -13,6 +13,8 @@ import { JsonFileDesktopStateStore } from "../src/desktop/state-persistence.js";
 import type { DesktopSpiderSessionPort, DesktopSpiderView } from "../src/desktop/spider-ui.js";
 import type { SpiderResponse } from "../src/spider/rpc.js";
 import { ImportTrustStore } from "../src/config/trust.js";
+import { ConfigHistoryStore } from "../src/config/history.js";
+import type { SourceCapabilities } from "../src/source/media-source.js";
 
 describe("real configuration import", () => {
   const servers: DesktopSpiderUiServer[] = [];
@@ -74,13 +76,14 @@ describe("real configuration import", () => {
           return configJson();
         },
       });
-      await urlImporter.import("https://example.invalid/config.json");
-      expect(fetchedUrl).toBe("https://example.invalid/config.json");
+      await urlImporter.import("https://example.invalid/config.json?token=secret");
+      expect(fetchedUrl).toBe("https://example.invalid/config.json?token=secret");
       expect(urlImporter.state).toMatchObject({
         inputKind: "url",
         sourceKind: "remote",
         source: "https://example.invalid/config.json",
       });
+      expect(JSON.stringify(urlImporter.state)).not.toContain("token=secret");
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -112,6 +115,55 @@ describe("real configuration import", () => {
       status: "error",
       error: { code: "IMPORT_FETCH_ERROR", message: "connection refused" },
     });
+  });
+
+  it("loads the last successful URL configuration when the network is unavailable", async () => {
+    let online = true;
+    const importer = createImporter({
+      history: new ConfigHistoryStore(),
+      fetchText: async () => {
+        if (!online) throw new Error("offline");
+        return configJson();
+      },
+    });
+
+    await importer.import("https://example.invalid/config.json");
+    importer.confirm();
+    online = false;
+    const fallback = await importer.import("https://example.invalid/config.json");
+
+    expect(fallback).toMatchObject({ status: "ready", trusted: true });
+    expect(fallback.warning).toContain("最后成功版本");
+    expect(importer.session).toBeDefined();
+  });
+
+  it("reviews scheduled configuration changes without destroying the active session", async () => {
+    const history = new ConfigHistoryStore();
+    const nextConfig = JSON.stringify({
+      spider: "fixture.jar",
+      sites: [
+        { key: "douban", name: "Douban", type: 3, api: "csp_Douban", ext: "fixture" },
+        { key: "playable", name: "Playable", type: 3, api: "csp_PlayableFixture", ext: "fixture" },
+      ],
+    });
+    const importer = createImporter({
+      history,
+      fetchText: async () => configJson(),
+      fetchRefresh: async () => ({ body: nextConfig, etag: "v2" }),
+    });
+
+    await importer.import("https://example.invalid/config.json");
+    importer.confirm();
+    const activeSession = importer.session;
+    const pending = await importer.refreshConfiguration();
+    expect(pending.refresh.pendingVersionId).toBeTruthy();
+    expect(pending.refresh.pendingChange?.addedSites).toEqual(["playable"]);
+    expect(activeSession?.view.status).not.toBe("destroyed");
+
+    await importer.approveConfigurationRefresh(pending.refresh.pendingVersionId ?? undefined);
+    expect(activeSession?.view.status).not.toBe("destroyed");
+    expect(importer.state.status).toBe("confirmation_required");
+    importer.rejectConfigurationRefresh();
   });
 
   it("supports selecting only csp_Douban, cancellation, and repeated import", async () => {
@@ -148,6 +200,58 @@ describe("real configuration import", () => {
     await importer.cancel();
     expect(second.destroyed).toBe(true);
     expect(importer.state.status).toBe("cancelled");
+  });
+
+  it("keeps independent site sessions alive while browsing another site", async () => {
+    const sessions = new Map<string, SessionFixture>();
+    const importer = createImporter({
+      createSession: (_source, _config, site) => {
+        const key = site.key ?? site.api ?? "unknown";
+        const session = new SessionFixture();
+        sessions.set(key, session);
+        return session;
+      },
+    });
+    const config = JSON.stringify({
+      sites: [
+        { key: "douban", api: "csp_Douban", ext: "fixture" },
+        { key: "playable", api: "csp_PlayableFixture", ext: "fixture" },
+      ],
+    });
+
+    await importer.import(config);
+    importer.confirm();
+    const douban = importer.session;
+    expect(douban).toBeDefined();
+    expect(importer.selectSite("playable").status).toBe("ready");
+    const playable = importer.session;
+    expect(playable).toBeDefined();
+    expect(playable).not.toBe(douban);
+    expect(douban?.view.status).not.toBe("destroyed");
+    expect(importer.selectSite("douban").status).toBe("ready");
+    expect(importer.session).toBe(douban);
+    await importer.cancel();
+    expect(sessions.get("douban")?.destroyed).toBe(true);
+    expect(sessions.get("playable")?.destroyed).toBe(true);
+  });
+
+  it("aggregates search across enabled sites without losing per-source errors", async () => {
+    const importer = createImporter({
+      createSession: (_source, _config, site) => new SessionFixture(site.key ?? "site"),
+    });
+    await importer.import(JSON.stringify({
+      sites: [
+        { key: "douban", api: "csp_Douban" },
+        { key: "playable", api: "csp_PlayableFixture" },
+      ],
+    }));
+    importer.confirm();
+    const result = await importer.aggregateSearch("QX");
+    expect(result.status).toBe("complete");
+    expect(result.completed).toBe(2);
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0]?.sourceIds).toEqual(["douban", "playable"]);
+    await importer.cancel();
   });
 
   it("can select the JVM-native playable source for the player spike", async () => {
@@ -292,6 +396,17 @@ function playableConfigJson(): string {
 }
 
 class SessionFixture implements DesktopSpiderSessionPort {
+  public readonly capabilities: SourceCapabilities = {
+    home: true,
+    category: true,
+    search: true,
+    detail: true,
+    playback: true,
+    localProxy: false,
+    filters: true,
+    pagination: true,
+    engine: "fixture",
+  };
   public destroyed = false;
   public view: DesktopSpiderView = {
     source: "inline:fixture",
@@ -306,6 +421,10 @@ class SessionFixture implements DesktopSpiderSessionPort {
       message: "Douban 当前仅提供元数据/详情，未提供可直接播放的正片地址。",
     },
   };
+
+  public constructor(sourceKey = "douban") {
+    this.view = { ...this.view, source: `inline:${sourceKey}`, api: sourceKey };
+  }
 
   public async open(): Promise<SpiderResponse> {
     this.view.status = "ready";
@@ -322,7 +441,7 @@ class SessionFixture implements DesktopSpiderSessionPort {
   }
 
   public async searchContent(): Promise<SpiderResponse> {
-    return response({ list: [{ vod_id: "msearch:fixture" }] });
+    return response({ list: [{ vod_id: "msearch:fixture", vod_name: "Shared title", vod_year: "2024" }] });
   }
 
   public async detailContent(ids: string[]): Promise<SpiderResponse> {

@@ -346,7 +346,51 @@ checkpoint: complete G28 detachable player
 checkpoint: complete G29 diagnostics
 ```
 
-G30–G78（未开始）
+## G30—G41（已完成）
+
+### 目标
+建立统一 MediaSource 合同和多引擎基础，并完成来源信任、配置历史、站点管理、多站点 session、聚合搜索与健康治理。
+
+### 状态
+已完成。G30—G41 核心合同均已实现，恢复审计、专项测试、完整测试、Electron build、Windows package 和 packaged E2E 通过；恢复 checkpoint 已建立。JVM-native、QuickJS、Python 与 Jellyfin 的运行时边界保持明确，不宣称 Android DEX 通用兼容，也不提前随包分发 Python 或 mpv。
+
+### 依赖
+- G21—G29 Spider、LocalProxy、Playback Session、状态持久化和诊断基础
+
+### 范围
+- `src/source/` 统一 source contract、capabilities 和各引擎适配
+- `src/spider/` JVM、QuickJS、Python sidecar 与 runtime 错误
+- `src/engine/` Engine Router 和 Source Session Registry
+- `src/config/` 内容哈希信任、版本历史、缓存、差异和刷新审查
+- `src/desktop/` 来源路由、站点管理、导入、刷新和多站点 session seam
+- `src/search/` 聚合搜索；`src/health/` 指标、熔断、冷却恢复和重试
+- `src/jellyfin/` 专用 Jellyfin client 与 playback seam
+
+### 验收标准
+- G30—G41 每项核心合同有实现和稳定测试
+- 引擎生命周期、并发 session 限制、退出清理和缺少 runtime 错误可验证
+- 信任与 Spider 内容哈希绑定，配置危险变化不能静默执行，健康诊断脱敏
+- `npm run typecheck`、`npm test`、Electron build、Windows package 和 packaged E2E 通过
+- 不提交 verification、构建产物、缓存、环境文件或真实凭据；不提前实现 G42 以后功能
+
+### 验证结果
+- `tests/source-contract.test.ts`、`tests/jvm-engine.test.ts`、`tests/python-engine.test.ts`、`tests/quickjs-engine.test.ts`、`tests/engine-router.test.ts`、`tests/trust.test.ts`、`tests/config-history.test.ts`、`tests/config-refresh.test.ts`、`tests/site-management.test.ts`、`tests/aggregate-search.test.ts`、`tests/source-health.test.ts` 和 `tests/spider-import.test.ts`：通过
+- `npm run typecheck`：通过
+- `npm test`：31 files / 175 tests passed
+- `npm run electron:build`：通过
+- `npm run electron:package:win`：通过
+- `npm run electron:e2e:package`：首次和重启轮次通过
+
+### 文档
+- `docs/spike-30-41-multi-engine-foundation.md`
+- `verification/G30-G41-recovery/`（本地、被 `.gitignore` 忽略）
+
+### checkpoint
+```text
+checkpoint: complete G30-G41 multi-engine foundation
+```
+
+G42—G78（未开始）
 
 （略，按主路线图执行）
 

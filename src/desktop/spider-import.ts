@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   parseTvBoxConfig,
@@ -11,13 +11,29 @@ import {
   type TvBoxSite,
 } from "../config/decoder.js";
 import {
+  ConfigHistoryStore,
+  type ConfigChangeSummary,
+  type ConfigRefreshLoader,
+  type ConfigVersion,
+} from "../config/history.js";
+import { ConfigRefreshManager, type ConfigRefreshOutcome } from "../config/refresh.js";
+import type { SourceCapabilities } from "../source/media-source.js";
+import type { SearchRequest, VodPage } from "../source/media-source.js";
+import { normalizeVodPage, unwrapSpiderResponse } from "../source/normalizers.js";
+import {
+  AggregateSearchCoordinator,
+  type AggregateSearchOptions,
+  type AggregateSearchSnapshot,
+} from "../search/aggregate-search.js";
+import { SourceHealthRegistry, type SourceHealthSnapshot } from "../health/source-health.js";
+import {
   ImportTrustStore,
-  inspectImport,
+  inspectImportAsync,
   type ImportAssessment,
   type ImportSourceKind,
 } from "../config/trust.js";
-import { routeSpiderApi } from "../spider/rpc.js";
-import { findJvmSpider } from "../spider/jvm-spiders.js";
+import { SiteManager, type ManagedSite } from "./site-management.js";
+import { resolveDesktopSourceBinding } from "./source-router.js";
 import type { DesktopSpiderSessionPort } from "./spider-ui.js";
 
 export type DesktopSpiderImportInputKind = "url" | "file" | "json";
@@ -32,7 +48,16 @@ export type DesktopSpiderImportStatus =
 export interface DesktopSpiderImportSite {
   key: string;
   name: string;
+  alias: string;
   api: string;
+  engine: ManagedSite["engine"];
+  capabilities: SourceCapabilities;
+  enabled: boolean;
+  searchEnabled: boolean;
+  trusted: boolean;
+  lastSuccessAt: number | null;
+  lastError: string | null;
+  health: SourceHealthSnapshot;
 }
 
 export interface DesktopSpiderImportState {
@@ -49,6 +74,30 @@ export interface DesktopSpiderImportState {
   selectedSiteKey: string | null;
   selectedApi: string | null;
   sessionReady: boolean;
+  refresh: DesktopSpiderRefreshState;
+  trust: DesktopSpiderTrustSummary | null;
+}
+
+export interface DesktopSpiderRefreshState {
+  enabled: boolean;
+  running: boolean;
+  pendingVersionId: string | null;
+  pendingChange: ConfigChangeSummary | null;
+  lastError: string | null;
+}
+
+export interface DesktopSpiderTrustSummary {
+  source: string;
+  configHash: string;
+  engines: readonly string[];
+  spiderSources: readonly string[];
+  spiderHashes: Readonly<Record<string, string>>;
+  allowedDomains: readonly string[];
+  executesCode: boolean;
+  usesCookie: boolean;
+  requestsLocalService: boolean;
+  fileChanged: boolean;
+  lastTrustedAt: number | null;
 }
 
 export interface DesktopSpiderImportOptions {
@@ -57,10 +106,16 @@ export interface DesktopSpiderImportOptions {
     source: string,
     config: TvBoxConfig,
     site: TvBoxSite,
+    assessment?: ImportAssessment,
+    health?: SourceHealthRegistry,
   ) => DesktopSpiderSessionPort;
   preferredSiteKey?: () => string | null;
   fetchText?: (url: string, timeoutMs: number) => Promise<string>;
   readFile?: (path: string) => string;
+  history?: ConfigHistoryStore;
+  autoRefresh?: boolean;
+  refreshIntervalMs?: number;
+  fetchRefresh?: ConfigRefreshLoader;
   requestTimeoutMs?: number;
 }
 
@@ -70,11 +125,23 @@ export class DesktopSpiderImportController {
   private readonly preferredSiteKey: (() => string | null) | undefined;
   private readonly fetchText: (url: string, timeoutMs: number) => Promise<string>;
   private readonly readFile: (path: string) => string;
+  private readonly history: ConfigHistoryStore | undefined;
+  private readonly refreshManager: ConfigRefreshManager | undefined;
+  private readonly autoRefresh: boolean;
+  private readonly fetchRefresh: ConfigRefreshLoader | undefined;
   private readonly requestTimeoutMs: number;
   private currentSession: DesktopSpiderSessionPort | undefined;
+  private readonly sessions = new Map<string, DesktopSpiderSessionPort>();
   private config: TvBoxConfig | undefined;
   private assessment: ImportAssessment | undefined;
   private selectedSite: TvBoxSite | undefined;
+  private siteManager: SiteManager | undefined;
+  private aggregateCoordinator: AggregateSearchCoordinator | undefined;
+  private readonly health = new SourceHealthRegistry();
+  private readonly openingSessions = new Map<string, Promise<void>>();
+  private currentSessionKey: string | undefined;
+  private lastRefreshError: string | null = null;
+  private refreshRequestSource: string | undefined;
   private stateValue: DesktopSpiderImportState = emptyState();
 
   public constructor(options: DesktopSpiderImportOptions) {
@@ -83,18 +150,47 @@ export class DesktopSpiderImportController {
     this.preferredSiteKey = options.preferredSiteKey;
     this.fetchText = options.fetchText ?? fetchImportText;
     this.readFile = options.readFile ?? ((path) => readFileSync(path, "utf8"));
+    this.history = options.history;
+    this.autoRefresh = options.autoRefresh === true;
+    this.fetchRefresh = options.fetchRefresh;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
+    this.refreshManager = this.history
+      ? new ConfigRefreshManager(this.history, {
+          ...(options.refreshIntervalMs === undefined ? {} : { intervalMs: options.refreshIntervalMs }),
+          spiderHashes: async (config) => {
+            const source = this.stateValue.source;
+            if (!source) return {};
+            return (await inspectImportAsync(source, config, this.trustStore, {
+              fetchText: (url) => this.fetchText(url, this.requestTimeoutMs),
+            })).spiderHashes;
+          },
+          onApply: (config, version) => this.applyRefreshedConfig(config, version),
+        })
+      : undefined;
   }
 
   public get state(): DesktopSpiderImportState {
+    const currentSites = this.config && this.siteManager
+      ? sitesForUi(this.config, this.siteManager, this.health)
+      : this.stateValue.sites;
     return {
       ...this.stateValue,
       summary: this.stateValue.summary
         ? { ...this.stateValue.summary, engineCounts: { ...this.stateValue.summary.engineCounts } }
         : null,
-      sites: this.stateValue.sites.map((site) => ({ ...site })),
+      sites: currentSites.map((site) => ({
+        ...site,
+        capabilities: { ...site.capabilities },
+        health: {
+          ...site.health,
+          operations: Object.fromEntries(
+            Object.entries(site.health.operations).map(([key, value]) => [key, { ...value }]),
+          ) as SourceHealthSnapshot["operations"],
+        },
+      })),
       sessionReady: this.currentSession !== undefined
         && this.currentSession.view.status !== "destroyed",
+      refresh: this.refreshState(),
     };
   }
 
@@ -110,11 +206,188 @@ export class DesktopSpiderImportController {
     return typeof this.selectedSite?.ext === "string" ? this.selectedSite.ext : "";
   }
 
+  public siteManagement(): readonly DesktopSpiderImportSite[] {
+    return this.state.sites;
+  }
+
+  public aggregateSearch(
+    query: string,
+    options: AggregateSearchOptions = {},
+  ): Promise<AggregateSearchSnapshot> {
+    if (!this.config || !this.siteManager) {
+      return Promise.reject(new Error("Configuration is not ready for aggregate search"));
+    }
+    this.aggregateCoordinator?.cancel();
+    const sources = this.siteManager.list()
+      .filter((site) => site.enabled && site.searchEnabled && site.engine !== "unsupported")
+      .map((site) => ({
+        id: site.key,
+        label: site.alias,
+        search: async (request: SearchRequest): Promise<VodPage> => {
+          const session = await this.ensureSiteSession(site.key);
+          if (session.capabilities && !session.capabilities.search) {
+            throw new Error(`Search is not supported by source: ${site.key}`);
+          }
+          const response = await session.searchContent(
+            request.key,
+            request.quick ?? false,
+            request.page ?? 1,
+          );
+          return normalizeVodPage(unwrapSpiderResponse(response, "search"), request.page ?? 1);
+        },
+      }));
+    const coordinator = new AggregateSearchCoordinator(sources);
+    this.aggregateCoordinator = coordinator;
+    return coordinator.search(query, { ...options, health: this.health });
+  }
+
+  public cancelAggregateSearch(): AggregateSearchSnapshot | undefined {
+    return this.aggregateCoordinator?.cancel();
+  }
+
+  public async refreshConfiguration(): Promise<DesktopSpiderImportState> {
+    const source = this.stateValue.source;
+    const inputKind = this.stateValue.inputKind;
+    if (!this.refreshManager || !source || !inputKind) {
+      this.setError("CONFIG_REFRESH_UNAVAILABLE", "当前配置没有可用的刷新来源");
+      return this.state;
+    }
+    try {
+      const outcome = await this.refreshManager.refresh(
+        source,
+        historyKindFor(inputKind),
+        this.refreshLoader(source, inputKind, this.refreshRequestSource),
+      );
+      this.lastRefreshError = outcome.result.error;
+      if (outcome.requiresApproval) {
+        this.stateValue.warning = refreshChangeWarning(outcome);
+      } else if (outcome.result.error) {
+        this.stateValue.warning = outcome.result.usedCache
+          ? "远程配置刷新失败，继续使用最后成功版本。"
+          : outcome.result.error;
+      } else if (outcome.result.changed) {
+        this.stateValue.warning = null;
+      }
+    } catch (error) {
+      this.lastRefreshError = errorMessage(error);
+      this.stateValue.warning = this.lastRefreshError;
+      this.setError("CONFIG_REFRESH_ERROR", this.lastRefreshError);
+    }
+    return this.state;
+  }
+
+  public async approveConfigurationRefresh(versionId?: string): Promise<DesktopSpiderImportState> {
+    if (!this.refreshManager || !this.stateValue.source) {
+      this.setError("CONFIG_REFRESH_UNAVAILABLE", "当前配置没有可用的刷新来源");
+      return this.state;
+    }
+    try {
+      await this.refreshManager.approve(this.stateValue.source, versionId);
+      this.lastRefreshError = null;
+      this.stateValue.warning = null;
+    } catch (error) {
+      this.lastRefreshError = errorMessage(error);
+      this.setError("CONFIG_REFRESH_APPROVE_ERROR", this.lastRefreshError);
+    }
+    return this.state;
+  }
+
+  public rejectConfigurationRefresh(): DesktopSpiderImportState {
+    if (this.refreshManager && this.stateValue.source) {
+      this.refreshManager.reject(this.stateValue.source);
+      this.lastRefreshError = null;
+      this.stateValue.warning = null;
+    }
+    return this.state;
+  }
+
+  public retrySite(siteKey: string): DesktopSpiderImportState {
+    try {
+      this.siteManager?.get(siteKey) ?? this.siteManagerRequired();
+      this.health.retry(siteKey);
+      this.syncManagedSites();
+    } catch (error) {
+      this.setError("SITE_HEALTH_ERROR", errorMessage(error));
+    }
+    return this.state;
+  }
+
+  public setSiteEnabled(siteKey: string, enabled: boolean): DesktopSpiderImportState {
+    try {
+      this.siteManager?.setEnabled(siteKey, enabled) ?? this.siteManagerRequired();
+      this.syncManagedSites();
+    } catch (error) {
+      this.setError("SITE_MANAGEMENT_ERROR", errorMessage(error));
+    }
+    return this.state;
+  }
+
+  public setSiteSearchEnabled(siteKey: string, enabled: boolean): DesktopSpiderImportState {
+    try {
+      this.siteManager?.setSearchEnabled(siteKey, enabled) ?? this.siteManagerRequired();
+      this.syncManagedSites();
+    } catch (error) {
+      this.setError("SITE_MANAGEMENT_ERROR", errorMessage(error));
+    }
+    return this.state;
+  }
+
+  public setSiteAlias(siteKey: string, alias: string): DesktopSpiderImportState {
+    try {
+      this.siteManager?.setAlias(siteKey, alias) ?? this.siteManagerRequired();
+      this.syncManagedSites();
+    } catch (error) {
+      this.setError("SITE_MANAGEMENT_ERROR", errorMessage(error));
+    }
+    return this.state;
+  }
+
+  public reorderSites(siteKeys: readonly string[]): DesktopSpiderImportState {
+    try {
+      this.siteManager?.reorder(siteKeys) ?? this.siteManagerRequired();
+      this.syncManagedSites();
+    } catch (error) {
+      this.setError("SITE_MANAGEMENT_ERROR", errorMessage(error));
+    }
+    return this.state;
+  }
+
+  public clearSiteCache(siteKey: string): DesktopSpiderImportState {
+    try {
+      this.siteManager?.clearCache(siteKey) ?? this.siteManagerRequired();
+      this.syncManagedSites();
+    } catch (error) {
+      this.setError("SITE_MANAGEMENT_ERROR", errorMessage(error));
+    }
+    return this.state;
+  }
+
+  public async reinitializeSite(siteKey: string): Promise<DesktopSpiderImportState> {
+    try {
+      this.siteManager?.reinitialize(siteKey) ?? this.siteManagerRequired();
+      await this.releaseSiteSession(siteKey);
+      if (this.selectedSite && siteKeyOf(this.selectedSite) === siteKey) {
+        if (this.stateValue.status === "ready") this.createCurrentSession();
+      }
+      this.syncManagedSites();
+    } catch (error) {
+      this.setError("SITE_MANAGEMENT_ERROR", errorMessage(error));
+    }
+    return this.state;
+  }
+
   public async import(input: string): Promise<DesktopSpiderImportState> {
-    await this.releaseCurrentSession();
+    this.refreshManager?.stop();
+    this.lastRefreshError = null;
+    this.refreshRequestSource = undefined;
+    await this.releaseAllSessions();
     this.config = undefined;
     this.assessment = undefined;
     this.selectedSite = undefined;
+    this.siteManager = undefined;
+    this.aggregateCoordinator?.cancel();
+    this.aggregateCoordinator = undefined;
+    this.openingSessions.clear();
 
     let descriptor: ImportDescriptor;
     try {
@@ -136,42 +409,21 @@ export class DesktopSpiderImportController {
       source: descriptor.source,
       sourceKind: descriptor.sourceKind,
     };
+    this.refreshRequestSource = descriptor.requestSource;
 
     try {
       const payload = await descriptor.load();
-      const config = parseTvBoxConfig(payload);
-      const summary = summarizeConfig(config);
-      const sites = sitesForUi(config);
-      const configuredSites = sites.map((site) => findSite(config, site.key));
-      const preferredSiteKey = this.preferredSiteKey?.();
-      const selectedSite = configuredSites
-        .find((site) => site && siteKeyOf(site) === preferredSiteKey && isSupportedJvmSite(site))
-        ?? configuredSites.find((site) => isSupportedJvmSite(site));
-      const assessment = inspectImport(descriptor.source, config, this.trustStore);
-
-      this.config = config;
-      this.assessment = assessment;
-      this.selectedSite = selectedSite;
-      this.stateValue = {
-        ...this.stateValue,
-        loading: false,
-        summary,
-        sites,
-        selectedSiteKey: selectedSite ? siteKeyOf(selectedSite) : null,
-        selectedApi: selectedSite?.api ?? null,
-        trusted: !assessment.requiresConfirmation,
-        warning: assessment.requiresConfirmation ? assessment.warning : null,
-      };
-
-      if (!selectedSite) {
-        this.setError("UNSUPPORTED_SPIDER_ENGINE", "配置中没有可用的 JVM-native 播放或元数据 Spider 站点");
-      } else if (assessment.requiresConfirmation) {
-        this.stateValue.status = "confirmation_required";
-      } else {
-        this.createCurrentSession();
-        this.stateValue.status = "ready";
-      }
+      await this.applyPayload(descriptor, payload);
     } catch (error) {
+      const cached = this.history?.cached(descriptor.source);
+      if (cached) {
+        try {
+          await this.applyPayload(descriptor, cached.rawJson, true);
+          return this.state;
+        } catch {
+          // Preserve the original error when the cached payload is invalid too.
+        }
+      }
       const code = descriptor.inputKind === "url"
         ? "IMPORT_FETCH_ERROR"
         : descriptor.inputKind === "file"
@@ -188,6 +440,144 @@ export class DesktopSpiderImportController {
     return this.state;
   }
 
+  private async applyPayload(
+    descriptor: ImportDescriptor,
+    payload: string,
+    fromCache = false,
+  ): Promise<void> {
+    const config = parseTvBoxConfig(payload);
+    const summary = summarizeConfig(config);
+    const configuredSites = (Array.isArray(config.sites) ? config.sites : [])
+      .filter((site) => typeof site.api === "string");
+    const preferredSiteKey = this.preferredSiteKey?.();
+    const selectedSite = configuredSites
+      .find((site) => site && siteKeyOf(site) === preferredSiteKey && isSupportedDesktopSite(config, site))
+      ?? configuredSites.find((site) => isSupportedDesktopSite(config, site));
+    const assessment = await inspectImportAsync(descriptor.source, config, this.trustStore, {
+      fetchText: (url) => this.fetchText(url, this.requestTimeoutMs),
+    });
+    this.history?.recordSuccessful(
+      descriptor.source,
+      historyKindFor(descriptor.inputKind),
+      payload,
+      {},
+      assessment.spiderHashes,
+    );
+    this.siteManager = new SiteManager({
+      config,
+      trusted: !assessment.requiresConfirmation,
+    });
+    const sites = sitesForUi(config, this.siteManager, this.health);
+
+    this.config = config;
+    this.assessment = assessment;
+    this.selectedSite = selectedSite;
+    this.stateValue = {
+      ...this.stateValue,
+      loading: false,
+      summary,
+      sites,
+      selectedSiteKey: selectedSite ? siteKeyOf(selectedSite) : null,
+      selectedApi: selectedSite?.api ?? null,
+      trusted: !assessment.requiresConfirmation,
+      trust: trustSummary(assessment),
+      warning: assessment.requiresConfirmation
+        ? assessment.warning
+        : fromCache
+          ? "远程配置不可用，已加载最后成功版本。"
+          : null,
+    };
+
+    if (!selectedSite) {
+      this.setError("UNSUPPORTED_SPIDER_ENGINE", "配置中没有可用的媒体来源站点");
+    } else if (assessment.requiresConfirmation) {
+      this.stateValue.status = "confirmation_required";
+    } else {
+      this.createCurrentSession();
+      this.stateValue.status = "ready";
+    }
+    if (this.autoRefresh && this.refreshManager
+      && (descriptor.inputKind === "url" || descriptor.inputKind === "file")) {
+      this.refreshManager.start(
+        descriptor.source,
+        historyKindFor(descriptor.inputKind),
+        this.refreshLoader(descriptor.source, descriptor.inputKind, descriptor.requestSource),
+      );
+    }
+  }
+
+  private async applyRefreshedConfig(config: TvBoxConfig, version: ConfigVersion): Promise<void> {
+    const previousSelectedKey = this.selectedSite ? siteKeyOf(this.selectedSite) : this.currentSessionKey;
+    const preferences = this.siteManager?.preferences();
+    const assessment = await inspectImportAsync(version.source, config, this.trustStore, {
+      fetchText: (url) => this.fetchText(url, this.requestTimeoutMs),
+    });
+    const configuredSites = (Array.isArray(config.sites) ? config.sites : [])
+      .filter((site) => typeof site.api === "string");
+    const selectedSite = configuredSites
+      .find((site) => siteKeyOf(site) === previousSelectedKey && isSupportedDesktopSite(config, site))
+      ?? configuredSites.find((site) => isSupportedDesktopSite(config, site));
+    this.config = config;
+    this.assessment = assessment;
+    this.selectedSite = selectedSite;
+    this.siteManager = new SiteManager({
+      config,
+      trusted: !assessment.requiresConfirmation,
+      ...(preferences ? { preferences } : {}),
+    });
+    this.stateValue = {
+      ...this.stateValue,
+      summary: summarizeConfig(config),
+      sites: sitesForUi(config, this.siteManager, this.health),
+      selectedSiteKey: selectedSite ? siteKeyOf(selectedSite) : null,
+      selectedApi: selectedSite?.api ?? null,
+      trusted: !assessment.requiresConfirmation,
+      trust: trustSummary(assessment),
+      warning: assessment.requiresConfirmation ? assessment.warning : null,
+      error: null,
+    };
+    if (!selectedSite) {
+      this.setError("UNSUPPORTED_SPIDER_ENGINE", "刷新后的配置没有可用来源");
+    } else if (assessment.requiresConfirmation) {
+      this.stateValue.status = "confirmation_required";
+    } else {
+      if (!this.currentSession || this.currentSessionKey !== siteKeyOf(selectedSite)) {
+        this.createCurrentSession();
+      }
+      this.stateValue.status = "ready";
+    }
+  }
+
+  private refreshLoader(
+    source: string,
+    inputKind: DesktopSpiderImportInputKind,
+    requestSource = source,
+  ): ConfigRefreshLoader {
+    if (this.fetchRefresh) return this.fetchRefresh;
+    if (inputKind === "url") {
+      return (validators) => fetchConfigPayload(requestSource, this.requestTimeoutMs, validators);
+    }
+    if (inputKind === "file") {
+      return async () => ({ body: this.readFile(fileURLToPath(source)) });
+    }
+    return async () => {
+      throw new Error("Inline JSON configuration cannot be refreshed automatically");
+    };
+  }
+
+  private refreshState(): DesktopSpiderRefreshState {
+    const pending = this.refreshManager && this.stateValue.source
+      ? this.refreshManager.pending(this.stateValue.source)
+      : null;
+    return {
+      enabled: this.refreshManager !== undefined,
+      running: this.refreshManager?.isRunning ?? false,
+      pendingVersionId: pending?.id ?? null,
+      pendingChange: pending ? cloneChange(pending.change) : null,
+      lastError: this.lastRefreshError,
+    };
+  }
+
   public selectSite(siteKey: string): DesktopSpiderImportState {
     if (!this.config) {
       this.setError("IMPORT_NOT_LOADED", "请先导入配置");
@@ -198,14 +588,19 @@ export class DesktopSpiderImportController {
       this.setError("IMPORT_SITE_NOT_FOUND", `未找到站点：${siteKey}`);
       return this.state;
     }
+    if (this.siteManager?.get(siteKey)?.enabled === false) {
+      this.setError("SITE_DISABLED", `站点已禁用：${siteKey}`);
+      return this.state;
+    }
     this.selectedSite = site;
     this.stateValue.selectedSiteKey = siteKeyOf(site);
     this.stateValue.selectedApi = site.api ?? null;
-    if (!isSupportedJvmSite(site)) {
-      this.setError("UNSUPPORTED_SPIDER_ENGINE", "当前 Spike 只支持 JVM-native csp_Douban 或 csp_PlayableFixture");
+    if (!isSupportedDesktopSite(this.config, site)) {
+      this.setError("UNSUPPORTED_SPIDER_ENGINE", "当前站点没有可用的来源引擎绑定");
     } else {
       this.stateValue.error = null;
       this.stateValue.status = this.assessment?.requiresConfirmation ? "confirmation_required" : "ready";
+      if (this.stateValue.status === "ready") this.createCurrentSession();
     }
     return this.state;
   }
@@ -222,8 +617,15 @@ export class DesktopSpiderImportController {
     }
 
     try {
-      this.trustStore.trust(this.stateValue.source);
-      this.assessment = inspectImport(this.stateValue.source, this.config, this.trustStore);
+      this.trustStore.trustAssessment(this.assessment);
+      this.assessment = {
+        ...this.assessment,
+        requiresConfirmation: false,
+        lastTrustedAt: Date.now(),
+      };
+      this.stateValue.trust = trustSummary(this.assessment);
+      for (const site of this.siteManager?.list() ?? []) this.siteManager?.setTrusted(site.key, true);
+      this.syncManagedSites();
       this.createCurrentSession();
       this.stateValue.status = "ready";
       this.stateValue.trusted = true;
@@ -236,8 +638,8 @@ export class DesktopSpiderImportController {
   }
 
   public async cancel(): Promise<DesktopSpiderImportState> {
-    const session = this.currentSession;
-    if (session) await session.destroy();
+    this.refreshManager?.stop();
+    await this.releaseAllSessions(true);
     this.stateValue.status = "cancelled";
     this.stateValue.loading = false;
     this.stateValue.warning = null;
@@ -253,23 +655,98 @@ export class DesktopSpiderImportController {
     if (!this.config || !this.selectedSite || !this.stateValue.source) {
       throw new Error("Imported configuration is not ready to create a Spider session");
     }
-    this.currentSession = this.createSession(
+    const key = siteKeyOf(this.selectedSite);
+    const existing = this.sessions.get(key);
+    if (existing && existing.view.status !== "destroyed") {
+      this.currentSession = existing;
+      this.currentSessionKey = key;
+      return;
+    }
+    const session = this.createSession(
       this.stateValue.source,
       this.config,
       this.selectedSite,
+      this.assessment,
+      this.health,
     );
+    this.sessions.set(key, session);
+    this.currentSession = session;
+    this.currentSessionKey = key;
   }
 
-  private async releaseCurrentSession(): Promise<void> {
-    const session = this.currentSession;
-    this.currentSession = undefined;
+  private async ensureSiteSession(siteKey: string): Promise<DesktopSpiderSessionPort> {
+    if (!this.config || !this.selectedSite || !this.stateValue.source) {
+      throw new Error("Configuration is not ready for site search");
+    }
+    const site = findSite(this.config, siteKey);
+    if (!site) throw new Error(`站点不存在：${siteKey}`);
+    let session = this.sessions.get(siteKey);
+    if (!session || session.view.status === "destroyed") {
+      session = this.createSession(this.stateValue.source, this.config, site, this.assessment, this.health);
+      this.sessions.set(siteKey, session);
+    }
+    if (session.view.status !== "ready") {
+      const existingOpen = this.openingSessions.get(siteKey);
+      if (existingOpen) {
+        await existingOpen;
+      } else {
+        const opening = (async () => {
+          const response = await session?.open(siteKey, typeof site.ext === "string" ? site.ext : "");
+          if (!response?.ok) {
+            throw new Error(response?.error?.message ?? `站点初始化失败：${siteKey}`);
+          }
+          const capabilities = session?.capabilities;
+          if (capabilities && this.siteManager) {
+            this.siteManager.setCapabilities(siteKey, capabilities);
+            this.syncManagedSites();
+          }
+        })().finally(() => {
+          this.openingSessions.delete(siteKey);
+        });
+        this.openingSessions.set(siteKey, opening);
+        await opening;
+      }
+    }
+    return session;
+  }
+
+  private async releaseSiteSession(siteKey: string): Promise<void> {
+    const session = this.sessions.get(siteKey);
+    this.sessions.delete(siteKey);
+    if (this.currentSession === session) {
+      this.currentSession = undefined;
+      this.currentSessionKey = undefined;
+    }
     if (session) await session.destroy();
+  }
+
+  private async releaseAllSessions(retainCurrent = false): Promise<void> {
+    const previousCurrent = this.currentSession;
+    const previousCurrentKey = this.currentSessionKey;
+    const sessions = [...this.sessions.values()];
+    this.sessions.clear();
+    this.currentSession = undefined;
+    this.currentSessionKey = undefined;
+    await Promise.all(sessions.map((session) => session.destroy()));
+    if (retainCurrent) {
+      this.currentSession = previousCurrent;
+      this.currentSessionKey = previousCurrentKey;
+    }
   }
 
   private setError(code: string, message: string): void {
     this.stateValue.status = "error";
     this.stateValue.loading = false;
     this.stateValue.error = { code, message };
+  }
+
+  private syncManagedSites(): void {
+    if (!this.config || !this.siteManager) return;
+    this.stateValue.sites = sitesForUi(this.config, this.siteManager, this.health);
+  }
+
+  private siteManagerRequired(): never {
+    throw new Error("Site management is unavailable before configuration import");
   }
 }
 
@@ -286,6 +763,18 @@ export function renderDesktopSpiderImportUi(state: DesktopSpiderImportState): st
     ? `<section data-testid="config-summary">
         <strong>配置摘要</strong>
         <p>站点 ${state.summary.siteCount} 个，Spider：${state.summary.hasSpider ? "有" : "无"}</p>
+      </section>`
+    : "";
+  const trust = state.trust
+    ? `<section data-testid="trust-summary">
+        <strong>来源信任摘要</strong>
+        <p>配置来源：${escapeHtml(state.trust.source)}</p>
+        <p>引擎：${escapeHtml(state.trust.engines.join(", ") || "无")}</p>
+        <p>执行代码：${state.trust.executesCode ? "是" : "否"} · Cookie：${state.trust.usesCookie ? "是" : "否"} · 本地服务：${state.trust.requestsLocalService ? "是" : "否"}</p>
+        <p>允许域名：${escapeHtml(state.trust.allowedDomains.join(", ") || "未声明")}</p>
+        <p>配置哈希：${escapeHtml(state.trust.configHash)} · 文件变化：${state.trust.fileChanged ? "是" : "否"} · 上次信任：${state.trust.lastTrustedAt === null ? "从未" : String(state.trust.lastTrustedAt)}</p>
+        <p>Spider 来源：${escapeHtml(state.trust.spiderSources.join(", ") || "无")}</p>
+        <p>Spider 哈希：${escapeHtml(Object.entries(state.trust.spiderHashes).map(([source, hash]) => `${source}=${hash}`).join(" · ") || "无")}</p>
       </section>`
     : "";
   const warning = state.status === "confirmation_required" && state.warning
@@ -306,11 +795,44 @@ export function renderDesktopSpiderImportUi(state: DesktopSpiderImportState): st
     ? `<form data-testid="site-selector" data-action="select-site-form">
         <label>Spider 站点
           <select name="siteKey">
-            ${state.sites.map((site) => `<option value="${escapeHtml(site.key)}"${site.key === state.selectedSiteKey ? " selected" : ""}>${escapeHtml(site.name)} · ${escapeHtml(site.api)}</option>`).join("")}
+            ${state.sites.map((site) => `<option value="${escapeHtml(site.key)}"${site.key === state.selectedSiteKey ? " selected" : ""}${site.enabled ? "" : " disabled"}>${escapeHtml(site.name)} · ${escapeHtml(site.api)} · ${escapeHtml(site.engine)}</option>`).join("")}
           </select>
         </label>
         <button type="submit">选择站点</button>
       </form>`
+    : "";
+  const siteManagement = state.sites.length > 0
+    ? `<section data-testid="site-management">
+        <strong>站点管理</strong>
+        ${state.sites.map((site) => `<article data-site-key="${escapeHtml(site.key)}">
+          <p><strong>${escapeHtml(site.alias)}</strong> · ${escapeHtml(site.engine)} · ${escapeHtml(site.trusted ? "已信任" : "未信任")}</p>
+          <label><input type="checkbox" data-action="site-enabled" data-site-key="${escapeHtml(site.key)}"${site.enabled ? " checked" : ""}>启用</label>
+          <label><input type="checkbox" data-action="site-search" data-site-key="${escapeHtml(site.key)}"${site.searchEnabled ? " checked" : ""}>参与搜索</label>
+          <label>别名 <input data-action="site-alias" data-site-key="${escapeHtml(site.key)}" value="${escapeHtml(site.alias)}"></label>
+          <span>能力：${escapeHtml(capabilityLabels(site.capabilities))}</span>
+          <span>健康：${escapeHtml(site.health.circuit)} · 连续失败 ${site.health.consecutiveFailures} · 超时 ${site.health.timeoutCount} · 崩溃 ${site.health.sidecarCrashCount}</span>
+          <button type="button" data-action="site-move-up" data-site-key="${escapeHtml(site.key)}">上移</button>
+          <button type="button" data-action="site-move-down" data-site-key="${escapeHtml(site.key)}">下移</button>
+          <button type="button" data-action="site-reinitialize" data-site-key="${escapeHtml(site.key)}">重新初始化</button>
+          <button type="button" data-action="site-clear-cache" data-site-key="${escapeHtml(site.key)}">清除缓存</button>
+          <button type="button" data-action="site-retry" data-site-key="${escapeHtml(site.key)}">手动重试</button>
+        </article>`).join("")}
+      </section>`
+    : "";
+  const refresh = state.refresh.enabled
+    ? `<section data-testid="config-refresh">
+        <strong>配置刷新</strong>
+        <p>${state.refresh.running ? "定时刷新已启用" : "可手动检查远程或文件配置"}</p>
+        ${state.refresh.pendingVersionId
+          ? `<p class="warning">检测到危险变更，需确认后应用。${state.refresh.pendingChange
+            ? `新增 ${state.refresh.pendingChange.addedSites.length}，删除 ${state.refresh.pendingChange.removedSites.length}，变更 ${state.refresh.pendingChange.changedSites.length}`
+            : ""}</p>
+            <button type="button" data-action="refresh-approve" data-version-id="${escapeHtml(state.refresh.pendingVersionId)}">应用刷新</button>
+            <button type="button" data-action="refresh-reject">拒绝刷新</button>`
+          : ""}
+        ${state.refresh.lastError ? `<p class="error">${escapeHtml(state.refresh.lastError)}</p>` : ""}
+        <button type="button" data-action="refresh-now">立即刷新</button>
+      </section>`
     : "";
 
   return `<!doctype html>
@@ -344,7 +866,10 @@ export function renderDesktopSpiderImportUi(state: DesktopSpiderImportState): st
         <button type="submit"${state.loading ? " disabled" : ""}>导入配置</button>
       </form>
       ${summary}
+      ${trust}
       ${sites}
+      ${siteManagement}
+      ${refresh}
       ${warning}
       ${error}
     </main>
@@ -368,6 +893,38 @@ export function renderDesktopSpiderImportUi(state: DesktopSpiderImportState): st
           const siteKey = new FormData(event.currentTarget).get('siteKey');
           void send('/api/import/select', { siteKey: String(siteKey || '') });
         });
+        document.querySelectorAll('[data-action="site-enabled"]').forEach((input) => input.addEventListener('change', (event) => {
+          const target = event.currentTarget;
+          void send('/api/import/site-enabled', { siteKey: target.dataset.siteKey, enabled: target.checked });
+        }));
+        document.querySelectorAll('[data-action="site-search"]').forEach((input) => input.addEventListener('change', (event) => {
+          const target = event.currentTarget;
+          void send('/api/import/site-search', { siteKey: target.dataset.siteKey, enabled: target.checked });
+        }));
+        document.querySelectorAll('[data-action="site-alias"]').forEach((input) => input.addEventListener('change', (event) => {
+          const target = event.currentTarget;
+          void send('/api/import/site-alias', { siteKey: target.dataset.siteKey, alias: target.value });
+        }));
+        document.querySelectorAll('[data-action="site-reinitialize"]').forEach((button) => button.addEventListener('click', () => send('/api/import/site-reinitialize', { siteKey: button.dataset.siteKey })));
+        document.querySelectorAll('[data-action="site-clear-cache"]').forEach((button) => button.addEventListener('click', () => send('/api/import/site-clear-cache', { siteKey: button.dataset.siteKey })));
+        document.querySelectorAll('[data-action="site-retry"]').forEach((button) => button.addEventListener('click', () => send('/api/import/site-retry', { siteKey: button.dataset.siteKey })));
+        const moveSite = (button, offset) => {
+          const articles = [...document.querySelectorAll('[data-testid="site-management"] article')];
+          const index = articles.indexOf(button.closest('article'));
+          const next = index + offset;
+          if (index < 0 || next < 0 || next >= articles.length) return;
+          const keys = articles.map((article) => article.dataset.siteKey);
+          [keys[index], keys[next]] = [keys[next], keys[index]];
+          void send('/api/import/site-reorder', { siteKeys: keys });
+        };
+        document.querySelectorAll('[data-action="site-move-up"]').forEach((button) => button.addEventListener('click', () => moveSite(button, -1)));
+        document.querySelectorAll('[data-action="site-move-down"]').forEach((button) => button.addEventListener('click', () => moveSite(button, 1)));
+        document.querySelector('[data-action="refresh-now"]')?.addEventListener('click', () => send('/api/import/refresh'));
+        document.querySelector('[data-action="refresh-approve"]')?.addEventListener('click', (event) => {
+          const button = event.currentTarget;
+          void send('/api/import/refresh-approve', { versionId: button.dataset.versionId });
+        });
+        document.querySelector('[data-action="refresh-reject"]')?.addEventListener('click', () => send('/api/import/refresh-reject'));
       })();
     </script>
   </body>
@@ -378,6 +935,7 @@ interface ImportDescriptor {
   inputKind: DesktopSpiderImportInputKind;
   source: string;
   sourceKind: ImportSourceKind;
+  requestSource?: string;
   load(): Promise<string>;
 }
 
@@ -390,12 +948,14 @@ function describeInput(
   const trimmed = input.trim();
   if (!trimmed) throw new Error("请输入配置 URL、文件路径或原始 JSON");
   if (/^https?:\/\//i.test(trimmed)) {
-    const source = new URL(trimmed).toString();
+    const requestSource = new URL(trimmed).toString();
+    const source = safeSourceForDisplay(requestSource);
     return {
       inputKind: "url",
       source,
       sourceKind: "remote",
-      load: () => fetchText(source, requestTimeoutMs),
+      requestSource,
+      load: () => fetchText(requestSource, requestTimeoutMs),
     };
   }
   if (isInlinePayload(trimmed)) {
@@ -423,6 +983,78 @@ async function fetchImportText(url: string, timeoutMs: number): Promise<string> 
   return response.text();
 }
 
+async function fetchConfigPayload(
+  url: string,
+  timeoutMs: number,
+  validators: { etag: string | null; lastModified: string | null } | null,
+): Promise<{ body?: string; notModified?: boolean; etag?: string | null; lastModified?: string | null }> {
+  const headers: Record<string, string> = {};
+  if (validators?.etag) headers["if-none-match"] = validators.etag;
+  if (validators?.lastModified) headers["if-modified-since"] = validators.lastModified;
+  const response = await fetch(url, {
+    headers,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const etag = response.headers.get("etag");
+  const lastModified = response.headers.get("last-modified");
+  if (response.status === 304) return { notModified: true, etag, lastModified };
+  if (!response.ok) throw new Error(`HTTP ${response.status} while refreshing configuration`);
+  return { body: await response.text(), etag, lastModified };
+}
+
+function refreshChangeWarning(outcome: ConfigRefreshOutcome): string {
+  const change = outcome.result.version?.change;
+  if (!change) return "配置刷新检测到变更，请确认后应用。";
+  const parts = [
+    change.addedSites.length > 0 ? `新增 ${change.addedSites.length} 个站点` : "",
+    change.removedSites.length > 0 ? `删除 ${change.removedSites.length} 个站点` : "",
+    change.changedSites.length > 0 ? `变更 ${change.changedSites.length} 个站点` : "",
+    change.spiderChanged || change.spiderContentChanged ? "Spider 来源或内容哈希发生变化" : "",
+  ].filter(Boolean);
+  return `${parts.join("；") || "配置内容发生变化"}，请确认后应用。`;
+}
+
+function cloneChange(change: ConfigChangeSummary): ConfigChangeSummary {
+  return {
+    addedSites: [...change.addedSites],
+    removedSites: [...change.removedSites],
+    changedSites: [...change.changedSites],
+    spiderChanged: change.spiderChanged,
+    spiderContentChanged: change.spiderContentChanged ?? false,
+    changedTopLevelKeys: [...change.changedTopLevelKeys],
+  };
+}
+
+function trustSummary(assessment: ImportAssessment): DesktopSpiderTrustSummary {
+  return {
+    source: safeSourceForDisplay(assessment.source),
+    configHash: assessment.configHash,
+    engines: [...assessment.engines],
+    spiderSources: [...assessment.spiderSources],
+    spiderHashes: { ...assessment.spiderHashes },
+    allowedDomains: [...assessment.allowedDomains],
+    executesCode: assessment.executesCode,
+    usesCookie: assessment.usesCookie,
+    requestsLocalService: assessment.requestsLocalService,
+    fileChanged: assessment.fileChanged,
+    lastTrustedAt: assessment.lastTrustedAt,
+  };
+}
+
+function safeSourceForDisplay(source: string): string {
+  try {
+    const url = new URL(source);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      url.search = "";
+      url.hash = "";
+      return url.toString();
+    }
+  } catch {
+    // Inline and local source identifiers do not need URL redaction.
+  }
+  return source;
+}
+
 function isInlinePayload(value: string): boolean {
   return value.startsWith("{")
     || value.startsWith("[")
@@ -431,15 +1063,41 @@ function isInlinePayload(value: string): boolean {
     || /[A-Za-z0-9]{8}\*\*/.test(value);
 }
 
-function sitesForUi(config: TvBoxConfig): DesktopSpiderImportSite[] {
+function sitesForUi(
+  config: TvBoxConfig,
+  manager: SiteManager,
+  health: SourceHealthRegistry,
+): DesktopSpiderImportSite[] {
   const sites = Array.isArray(config.sites) ? config.sites : [];
-  return sites
-    .filter((site) => typeof site.api === "string")
-    .map((site) => ({
-      key: siteKeyOf(site),
-      name: typeof site.name === "string" ? site.name : siteKeyOf(site),
-      api: site.api as string,
-    }));
+  const byKey = new Map(
+    sites
+      .filter((site) => typeof site.api === "string")
+      .map((site) => [siteKeyOf(site), site] as const),
+  );
+  return manager.list().map((managed) => {
+      if (!byKey.has(managed.key)) throw new Error(`Site manager entry is missing: ${managed.key}`);
+      return {
+        key: managed.key,
+        name: managed.name,
+        alias: managed.alias,
+        api: managed.api,
+        engine: managed.engine,
+        capabilities: managed.capabilities,
+        enabled: managed.enabled,
+        searchEnabled: managed.searchEnabled,
+        trusted: managed.trusted,
+        lastSuccessAt: managed.lastSuccessAt ?? health.get(managed.key).lastSuccessAt,
+        lastError: managed.lastError ?? health.get(managed.key).lastError,
+        health: health.get(managed.key),
+      };
+    });
+}
+
+function capabilityLabels(capabilities: SourceCapabilities): string {
+  return Object.entries(capabilities)
+    .filter(([key, value]) => key !== "engine" && value === true)
+    .map(([key]) => key)
+    .join(", ") || "无";
 }
 
 function findSite(config: TvBoxConfig, siteKey: string): TvBoxSite | undefined {
@@ -448,10 +1106,11 @@ function findSite(config: TvBoxConfig, siteKey: string): TvBoxSite | undefined {
     ?? sites.find((site) => site.api === siteKey);
 }
 
-function isSupportedJvmSite(site: TvBoxSite | undefined): site is TvBoxSite & { api: string } {
-  return typeof site?.api === "string"
-    && routeSpiderApi(site.api) === "java"
-    && findJvmSpider(site.api) !== undefined;
+function isSupportedDesktopSite(
+  config: TvBoxConfig,
+  site: TvBoxSite | undefined,
+): site is TvBoxSite & { api: string } {
+  return site !== undefined && resolveDesktopSourceBinding(config, site) !== undefined;
 }
 
 function siteKeyOf(site: TvBoxSite): string {
@@ -475,7 +1134,19 @@ function emptyState(): DesktopSpiderImportState {
     selectedSiteKey: null,
     selectedApi: null,
     sessionReady: false,
+    refresh: {
+      enabled: false,
+      running: false,
+      pendingVersionId: null,
+      pendingChange: null,
+      lastError: null,
+    },
+    trust: null,
   };
+}
+
+function historyKindFor(kind: DesktopSpiderImportInputKind): "url" | "file" | "json" {
+  return kind;
 }
 
 function errorMessage(error: unknown): string {

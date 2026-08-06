@@ -40,6 +40,7 @@ export interface PlaybackMediaSync {
   duration?: number;
   volume?: number;
   muted?: boolean;
+  error?: PlaybackError;
 }
 
 const INITIAL_STATE: PlaybackState = {
@@ -154,6 +155,10 @@ export class EmbeddedPlaybackController {
     if (patch.currentTime !== undefined) this.seek(patch.currentTime);
     if (patch.volume !== undefined) this.setVolume(patch.volume);
     if (patch.muted !== undefined) this.setMuted(patch.muted);
+    if (patch.error) {
+      this.stateValue.status = "error";
+      this.stateValue.error = { ...patch.error };
+    }
     if (patch.status !== undefined && patch.status !== "idle" && patch.status !== "resolving") {
       this.stateValue.status = patch.status;
     }

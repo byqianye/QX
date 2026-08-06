@@ -18,6 +18,7 @@ const emit = defineEmits<{
 const video = ref<HTMLVideoElement | null>(null);
 const localStatus = ref(props.state.status);
 const localError = ref<string | null>(props.state.error?.message ?? null);
+let localErrorCode: string | null = props.state.error?.code ?? null;
 const currentTime = ref(props.state.currentTime);
 const duration = ref(props.state.duration);
 const muted = ref(props.state.muted);
@@ -47,6 +48,10 @@ watch(() => props.state.error?.message, (message) => {
   localError.value = message ?? null;
 });
 
+watch(() => props.state.error?.code, (code) => {
+  localErrorCode = code ?? null;
+});
+
 onMounted(() => {
   loadSource();
 });
@@ -73,6 +78,7 @@ function loadSource(): void {
   element.removeAttribute("src");
   element.load();
   localError.value = props.state.error?.message ?? null;
+  localErrorCode = props.state.error?.code ?? null;
   const source = props.state.source;
   if (!source) {
     localStatus.value = props.state.status;
@@ -85,6 +91,13 @@ function loadSource(): void {
     && element.canPlayType("application/vnd.apple.mpegurl") === ""
     && Hls.isSupported()) {
     hls = new Hls({ enableWorker: false });
+    hls.on(Hls.Events.ERROR, (_event, data) => {
+      if (!data.fatal) return;
+      localStatus.value = "error";
+      localErrorCode = "HLS_ERROR";
+      localError.value = "HLS 播放失败";
+      emitSync("error");
+    });
     hls.loadSource(source.url);
     hls.attachMedia(element);
   } else {
@@ -116,6 +129,7 @@ function loadSource(): void {
   listen(element, "ended", () => { localStatus.value = "ended"; emitSync("ended"); });
   listen(element, "error", () => {
     localStatus.value = "error";
+    localErrorCode ??= "HTML_VIDEO_ERROR";
     localError.value = "播放失败";
     emitSync("error");
   });
@@ -129,6 +143,7 @@ function resumeIfNeeded(): void {
   void element.play().catch((error: unknown) => {
     resumeRequested = false;
     localStatus.value = "error";
+    localErrorCode = "HTML_VIDEO_PLAY_ERROR";
     localError.value = error instanceof Error ? error.message : "播放恢复失败";
     emitSync("error");
   });
@@ -161,6 +176,7 @@ function stopPlayback(): void {
     video.value.load();
   }
   localStatus.value = "stopped";
+  localErrorCode = null;
   localError.value = null;
   emit("stop");
   emitSync("stopped");
@@ -168,12 +184,16 @@ function stopPlayback(): void {
 
 function emitSync(status = localStatus.value): void {
   const element = video.value;
+  const error = status === "error" && localError
+    ? { code: localErrorCode ?? "HTML_VIDEO_ERROR", message: localError }
+    : undefined;
   emit("sync", {
     status: status as PlayerState["status"],
     currentTime: element?.currentTime ?? currentTime.value,
     duration: element && Number.isFinite(element.duration) ? element.duration : duration.value,
     volume: element?.volume ?? props.state.volume,
     muted: element?.muted ?? muted.value,
+    ...(error ? { error } : {}),
   });
 }
 

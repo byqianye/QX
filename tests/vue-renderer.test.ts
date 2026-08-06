@@ -115,10 +115,14 @@ describe("Vue renderer", () => {
       error: "PLAYBACK_FORMAT_INVALID: playback selection index is invalid",
       errorCode: "PLAYBACK_FORMAT_INVALID",
     });
-    expect(codedError.error.error).toEqual({
+    expect(codedError.error.error).toMatchObject({
       code: "PLAYBACK_FORMAT_INVALID",
       message: "PLAYBACK_FORMAT_INVALID: playback selection index is invalid",
+      title: "播放信息格式无效",
+      source: "player",
+      retryable: false,
     });
+    expect(codedError.error.error?.diagnosticId).toMatch(/^diag-/);
   });
 
   it("serves the Vue artifact with a local-only script CSP and local assets", async () => {
@@ -213,6 +217,25 @@ describe("Vue renderer", () => {
     await wrapper.get('[data-action="theme-mode"]').setValue("light");
     await flushPromises();
     expect((fetchMock.mock.calls as unknown as Array<[string]>).some(([path]) => path === "/api/view-state")).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("keeps request failures actionable and copies the same redacted diagnostic", async () => {
+    const writeText = vi.fn(async (_text: string) => undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("network request failed");
+    }));
+
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="error-state"]').text()).toContain("界面请求失败");
+    expect(wrapper.get('[data-action="error-retry"]')).toBeTruthy();
+    await wrapper.get('[data-action="copy-diagnostic"]').trigger("click");
+    expect(writeText).toHaveBeenCalledOnce();
+    expect(writeText.mock.calls[0]?.[0]).toContain("RENDERER_REQUEST_ERROR");
+    expect(wrapper.get('[data-testid="diagnostic-copy-status"]').text()).toContain("已复制");
     wrapper.unmount();
   });
 
@@ -466,7 +489,8 @@ describe("Vue renderer", () => {
       props: { state: proxyState, pending: null, lineIndex: 0, order: "forward" },
     });
     expect(proxy.get('[data-testid="error-state"]').text()).toContain("需要代理才能播放");
-    expect(proxy.find('[data-action="enable-proxy"]').exists()).toBe(true);
+    expect(proxy.find('[data-action="error-retry"]').exists()).toBe(false);
+    expect(proxy.find('[data-action="copy-diagnostic"]').exists()).toBe(true);
     proxy.unmount();
 
     const unavailableState = applyRendererEnvelope(createRendererState(), {

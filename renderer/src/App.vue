@@ -3,11 +3,13 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 
 import { RendererApi } from "./api.js";
 import ConfigImportView from "./ConfigImportView.vue";
+import { toAppError } from "./error.js";
 import PlayerWindow from "./PlayerWindow.vue";
 import SpiderView from "./SpiderView.vue";
 import {
   applyRendererEnvelope,
   createRendererState,
+  type AppErrorSource,
   type RendererPersistenceState,
   type RendererEnvelope,
   type RendererState,
@@ -27,6 +29,7 @@ const isPlayerWindow = new URL(window.location.href).searchParams.get("player-wi
 let scrollTimer: ReturnType<typeof setTimeout> | undefined;
 let playerSyncTimer: ReturnType<typeof setTimeout> | undefined;
 let latestPlayerSync: PlayerMediaSync | null = null;
+let retryAction: { operation: string; call: () => Promise<RendererEnvelope> } | null = null;
 
 const showImport = computed(() => state.value.import.status !== "ready" || !state.value.import.sessionReady);
 
@@ -46,7 +49,12 @@ onBeforeUnmount(() => {
   void flushPlayerSync();
 });
 
-async function request(operation: string, call: () => Promise<RendererEnvelope>): Promise<void> {
+async function request(
+  operation: string,
+  call: () => Promise<RendererEnvelope>,
+  remember = true,
+): Promise<void> {
+  if (remember) retryAction = { operation, call };
   pending.value = operation;
   try {
     const envelope = await call();
@@ -61,10 +69,18 @@ async function request(operation: string, call: () => Promise<RendererEnvelope>)
       await restorePage();
     }
   } catch (error) {
+    const appError = toAppError({
+      code: "RENDERER_REQUEST_ERROR",
+      message: error instanceof Error ? error.message : String(error),
+      safeDetails: { operation },
+    }, sourceForOperation(operation));
     state.value = {
       ...state.value,
       ready: true,
-      error: { error: { code: "RENDERER_REQUEST_ERROR", message: error instanceof Error ? error.message : String(error) } },
+      import: state.value.import.status === "ready"
+        ? state.value.import
+        : { ...state.value.import, error: appError },
+      error: { error: appError },
     };
   } finally {
     pending.value = null;
@@ -73,6 +89,12 @@ async function request(operation: string, call: () => Promise<RendererEnvelope>)
 
 function post(operation: string, path: string, body: Record<string, unknown> = {}): void {
   void request(operation, () => api.post(path, body));
+}
+
+function retryLast(): void {
+  const action = retryAction;
+  if (!action) return;
+  void request(`retry-${action.operation}`, action.call, false);
 }
 
 function persistView(patch: RendererViewStatePatch): void {
@@ -119,7 +141,15 @@ function stopPlayer(): void {
 }
 
 function refreshAfterPlayerWindow(): void {
-  void request("player-window", () => api.getState());
+  void request("player-window", () => api.getState(), false);
+}
+
+function sourceForOperation(operation: string): AppErrorSource {
+  if (operation.includes("import") || operation === "confirm" || operation === "select") return "config";
+  if (operation.includes("player")) return "player";
+  if (operation.includes("search")) return "search";
+  if (operation.includes("detail")) return "detail";
+  return "renderer";
 }
 
 function handleScroll(): void {
@@ -214,7 +244,7 @@ function play(line: number, episode: number): void {
       @search="post('search', '/api/search', { key: $event, page: 1, quick: false })"
       @detail="post('detail', '/api/detail', { vodId: $event })"
       @play="play"
-      @retry="state.detail.playbackSelection && play(state.detail.playbackSelection.lineIndex, state.detail.playbackSelection.episodeIndex)"
+      @retry="retryLast"
       @line="lineIndex = $event"
       @order="order = $event"
       @switch="post('switch', '/api/switch')"

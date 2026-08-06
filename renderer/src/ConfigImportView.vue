@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 
+import AppErrorDetails from "./AppErrorDetails.vue";
+import { toAppError } from "./error.js";
+import ErrorState from "./ErrorState.vue";
 import TrustConfirmationDialog from "./TrustConfirmationDialog.vue";
 import { displaySource } from "./safe-display.js";
 import type { ImportState } from "./state.js";
@@ -20,6 +23,10 @@ const emit = defineEmits<{
 
 const input = ref("");
 const selectedSiteKey = ref(props.state.selectedSiteKey ?? "");
+const appError = computed(() => toAppError(props.state.error, "config"));
+const persistenceError = computed(() => props.persistenceDiagnostic
+  ? toAppError(props.persistenceDiagnostic, "persistence")
+  : null);
 
 watch(() => props.state.selectedSiteKey, (value) => {
   selectedSiteKey.value = value ?? "";
@@ -99,15 +106,21 @@ function submitSite(): void {
       @cancel="emit('cancel')"
     />
 
-    <section v-if="props.state.error" class="panel error" data-testid="import-error">
-      <strong>{{ props.state.error.code }}</strong>
-      <p>{{ props.state.error.message }}</p>
-    </section>
+    <ErrorState
+      v-if="appError"
+      :error="appError"
+      :pending="props.pending !== null"
+      :show-switch-line="false"
+      :show-back="false"
+      :show-settings="false"
+      @retry="submit"
+    />
 
     <section v-if="props.persistenceDiagnostic" class="panel warning" data-testid="persistence-diagnostic">
       <strong>{{ props.persistenceDiagnostic.code }}</strong>
       <p>{{ props.persistenceDiagnostic.message }}</p>
       <p class="meta">已使用安全默认值；不会显示原始路径或敏感内容。</p>
+      <AppErrorDetails v-if="persistenceError" :error="persistenceError" />
     </section>
   </main>
 </template>

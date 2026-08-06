@@ -31,6 +31,7 @@ export interface PackagedE2eChecks {
   embeddedHls?: boolean;
   proxyRequired?: boolean;
   noExternalBrowser?: boolean;
+  errorSurface?: boolean;
   embeddedMp4Dom?: boolean;
   embeddedHlsDom?: boolean;
   proxyHlsDom?: boolean;
@@ -98,6 +99,8 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       flag: "default",
       id: searchVodId,
     });
+    await post(options.baseUrl, "/api/view-state", { navigation: "home", siteKey: null });
+    const doubanErrorHtml = await readPage(options);
     const closed = await post(options.baseUrl, "/api/import/cancel");
     checks.searchDetail = jsonReady
       && opened.state?.status === "ready"
@@ -106,6 +109,10 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       && detailVodId === searchVodId;
     checks.jsonImport = jsonReady && closed.import.status === "cancelled";
     checks.doubanUnavailable = doubanPlayback.state?.error?.code === "PLAYBACK_UNAVAILABLE";
+    checks.errorSurface = !options.readWindowHtml
+      || (doubanErrorHtml.includes('data-testid="error-state"')
+        && doubanErrorHtml.includes('data-testid="error-diagnostic"')
+        && doubanErrorHtml.includes('data-action="copy-diagnostic"'));
 
     if (options.playback) {
       const playbackImport = await load(options.baseUrl, options.playback.configJson);

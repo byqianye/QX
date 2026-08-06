@@ -75,4 +75,17 @@ describe("embedded playback controller", () => {
     });
     expect(player.reload().status).toBe("loading");
   });
+
+  it("accepts renderer media errors without losing the original error code", () => {
+    const player = new EmbeddedPlaybackController();
+    player.load(mp4);
+
+    expect(player.syncMedia({
+      status: "error",
+      error: { code: "HLS_ERROR", message: "HLS 播放失败" },
+    })).toMatchObject({
+      status: "error",
+      error: { code: "HLS_ERROR", message: "HLS 播放失败" },
+    });
+  });
 });

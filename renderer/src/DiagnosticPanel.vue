@@ -1,15 +1,21 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
+import AppErrorDetails from "./AppErrorDetails.vue";
+import { toAppError } from "./error.js";
 import { displaySource } from "./safe-display.js";
+import type { AppError, RendererError } from "./state.js";
 
 const props = withDefaults(defineProps<{
   code?: string | null;
   message?: string | null;
   source?: string;
   playerStatus?: string;
+  error?: AppError;
+  diagnostic?: RendererError | null;
 }>(), { code: null, source: "当前来源", playerStatus: "idle" });
 
+const effectiveError = computed(() => props.error ?? toAppError(props.diagnostic));
 const diagnosticSteps = computed(() => [
   { label: "来源请求", value: props.source ? "当前来源" : "未提供" },
   { label: "线路解析", value: props.code?.startsWith("PLAYBACK_") ? "请查看错误码" : "未提供" },
@@ -20,7 +26,8 @@ const diagnosticSteps = computed(() => [
 </script>
 
 <template>
-  <details class="diagnostic-panel" data-testid="diagnostic-panel" data-od-id="diagnostic-panel">
+  <AppErrorDetails v-if="effectiveError" :error="effectiveError" test-id="diagnostic-panel" />
+  <details v-else class="diagnostic-panel" data-testid="diagnostic-panel" data-od-id="diagnostic-panel">
     <summary>查看诊断</summary>
     <dl>
       <div><dt>来源</dt><dd>{{ displaySource(source) }}</dd></div>

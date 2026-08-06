@@ -115,6 +115,15 @@ describe("detachable player session", () => {
     });
     expect(synced.state.player).toMatchObject({ status: "paused", currentTime: 12, volume: 0.2 });
 
+    const mediaError = await post(server.url, "/api/player/sync", {
+      status: "error",
+      error: { code: "HLS_ERROR", message: "HLS 播放失败" },
+    });
+    expect(mediaError.state).toMatchObject({
+      error: { code: "HLS_ERROR", message: "HLS 播放失败" },
+      player: { status: "error", error: { code: "HLS_ERROR" } },
+    });
+
     const attached = await post(server.url, "/api/player/attach");
     expect(attached.state).toMatchObject({ playerHost: "embedded", playbackSession: { id: sessionId, host: "embedded" } });
     expect(attachCalls).toBe(1);

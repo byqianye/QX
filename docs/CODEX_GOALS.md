@@ -307,7 +307,46 @@ checkpoint: complete G27 desktop state persistence
 checkpoint: complete G28 detachable player
 ```
 
-G29–G78（未开始）
+## G29（已完成）
+
+### 目标
+统一错误、诊断和恢复界面，保留原始错误码并以同一脱敏器提供可复制的安全诊断。
+
+### 状态
+已完成。renderer 建立 `AppError` 合同，覆盖配置、信任、Spider/RPC、播放/Proxy、HTMLVideoElement/HLS、Java、Electron、持久化和清理错误族；错误卡支持按 `retryable` 显示重试、返回、切换来源/线路、设置和复制诊断。
+
+### 依赖
+- G28 / 单 Playback Session 与播放器宿主切换
+- G26 / Open Design 的 ErrorState、DiagnosticPanel 和 Token
+
+### 范围
+- `renderer/src/error.ts` 的错误码映射、恢复策略、诊断 ID、时间戳和统一脱敏
+- `ErrorState`、`DiagnosticPanel`、配置导入错误、播放器媒体错误和复制诊断
+- HTMLVideoElement/HLS 错误通过 `/api/player/sync` 保留原始错误码
+- 不展示原始 stack、凭据、完整 URL、本机路径或敏感播放 ID
+
+### 验收标准
+- 主要错误族具有稳定标题、来源、原始 code、retryable 和安全诊断
+- `retryable=false` 不显示无意义重试；可重试操作可再次执行，错误后应用仍可继续使用
+- 复制诊断与界面使用同一脱敏器，敏感字段不会进入文本
+- 专项测试、完整测试、typecheck、Windows 打包和 packaged E2E 通过
+
+### 验证结果
+- `npx vitest run tests/diagnostics.test.ts tests/playback.test.ts tests/detachable-player.test.ts tests/electron-e2e.test.ts tests/vue-renderer.test.ts`：5 files / 32 tests passed
+- `npm run typecheck`：通过
+- `npm test`：21 files / 126 tests passed
+- `npm run electron:package:win`：通过
+- `npm run electron:e2e:package`：first/restarted 两轮通过，错误界面、诊断复制入口、播放器、Proxy 和资源清理检查全部通过
+
+### 文档
+- `docs/spike-28-diagnostics.md`
+
+### checkpoint
+```text
+checkpoint: complete G29 diagnostics
+```
+
+G30–G78（未开始）
 
 （略，按主路线图执行）
 

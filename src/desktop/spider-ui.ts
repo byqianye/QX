@@ -305,6 +305,7 @@ export class DesktopSpiderUiController {
 
   public syncPlayerState(patch: PlayerMediaSync): DesktopSpiderUiState {
     this.playerController.syncMedia(patch);
+    if (patch.error) this.localError = { ...patch.error };
     return this.state;
   }
 
@@ -1240,6 +1241,11 @@ function playerMediaSyncFromRequest(body: Record<string, unknown>): PlayerMediaS
   if (typeof body.duration === "number") patch.duration = body.duration;
   if (typeof body.volume === "number") patch.volume = body.volume;
   if (typeof body.muted === "boolean") patch.muted = body.muted;
+  if (isRecord(body.error)
+    && typeof body.error.code === "string"
+    && typeof body.error.message === "string") {
+    patch.error = { code: body.error.code, message: body.error.message };
+  }
   return patch;
 }
 

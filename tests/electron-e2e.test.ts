@@ -128,6 +128,7 @@ describe("packaged Electron E2E flow", () => {
         vodPlaybackFlow: true,
         proxyRequired: true,
         noExternalBrowser: true,
+        errorSurface: true,
         detachablePlayer: true,
         singlePlaybackSession: true,
         noBackgroundPlayer: true,

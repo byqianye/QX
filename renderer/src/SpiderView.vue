@@ -94,7 +94,7 @@ const selectedLine = computed(() => {
 const canStart = computed(() => props.state.spider.status === "idle"
   || (props.state.spider.status === "error" && !props.state.spider.sidecarRunning));
 const activePage = computed(() => view.value === "settings" ? "settings" : props.state.browse.page);
-const retryable = computed(() => props.state.error.error?.code.startsWith("PLAYBACK_") === true);
+const retryable = computed(() => props.state.error.error?.retryable === true);
 const hasPlayback = computed(() => props.state.detail.playbackCatalog !== null || props.state.playback.player.source !== null);
 const playerDetached = computed(() => props.state.playback.session?.host === "detached");
 
@@ -223,6 +223,8 @@ function navigationFromPage(page: string): RendererNavigation {
               :player-status="props.state.playback.player.status"
               :code="props.state.error.error?.code ?? props.persistenceDiagnostic?.code"
               :message="props.state.error.error?.message ?? props.persistenceDiagnostic?.message"
+              :error="props.state.error.error ?? undefined"
+              :diagnostic="props.persistenceDiagnostic"
             />
           </SettingsSection>
           <SettingsSection title="隐私" description="凭据、Cookie、完整播放地址和本机路径不在界面回显。">
@@ -240,6 +242,8 @@ function navigationFromPage(page: string): RendererNavigation {
               :pending="props.pending !== null"
               @retry="emit('retry')"
               @switch-line="emit('switch')"
+              @back="navigate('home')"
+              @settings="navigate('settings')"
             />
           </div>
 
@@ -291,7 +295,12 @@ function navigationFromPage(page: string): RendererNavigation {
               @stop="emit('playerStop')"
               @sync="emit('playerSync', $event)"
             />
-            <DiagnosticPanel :source="props.state.spider.source" :player-status="props.state.playback.player.status" :code="props.state.error.error?.code" />
+            <DiagnosticPanel
+              :source="props.state.spider.source"
+              :player-status="props.state.playback.player.status"
+              :code="props.state.error.error?.code"
+              :error="props.state.error.error ?? undefined"
+            />
           </section>
           <section v-else class="playback-stage playback-stage-empty" data-testid="playback-panel">
             <span class="section-kicker">播放</span>

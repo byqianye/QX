@@ -1,3 +1,5 @@
+import { toAppError } from "./error.js";
+
 export type ImportStatus =
   | "empty"
   | "loading"
@@ -19,6 +21,36 @@ export type RendererThemeMode = "system" | "light" | "dark";
 export type RendererNavigation = "home" | "category" | "search" | "detail" | "settings";
 export type PlayerHostMode = "embedded" | "detached";
 export const PLAYBACK_RESTORE_MAX_DRIFT_SECONDS = 2;
+
+export type AppErrorSource =
+  | "config"
+  | "trust"
+  | "spider"
+  | "rpc"
+  | "search"
+  | "detail"
+  | "player"
+  | "proxy"
+  | "video"
+  | "hls"
+  | "java"
+  | "electron"
+  | "persistence"
+  | "cleanup"
+  | "source"
+  | "renderer";
+
+export interface AppError {
+  code: string;
+  title: string;
+  message: string;
+  source: AppErrorSource;
+  retryable: boolean;
+  diagnosticId: string;
+  timestamp: string;
+  safeDetails: Record<string, string>;
+  causeCode?: string;
+}
 
 export interface RendererPlaybackSession {
   id: string;
@@ -58,6 +90,13 @@ export interface RendererViewStatePatch {
 export interface RendererError {
   code: string;
   message: string;
+  title?: string;
+  source?: AppErrorSource;
+  retryable?: boolean;
+  diagnosticId?: string;
+  timestamp?: string;
+  safeDetails?: Record<string, string>;
+  causeCode?: string;
 }
 
 export interface ImportSummary {
@@ -167,6 +206,7 @@ export interface PlayerMediaSync {
   duration?: number;
   volume?: number;
   muted?: boolean;
+  error?: RendererError;
 }
 
 export interface DetailState {
@@ -183,7 +223,7 @@ export interface PlaybackState {
 }
 
 export interface ErrorState {
-  error: RendererError | null;
+  error: AppError | null;
 }
 
 export interface RendererState {
@@ -275,22 +315,22 @@ export function applyRendererEnvelope(
 ): RendererState {
   const importState = envelope.import ? cloneImportState(envelope.import) : current.import;
   const state = envelope.state;
+  const envelopeError = envelope.error
+    ? { code: envelope.errorCode ?? "RENDERER_REQUEST_ERROR", message: envelope.error }
+    : null;
   if (!state) {
+    const nextError = importState.error ?? envelopeError;
     return {
       ...current,
       ready: true,
       import: importState,
       error: {
-        error: importState.error ?? (envelope.error
-          ? { code: envelope.errorCode ?? "RENDERER_REQUEST_ERROR", message: envelope.error }
-          : current.error.error),
+        error: toAppError(nextError) ?? current.error.error,
       },
     };
   }
 
-  const stateError = state.error ?? importState.error ?? (envelope.error
-    ? { code: envelope.errorCode ?? "RENDERER_REQUEST_ERROR", message: envelope.error }
-    : null);
+  const stateError = state.error ?? importState.error ?? envelopeError;
   return {
     ready: true,
     import: importState,
@@ -317,14 +357,14 @@ export function applyRendererEnvelope(
       player: clonePlayerState(state.player),
       session: clonePlaybackSession(state.playbackSession ?? null),
     },
-    error: { error: stateError ? { ...stateError } : null },
+    error: { error: toAppError(stateError) },
   };
 }
 
 function cloneImportState(state: ImportState): ImportState {
   return {
     ...state,
-    error: state.error ? { ...state.error } : null,
+    error: cloneRendererError(state.error),
     summary: state.summary
       ? { ...state.summary, topLevelKeys: [...state.summary.topLevelKeys], engineCounts: { ...state.summary.engineCounts } }
       : null,
@@ -353,8 +393,14 @@ function clonePlayerState(player: PlayerState): PlayerState {
   return {
     ...player,
     source: player.source ? { ...player.source, headers: { ...player.source.headers } } : null,
-    error: player.error ? { ...player.error } : null,
+    error: toAppError(player.error),
   };
+}
+
+function cloneRendererError(error: RendererError | null): RendererError | null {
+  return error
+    ? { ...error, ...(error.safeDetails ? { safeDetails: { ...error.safeDetails } } : {}) }
+    : null;
 }
 
 function clonePlaybackSession(session: RendererPlaybackSession | null): RendererPlaybackSession | null {

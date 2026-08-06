@@ -175,7 +175,28 @@ npm run electron:e2e:package
 ### 文档
 - `docs/spike-24-vue-renderer.md`
 
-G26–G78（未开始）
+## G26（blocked_open_design_unavailable）
+
+### 目标
+使用可直接调用的 Open Design 生成正式桌面 UI 设计，并按设计产物实现。
+
+### 状态
+已检查当前 Codex 环境的 Open Design MCP 能力。工具声明存在，但 `get_active_context`、`list_projects`、`list_agents`、`list_skills`、`list_plugins` 的实际调用均返回 `Transport closed`，因此 Open Design 不可用。未生成设计方向、设计系统、截图或 implementation handoff；G25 Vue UI 保持可用。
+
+### 依赖
+- G25 / Vue renderer 迁移
+- 当前环境可用的 Open Design MCP transport
+
+### 阻塞处理
+- 标记：`blocked_open_design_unavailable`
+- 不用普通 AI 或自行 CSS 替代 Open Design
+- 不继续 G27–G29
+- Open Design transport 恢复后，从 G26-A 重新检查并生成唯一最终设计方向
+
+### 文档
+- `docs/spike-25-open-design-desktop-ui.md`
+
+G27–G78（未开始）
 
 （略，按主路线图执行）
 

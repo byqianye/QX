@@ -11,6 +11,16 @@ import {
   DesktopSpiderUiServer,
   renderDesktopSpiderUi,
 } from "../src/desktop/spider-ui.js";
+import {
+  IsolatedSniffer,
+  type IsolatedSnifferPlatform,
+  type IsolatedSnifferSession,
+  type SnifferNavigationEvent,
+  type SnifferPolicy,
+  type SnifferRequestEvent,
+  type SnifferResponseEvent,
+  type SnifferViolation,
+} from "../src/electron/isolated-sniffer.js";
 import type { SpiderResponse } from "../src/spider/rpc.js";
 
 describe("desktop Spider UI", () => {
@@ -177,6 +187,60 @@ describe("desktop Spider UI", () => {
       },
     });
     await ui.close();
+  });
+
+  it("falls back to the isolated sniffer after parser failure", async () => {
+    const fixture = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
+    const platform = new UiSnifferPlatform();
+    const sniffer = new IsolatedSniffer(platform);
+    const ui = new DesktopSpiderUiController({
+      session: fixture,
+      sniffer,
+      parserCandidates: [{
+        id: "unavailable-parser",
+        name: "Unavailable parser",
+        type: "json",
+        endpoint: "https://parser.example.invalid/resolve",
+        enabled: true,
+        priority: 1,
+        timeout: 20,
+      }],
+      parserAllowedOrigins: ["https://parser.example.invalid", "https://media.example.invalid"],
+      parserFetch: async () => {
+        throw new Error("parser unavailable");
+      },
+    });
+
+    fixture.confirmImport();
+    await ui.open("playable", "fixture-endpoint");
+    await ui.player("default", "parse-one");
+
+    expect(ui.state).toMatchObject({
+      status: "ready",
+      error: null,
+      player: {
+        status: "loading",
+        parse: {
+          status: "succeeded",
+          parserId: "isolated-sniffer",
+        },
+        source: {
+          parse: 0,
+          url: "https://media.example.invalid/sniffed.m3u8",
+        },
+      },
+    });
+    expect(platform.policy).toMatchObject({
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      allowDownloads: false,
+      allowPopups: false,
+    });
+    await ui.close();
+    await sniffer.close();
+    expect(platform.session.closeCount).toBe(1);
   });
 
   it("renders playback lines and passes episode selection through the same Spider session", async () => {
@@ -532,6 +596,62 @@ class FixtureSession implements DesktopSpiderSessionPort {
     this.destroyed = true;
     this.view.status = "destroyed";
     this.view.sidecarRunning = false;
+  }
+}
+
+class UiSnifferPlatform implements IsolatedSnifferPlatform {
+  public policy: SnifferPolicy | undefined;
+  public readonly session = new UiSnifferSession();
+
+  public async createSession(policy: SnifferPolicy): Promise<IsolatedSnifferSession> {
+    this.policy = policy;
+    return this.session;
+  }
+}
+
+class UiSnifferSession implements IsolatedSnifferSession {
+  public closeCount = 0;
+  private readonly requestListeners = new Set<(event: SnifferRequestEvent) => void>();
+  private readonly responseListeners = new Set<(event: SnifferResponseEvent) => void>();
+  private readonly navigationListeners = new Set<(event: SnifferNavigationEvent) => void>();
+  private readonly violationListeners = new Set<(event: SnifferViolation) => void>();
+
+  public async load(): Promise<void> {
+    queueMicrotask(() => {
+      for (const listener of this.responseListeners) listener({
+        requestId: "sniffed-playlist",
+        url: "https://media.example.invalid/sniffed.m3u8",
+        resourceType: "xhr",
+        statusCode: 200,
+        contentType: "application/vnd.apple.mpegurl",
+        contentLength: 128,
+        isMasterPlaylist: true,
+      });
+    });
+  }
+
+  public onRequest(listener: (event: SnifferRequestEvent) => void): () => void {
+    this.requestListeners.add(listener);
+    return () => this.requestListeners.delete(listener);
+  }
+
+  public onResponse(listener: (event: SnifferResponseEvent) => void): () => void {
+    this.responseListeners.add(listener);
+    return () => this.responseListeners.delete(listener);
+  }
+
+  public onNavigate(listener: (event: SnifferNavigationEvent) => void): () => void {
+    this.navigationListeners.add(listener);
+    return () => this.navigationListeners.delete(listener);
+  }
+
+  public onViolation(listener: (event: SnifferViolation) => void): () => void {
+    this.violationListeners.add(listener);
+    return () => this.violationListeners.delete(listener);
+  }
+
+  public async close(): Promise<void> {
+    this.closeCount += 1;
   }
 }
 

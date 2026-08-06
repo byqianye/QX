@@ -80,4 +80,25 @@ describe("local media fixture server", () => {
     expect(allowed.status).toBe(200);
     expect(await allowed.text()).toContain("/protected/fixture-0.m4s");
   });
+
+  it("serves isolated-sniffer false candidates and bounded failure scenarios", async () => {
+    const page = await fetch(fixture.sniffUrl);
+    const pageBody = await page.text();
+    expect(page.status).toBe(200);
+    expect(page.headers.get("set-cookie")).toContain("qx-sniffer-fixture=isolated");
+    expect(pageBody).toContain("/sniff/poster.jpg");
+    expect(pageBody).toContain("/sniff/delayed.m3u8");
+
+    const redirect = await fetch(`${fixture.sniffUrl}?mode=redirect`, { redirect: "manual" });
+    expect(redirect.status).toBe(200);
+    const redirectBody = await redirect.text();
+    expect(redirectBody).toContain("/sniff/redirect");
+
+    const popup = await fetch(`${fixture.sniffUrl}?mode=popup`);
+    expect(await popup.text()).toContain("window.open");
+    const protocol = await fetch(`${fixture.sniffUrl}?mode=protocol`);
+    expect(await protocol.text()).toContain("file:///");
+    const infinite = await fetch(`${fixture.sniffUrl}?mode=infinite`);
+    expect(await infinite.text()).toContain("setInterval");
+  });
 });

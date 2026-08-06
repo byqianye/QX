@@ -1,3 +1,5 @@
+import type { SniffedMedia } from "./isolated-sniffer.js";
+
 export interface PackagedE2eOptions {
   baseUrl: string;
   configUrl: string;
@@ -12,6 +14,8 @@ export interface PackagedE2eOptions {
   evaluateWindow?: (script: string) => Promise<unknown>;
   readWindowHtml?: () => Promise<string>;
   verifyPlaybackRules?: boolean;
+  verifySniffer?: boolean;
+  sniff?: () => Promise<SniffedMedia>;
   playback?: {
     configJson: string;
   };
@@ -31,6 +35,7 @@ export interface PackagedE2eChecks {
   embeddedMp4?: boolean;
   embeddedHls?: boolean;
   parseChain?: boolean;
+  isolatedSniffer?: boolean;
   playbackRules?: boolean;
   proxyRequired?: boolean;
   noExternalBrowser?: boolean;
@@ -63,6 +68,15 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
     const initialHtml = await readPage(options);
     checks.initialImportForm = initialHtml.includes('data-testid="config-import-form"')
       && (!options.readWindowHtml || initialHtml.includes('data-testid="vue-renderer"'));
+
+    if (options.verifySniffer) {
+      if (!options.sniff) throw new Error("Packaged E2E sniffer verification is not configured");
+      const sniffed = await options.sniff();
+      checks.isolatedSniffer = sniffed.parse === 0
+        && sniffed.url.endsWith("/sniff/delayed.m3u8")
+        && sniffed.diagnostics.redacted
+        && !JSON.stringify(sniffed.diagnostics).includes("Cookie");
+    }
 
     const firstUrl = await load(options.baseUrl, options.configUrl);
     const warningHtml = await readPage(options);

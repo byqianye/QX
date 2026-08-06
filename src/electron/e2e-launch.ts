@@ -93,6 +93,8 @@ try {
     QX_E2E_USER_DATA: userData,
     QX_E2E_PLAYBACK_CONFIG: playbackConfig,
     QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,
+    QX_SNIFF_ENABLED: "1",
+    QX_E2E_SNIFF_URL: mediaFixture.sniffUrl,
     ...parserEnvironment(),
     ...playbackRuleEnvironment(playbackConfig),
   });
@@ -110,6 +112,8 @@ try {
     QX_E2E_USER_DATA: userData,
     QX_E2E_PLAYBACK_CONFIG: playbackConfig,
     QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,
+    QX_SNIFF_ENABLED: "1",
+    QX_E2E_SNIFF_URL: mediaFixture.sniffUrl,
     ...parserEnvironment(),
     ...playbackRuleEnvironment(playbackConfig),
   });

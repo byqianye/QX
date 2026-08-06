@@ -46,6 +46,7 @@ import {
   type ParseUiState,
 } from "./parse-chain.js";
 import type { PlaybackRule } from "./playback-rules.js";
+import type { IsolatedSniffer } from "../electron/isolated-sniffer.js";
 
 const require = createRequire(import.meta.url);
 
@@ -136,6 +137,7 @@ export interface DesktopSpiderUiOptions {
   parserAllowedOrigins?: readonly string[];
   parserFetch?: typeof fetch;
   playbackRules?: readonly PlaybackRule[];
+  sniffer?: IsolatedSniffer;
 }
 
 export class DesktopSpiderUiController {
@@ -157,6 +159,8 @@ export class DesktopSpiderUiController {
   private readonly playbackProxy: PlaybackProxyServer;
   private readonly parserCandidates: readonly ParserCandidate[];
   private readonly parseResolver: ParseChainResolver;
+  private readonly sniffer: IsolatedSniffer | undefined;
+  private readonly parserAllowedOrigins: readonly string[];
   private parseState: ParseUiState = initialParseState();
   private proxySession: PlaybackProxySession | undefined;
 
@@ -164,6 +168,8 @@ export class DesktopSpiderUiController {
     this.session = options.session;
     this.createSession = options.createSession;
     this.parserCandidates = options.parserCandidates?.map(cloneParserCandidate) ?? [];
+    this.sniffer = options.sniffer;
+    this.parserAllowedOrigins = options.parserAllowedOrigins ?? [];
     this.parseResolver = new ParseChainResolver({
       ...(options.parserAllowedOrigins ? { allowedOrigins: options.parserAllowedOrigins } : {}),
       ...(options.parserFetch ? { fetchImpl: options.parserFetch } : {}),
@@ -381,6 +387,7 @@ export class DesktopSpiderUiController {
 
   public async stopPlayer(): Promise<DesktopSpiderUiState> {
     this.playerController.stop();
+    this.sniffer?.cancelAll();
     await this.releasePlaybackProxy();
     await this.session.stopPlayback?.();
     this.playerHost = "embedded";
@@ -437,6 +444,7 @@ export class DesktopSpiderUiController {
   }
 
   public async switchSource(): Promise<DesktopSpiderUiState> {
+    this.sniffer?.cancelAll();
     await this.session.destroy();
     this.playerController.stop();
     await this.releasePlaybackProxy();
@@ -461,6 +469,7 @@ export class DesktopSpiderUiController {
 
   public async close(): Promise<DesktopSpiderUiState> {
     this.activeOperation = null;
+    this.sniffer?.cancelAll();
     this.parseResolver.close();
     try {
       await this.session.destroy();
@@ -477,6 +486,7 @@ export class DesktopSpiderUiController {
 
   public async releaseResources(): Promise<void> {
     this.playerController.stop();
+    this.sniffer?.cancelAll();
     await this.releasePlaybackProxy();
     await this.session.stopPlayback?.();
     this.clearPlaybackSession();
@@ -579,13 +589,51 @@ export class DesktopSpiderUiController {
         const parseError = error instanceof ParseChainError
           ? error
           : new ParseChainError("PARSE_ERROR", error instanceof Error ? error.message : String(error));
-        this.parseState = {
-          status: parseError.code === "PARSE_CANCELLED" ? "cancelled" : "failed",
-          parserId: this.parseState.parserId,
-          attempts: parseError.attempts.map((attempt) => ({ ...attempt })),
-          error: { code: parseError.code, message: parseError.message },
-        };
-        throw parseError;
+        if (!this.sniffer) {
+          this.parseState = {
+            status: parseError.code === "PARSE_CANCELLED" ? "cancelled" : "failed",
+            parserId: this.parseState.parserId,
+            attempts: parseError.attempts.map((attempt) => ({ ...attempt })),
+            error: { code: parseError.code, message: parseError.message },
+          };
+          throw parseError;
+        }
+        try {
+          const mediaOrigin = httpOrigin(playback.url);
+          const sniffed = await this.sniffer.sniff({
+            sourceId: this.session.view.source,
+            playbackSessionId,
+            initialUrl: playback.url,
+            headers: playback.headers,
+            allowedOrigins: [
+              ...this.parserAllowedOrigins,
+              ...(mediaOrigin ? [mediaOrigin] : []),
+            ],
+          });
+          this.parseState = {
+            status: "succeeded",
+            parserId: "isolated-sniffer",
+            attempts: parseError.attempts.map((attempt) => ({ ...attempt })),
+            error: null,
+          };
+          resolved = {
+            parse: 0,
+            url: sniffed.url,
+            headers: { ...playback.headers, ...sniffed.headers },
+          };
+        } catch (snifferError) {
+          const snifferCode = isRecord(snifferError) && typeof snifferError.code === "string"
+            ? snifferError.code
+            : "SNIFF_ERROR";
+          const snifferMessage = snifferError instanceof Error ? snifferError.message : String(snifferError);
+          this.parseState = {
+            status: snifferCode === "SNIFF_CANCELLED" ? "cancelled" : "failed",
+            parserId: "isolated-sniffer",
+            attempts: parseError.attempts.map((attempt) => ({ ...attempt })),
+            error: { code: snifferCode, message: snifferMessage },
+          };
+          throw snifferError;
+        }
       }
     } else if (playback.parse !== 0) {
       throw new Error(`Unsupported playback parse mode: ${playback.parse}`);
@@ -645,6 +693,7 @@ export interface DesktopSpiderUiServerOptions {
   parserAllowedOrigins?: readonly string[];
   parserFetch?: typeof fetch;
   playbackRules?: readonly PlaybackRule[];
+  sniffer?: IsolatedSniffer;
 }
 
 export class DesktopSpiderUiServer {
@@ -664,6 +713,7 @@ export class DesktopSpiderUiServer {
   private readonly parserAllowedOrigins: readonly string[] | undefined;
   private readonly parserFetch: typeof fetch | undefined;
   private readonly playbackRules: readonly PlaybackRule[] | undefined;
+  private readonly sniffer: IsolatedSniffer | undefined;
   private server: Server | undefined;
   private boundUrl: string | undefined;
   private boundSession: DesktopSpiderSessionPort | undefined;
@@ -695,6 +745,7 @@ export class DesktopSpiderUiServer {
     this.parserAllowedOrigins = options.parserAllowedOrigins;
     this.parserFetch = options.parserFetch;
     this.playbackRules = options.playbackRules;
+    this.sniffer = options.sniffer;
   }
 
   public get url(): string {
@@ -727,6 +778,7 @@ export class DesktopSpiderUiServer {
     } else {
       await this.directUi?.close();
     }
+    await this.sniffer?.close();
     const server = this.server;
     this.server = undefined;
     this.boundUrl = undefined;
@@ -992,6 +1044,7 @@ export class DesktopSpiderUiServer {
         ...(this.parserAllowedOrigins ? { parserAllowedOrigins: this.parserAllowedOrigins } : {}),
         ...(this.parserFetch ? { parserFetch: this.parserFetch } : {}),
         ...(this.playbackRules ? { playbackRules: this.playbackRules } : {}),
+        ...(this.sniffer ? { sniffer: this.sniffer } : {}),
       });
       this.importedUiBySession.set(session, this.importedUi);
     }
@@ -1623,6 +1676,15 @@ function fallbackCapabilities(view: DesktopSpiderView): SourceCapabilities {
     pagination: true,
     engine: "fixture",
   };
+}
+
+function httpOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.origin : null;
+  } catch {
+    return null;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -25,6 +25,7 @@ export interface MediaFixtureServer {
   readonly hlsUrl: string;
   readonly protectedHlsUrl: string;
   readonly playerUrl: string;
+  readonly sniffUrl: string;
   readonly parserUrl: string;
   start(): Promise<void>;
   close(): Promise<void>;
@@ -50,6 +51,9 @@ export function createMediaFixtureServer(host = "127.0.0.1"): MediaFixtureServer
     },
     get playerUrl() {
       return `${resource.baseUrl}/player`;
+    },
+    get sniffUrl() {
+      return `${resource.baseUrl}/sniff/page`;
     },
     get parserUrl() {
       return `${resource.baseUrl}/parser/resolve`;
@@ -141,6 +145,81 @@ async function handleRequest(
     });
     if (request.method === "HEAD") response.end();
     else response.end(body);
+    return;
+  }
+
+  if (url.pathname === "/sniff/page") {
+    const mode = url.searchParams.get("mode") ?? "success";
+    const scenario = mode === "popup"
+      ? "window.open('/sniff/popup-target', '_blank');"
+      : mode === "protocol"
+        ? "window.setTimeout(() => { window.location = 'file:///qx-sniffer-local-file'; }, 10);"
+        : mode === "redirect"
+          ? "window.location = '/sniff/redirect';"
+        : mode === "infinite"
+          ? "window.setInterval(() => fetch('/sniff/api').catch(() => undefined), 5);"
+          : mode === "timeout"
+            ? ""
+            : "fetch('/sniff/api').catch(() => undefined); window.setTimeout(() => fetch('/sniff/delayed.m3u8').catch(() => undefined), 120);";
+    const body = Buffer.from(`<!doctype html><html><body>
+      <img src="/sniff/poster.jpg" alt="poster">
+      <script src="/sniff/app.js"></script>
+      <script>
+        ${scenario}
+      </script>
+    </body></html>`, "utf8");
+    response.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "content-length": body.length,
+      "set-cookie": "qx-sniffer-fixture=isolated; Path=/; HttpOnly",
+    });
+    if (request.method === "HEAD") response.end();
+    else response.end(body);
+    return;
+  }
+
+  if (url.pathname === "/sniff/redirect") {
+    response.writeHead(302, { location: "https://outside.example.invalid/sniff.m3u8" });
+    response.end();
+    return;
+  }
+
+  if (url.pathname === "/sniff/popup-target") {
+    response.writeHead(204);
+    response.end();
+    return;
+  }
+
+  if (url.pathname === "/sniff/poster.jpg") {
+    serveBytes(request, response, MEDIA_FIXTURE_BYTES, "image/jpeg");
+    return;
+  }
+
+  if (url.pathname === "/sniff/app.js") {
+    const body = Buffer.from("window.__qxSnifferFalseCandidate = true;", "utf8");
+    response.writeHead(200, {
+      "content-type": "application/javascript; charset=utf-8",
+      "content-length": body.length,
+    });
+    if (request.method === "HEAD") response.end();
+    else response.end(body);
+    return;
+  }
+
+  if (url.pathname === "/sniff/api") {
+    const body = Buffer.from(JSON.stringify({ status: "ok" }), "utf8");
+    response.writeHead(200, {
+      "content-type": "application/json; charset=utf-8",
+      "content-length": body.length,
+    });
+    if (request.method === "HEAD") response.end();
+    else response.end(body);
+    return;
+  }
+
+  if (url.pathname === "/sniff/delayed.m3u8") {
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    servePlaylist(request, response, "/media");
     return;
   }
 

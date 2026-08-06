@@ -457,7 +457,43 @@ checkpoint: complete G42 parse chain
 checkpoint: complete G43 playback rules
 ```
 
-## G44—G49（未开始）
+## G44（已完成）
+### 目标
+在正常解析失败后，用临时 Electron partition 创建严格受控的隔离网页嗅探会话，只捕获可播放媒体请求，并将最终结果接回现有 LocalProxy seam。
+### 状态
+已完成。每次嗅探使用独立 `temp:qx-sniffer-*` partition 和隐藏 BrowserWindow，开启 `contextIsolation`、`sandbox`、`webSecurity`，关闭 `nodeIntegration`；不共享主页面 Cookie，不允许下载、弹窗或外部协议。候选按 MIME、扩展、状态、Content-Length、请求耗时、页面关联、master playlist 和可访问性评分，图片/CSS/JS/tracker/JSON/API 不会成为最终媒体。超时、取消和关闭均清理 session；parser 失败后的 UI fallback 与 packaged E2E 已闭环。
+### 依赖
+- G42 parse=1 解析链
+- G43 Playback Rules 与 LocalProxy
+### 范围
+- `src/electron/isolated-sniffer.ts` 策略、候选评分、敏感 header 过滤与生命周期
+- `src/electron/main.ts` 独立 partition/BrowserWindow/webRequest 适配
+- `src/desktop/spider-ui.ts` parser failure 后的 sniffer fallback，并沿用 LocalProxy 接缝
+- media fixture、UI/策略测试、打包 E2E 和进程/窗口清理验证
+### 验证结果
+- `tests/isolated-sniffer.test.ts`、`tests/desktop-ui.test.ts`、`tests/media-fixture.test.ts`、`tests/electron-e2e.test.ts`：通过
+- `npm run typecheck`：通过
+- `npm test`：34 files / 192 tests passed
+- `npm run electron:build`：通过
+- `npm run electron:package:win`：通过
+- `npm run electron:e2e:package`：首次启动与重启轮次均通过，`isolatedSniffer=true`
+### 验证命令
+```powershell
+npx vitest run tests/isolated-sniffer.test.ts tests/desktop-ui.test.ts tests/electron-e2e.test.ts
+npm run typecheck
+npm test
+npm run electron:build
+npm run electron:package:win
+npm run electron:e2e:package
+```
+### 文档
+- `docs/spike-44-isolated-sniffer.md`
+### checkpoint
+```text
+checkpoint: complete G44 isolated sniffer
+```
+
+## G45—G49（未开始）
 
 按串行 Gate 继续：隔离网页嗅探、mpv backend 合同、播放调试面板、字幕轨道、流健康与自动线路回退、综合播放增强验收。
 

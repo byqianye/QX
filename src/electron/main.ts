@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { app, BrowserWindow, dialog, screen } from "electron";
+import { app, BrowserWindow, dialog, screen, session as electronSession } from "electron";
 
 import { JsonFileTrustPersistence, ImportTrustStore } from "../config/trust.js";
 import { ConfigHistoryStore, JsonFileConfigHistoryPersistence } from "../config/history.js";
@@ -25,6 +25,16 @@ import {
 } from "./e2e-runner.js";
 import { resolveElectronRuntime } from "./runtime.js";
 import { DesktopShellRuntime } from "./shell-runtime.js";
+import {
+  IsolatedSniffer,
+  type IsolatedSnifferPlatform,
+  type IsolatedSnifferSession,
+  type SnifferNavigationEvent,
+  type SnifferPolicy,
+  type SnifferRequestEvent,
+  type SnifferResponseEvent,
+  type SnifferViolation,
+} from "./isolated-sniffer.js";
 
 const APP_NAME = "QX 影视";
 const SMOKE_MODE = process.env.QX_ELECTRON_SMOKE === "1";
@@ -35,6 +45,7 @@ const PLAYBACK_PROXY_ORIGINS = listEnvironment("QX_PLAYBACK_PROXY_ORIGINS");
 const PARSER_ALLOWED_ORIGINS = listEnvironment("QX_PARSE_ALLOWED_ORIGINS");
 const PARSER_CANDIDATES = parserCandidatesEnvironment("QX_PARSE_CANDIDATES_JSON");
 const PLAYBACK_RULES = playbackRulesEnvironment("QX_PLAYBACK_RULES_JSON");
+const ISOLATED_SNIFFER_ENABLED = process.env.QX_SNIFF_ENABLED === "1";
 
 if (process.env.QX_E2E_USER_DATA) {
   mkdirSync(process.env.QX_E2E_USER_DATA, { recursive: true });
@@ -46,6 +57,7 @@ let mainWindow: BrowserWindow | undefined;
 let playerWindow: BrowserWindow | undefined;
 let playerWindowUrl: string | undefined;
 let uiServer: DesktopSpiderUiServer | undefined;
+let isolatedSniffer: IsolatedSniffer | undefined;
 let cleanupPromise: Promise<void> | undefined;
 let quitting = false;
 let lastClient: DesktopSpiderClientPort | undefined;
@@ -107,6 +119,10 @@ function createShell(): DesktopShellRuntime {
           },
         }),
       });
+      const sniffer = ISOLATED_SNIFFER_ENABLED
+        ? new IsolatedSniffer(createElectronSnifferPlatform())
+        : undefined;
+      isolatedSniffer = sniffer;
       const server = new DesktopSpiderUiServer({
         importer,
         rendererDirectory: join(app.getAppPath(), "dist", "renderer"),
@@ -118,11 +134,221 @@ function createShell(): DesktopShellRuntime {
         ...(PARSER_CANDIDATES.length > 0 ? { parserCandidates: PARSER_CANDIDATES } : {}),
         ...(PARSER_ALLOWED_ORIGINS.length > 0 ? { parserAllowedOrigins: PARSER_ALLOWED_ORIGINS } : {}),
         ...(PLAYBACK_RULES.length > 0 ? { playbackRules: PLAYBACK_RULES } : {}),
+        ...(sniffer ? { sniffer } : {}),
       });
       uiServer = server;
       return server;
     },
   });
+}
+
+function createElectronSnifferPlatform(): IsolatedSnifferPlatform {
+  return {
+    createSession: (policy) => createElectronSnifferSession(policy),
+  };
+}
+
+async function createElectronSnifferSession(policy: SnifferPolicy): Promise<IsolatedSnifferSession> {
+  const isolatedSession = electronSession.fromPartition(policy.partition, { cache: false });
+  const window = new BrowserWindow({
+    show: false,
+    paintWhenInitiallyHidden: false,
+    webPreferences: {
+      session: isolatedSession,
+      contextIsolation: policy.contextIsolation,
+      nodeIntegration: policy.nodeIntegration,
+      sandbox: policy.sandbox,
+      webSecurity: policy.webSecurity,
+    },
+  });
+  const requestListeners = new Set<(event: SnifferRequestEvent) => void>();
+  const responseListeners = new Set<(event: SnifferResponseEvent) => void>();
+  const navigationListeners = new Set<(event: SnifferNavigationEvent) => void>();
+  const violationListeners = new Set<(event: SnifferViolation) => void>();
+  const requests = new Map<number, {
+    requestHeaders?: Record<string, string>;
+    responseHeaders?: Record<string, string[]>;
+    startedAt: number;
+  }>();
+  let closed = false;
+
+  const emitViolation = (event: SnifferViolation) => {
+    for (const listener of violationListeners) listener(event);
+  };
+  const emitRequest = (event: SnifferRequestEvent) => {
+    for (const listener of requestListeners) listener(event);
+  };
+  const emitResponse = (event: SnifferResponseEvent) => {
+    for (const listener of responseListeners) listener(event);
+  };
+  const emitNavigation = (event: SnifferNavigationEvent) => {
+    for (const listener of navigationListeners) listener(event);
+  };
+  const classifyUrl = (url: string): "allowed" | "origin" | "protocol" | "local-file" => {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return "protocol";
+    }
+    if (parsed.protocol === "file:") return "local-file";
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "protocol";
+    return policy.allowedOrigins.includes(parsed.origin) ? "allowed" : "origin";
+  };
+  const onBeforeRequest = (
+    details: Electron.OnBeforeRequestListenerDetails,
+    callback: (response: Electron.CallbackResponse) => void,
+  ) => {
+    const classification = classifyUrl(details.url);
+    if (classification !== "allowed") {
+      emitViolation({
+        kind: classification === "local-file" ? "local-file" : classification,
+        url: details.url,
+        message: classification === "origin"
+          ? "隔离嗅探阻止了 allowlist 外请求"
+          : "隔离嗅探阻止了非 HTTP(S) 请求",
+      });
+      callback({ cancel: true });
+      return;
+    }
+    requests.set(details.id, { startedAt: Date.now() });
+    emitRequest({
+      requestId: String(details.id),
+      url: details.url,
+      method: details.method,
+      resourceType: details.resourceType,
+      ...(details.referrer ? { pageUrl: details.referrer } : {}),
+      isMainFrame: details.resourceType === "mainFrame",
+    });
+    callback({});
+  };
+  const onBeforeSendHeaders = (
+    details: Electron.OnBeforeSendHeadersListenerDetails,
+    callback: (response: Electron.BeforeSendResponse) => void,
+  ) => {
+    const request = requests.get(details.id) ?? { startedAt: Date.now() };
+    request.requestHeaders = { ...details.requestHeaders };
+    requests.set(details.id, request);
+    callback({ requestHeaders: details.requestHeaders });
+  };
+  const onHeadersReceived = (
+    details: Electron.OnHeadersReceivedListenerDetails,
+    callback: (response: Electron.HeadersReceivedResponse) => void,
+  ) => {
+    const request = requests.get(details.id) ?? { startedAt: Date.now() };
+    if (details.responseHeaders) request.responseHeaders = { ...details.responseHeaders };
+    requests.set(details.id, request);
+    callback(details.responseHeaders ? { responseHeaders: details.responseHeaders } : {});
+  };
+  const onCompleted = (details: Electron.OnCompletedListenerDetails) => {
+    const request = requests.get(details.id);
+    requests.delete(details.id);
+    const headers = details.responseHeaders ?? request?.responseHeaders;
+    const contentType = firstHeader(headers, "content-type");
+    const contentLengthValue = firstHeader(headers, "content-length");
+    const contentLength = contentLengthValue ? Number(contentLengthValue) : undefined;
+    emitResponse({
+      requestId: String(details.id),
+      url: details.url,
+      method: details.method,
+      resourceType: details.resourceType,
+      ...(details.referrer ? { pageUrl: details.referrer } : {}),
+      isMainFrame: details.resourceType === "mainFrame",
+      statusCode: details.statusCode,
+      ...(headers ? { responseHeaders: headers } : {}),
+      ...(contentType ? { contentType } : {}),
+      ...(contentLength !== undefined && Number.isFinite(contentLength) ? { contentLength } : {}),
+      ...(request?.requestHeaders ? { requestHeaders: request.requestHeaders } : {}),
+      ...(request ? { durationMs: Date.now() - request.startedAt } : {}),
+      explicitPlayerRequest: details.resourceType === "media",
+      isMasterPlaylist: /\.m3u8(?:$|[?#])/i.test(details.url),
+    });
+  };
+  const onErrorOccurred = (details: Electron.OnErrorOccurredListenerDetails) => {
+    requests.delete(details.id);
+  };
+  const onWillNavigate = (event: Electron.Event, url: string) => {
+    const classification = classifyUrl(url);
+    if (classification !== "allowed") {
+      event.preventDefault();
+      emitViolation({
+        kind: classification === "local-file" ? "local-file" : "navigation",
+        url,
+        message: "隔离嗅探阻止了不在 allowlist 内的页面导航",
+      });
+      return;
+    }
+    emitNavigation({ url, isMainFrame: true });
+  };
+  const onDownload = (event: Electron.Event) => {
+    event.preventDefault();
+    emitViolation({ kind: "download", message: "隔离嗅探禁用了下载" });
+  };
+
+  isolatedSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, onBeforeRequest);
+  isolatedSession.webRequest.onBeforeSendHeaders({ urls: ["<all_urls>"] }, onBeforeSendHeaders);
+  isolatedSession.webRequest.onHeadersReceived({ urls: ["<all_urls>"] }, onHeadersReceived);
+  isolatedSession.webRequest.onCompleted({ urls: ["<all_urls>"] }, onCompleted);
+  isolatedSession.webRequest.onErrorOccurred({ urls: ["<all_urls>"] }, onErrorOccurred);
+  isolatedSession.on("will-download", onDownload);
+  window.webContents.on("will-navigate", onWillNavigate);
+  window.webContents.setWindowOpenHandler((details) => {
+    emitViolation({ kind: "popup", url: details.url, message: "隔离嗅探禁用了弹窗和新窗口" });
+    return { action: "deny" };
+  });
+
+  return {
+    load: async (url, headers) => {
+      if (closed) throw new Error("Isolated sniffer session is closed");
+      const safeHeaders = Object.entries(headers ?? {})
+        .map(([name, value]) => `${name}: ${value}`)
+        .join("\n");
+      await window.loadURL(url, safeHeaders ? { extraHeaders: safeHeaders } : undefined);
+    },
+    onRequest: (listener) => {
+      requestListeners.add(listener);
+      return () => requestListeners.delete(listener);
+    },
+    onResponse: (listener) => {
+      responseListeners.add(listener);
+      return () => responseListeners.delete(listener);
+    },
+    onNavigate: (listener) => {
+      navigationListeners.add(listener);
+      return () => navigationListeners.delete(listener);
+    },
+    onViolation: (listener) => {
+      violationListeners.add(listener);
+      return () => violationListeners.delete(listener);
+    },
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      isolatedSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, null);
+      isolatedSession.webRequest.onBeforeSendHeaders({ urls: ["<all_urls>"] }, null);
+      isolatedSession.webRequest.onHeadersReceived({ urls: ["<all_urls>"] }, null);
+      isolatedSession.webRequest.onCompleted({ urls: ["<all_urls>"] }, null);
+      isolatedSession.webRequest.onErrorOccurred({ urls: ["<all_urls>"] }, null);
+      isolatedSession.removeListener("will-download", onDownload);
+      window.webContents.removeListener("will-navigate", onWillNavigate);
+      requests.clear();
+      try {
+        if (!window.isDestroyed()) {
+          window.webContents.stop();
+          window.destroy();
+        }
+      } finally {
+        await isolatedSession.clearStorageData().catch(() => undefined);
+      }
+    },
+  };
+}
+
+function firstHeader(headers: Record<string, string[]> | undefined, name: string): string | undefined {
+  if (!headers) return undefined;
+  const expected = name.toLowerCase();
+  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === expected)?.[1];
+  return entry?.[0];
 }
 
 function runtimeDirectory(): string {
@@ -373,6 +599,20 @@ async function runE2e(baseUrl: string): Promise<void> {
         }))()`);
       },
       verifyPlaybackRules: PLAYBACK_RULES.length > 0,
+      verifySniffer: ISOLATED_SNIFFER_ENABLED,
+      ...(ISOLATED_SNIFFER_ENABLED
+        ? {
+            sniff: async () => {
+              if (!isolatedSniffer) throw new Error("Electron isolated sniffer is unavailable");
+              return isolatedSniffer.sniff({
+                sourceId: "packaged-e2e",
+                playbackSessionId: "packaged-e2e-sniffer",
+                initialUrl: requiredEnvironment("QX_E2E_SNIFF_URL"),
+                allowedOrigins: [new URL(requiredEnvironment("QX_E2E_SNIFF_URL")).origin],
+              });
+            },
+          }
+        : {}),
       ...(process.env.QX_E2E_PLAYBACK_CONFIG
         ? { playback: { configJson: process.env.QX_E2E_PLAYBACK_CONFIG } }
         : {}),

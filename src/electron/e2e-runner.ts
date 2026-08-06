@@ -11,6 +11,7 @@ export interface PackagedE2eOptions {
   reloadWindow?: () => Promise<void>;
   evaluateWindow?: (script: string) => Promise<unknown>;
   readWindowHtml?: () => Promise<string>;
+  verifyPlaybackRules?: boolean;
   playback?: {
     configJson: string;
   };
@@ -30,6 +31,7 @@ export interface PackagedE2eChecks {
   embeddedMp4?: boolean;
   embeddedHls?: boolean;
   parseChain?: boolean;
+  playbackRules?: boolean;
   proxyRequired?: boolean;
   noExternalBrowser?: boolean;
   errorSurface?: boolean;
@@ -141,6 +143,9 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       });
       const headeredHtml = await readPage(options);
       const headeredDom = await probeWindow(options, headeredHtml);
+      const headeredPlaylist = options.verifyPlaybackRules && playerSourceUrl(headered.state)
+        ? await fetch(playerSourceUrl(headered.state) as string).then((response) => response.text())
+        : "";
       const detached = await post(options.baseUrl, "/api/player/detach");
       const detachedHtml = await readPage(options);
       const opened = await post(options.baseUrl, "/api/player/open");
@@ -166,6 +171,10 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
         && parsed.state?.player?.error === null
         && parsed.state?.player?.source?.parse === 0
         && playerSourceUrl(parsed.state)?.endsWith("/media/fixture.m3u8") === true;
+      if (options.verifyPlaybackRules) {
+        checks.playbackRules = headeredPlaylist.includes("#EXTM3U")
+          && !headeredPlaylist.includes("#EXT-X-CUE-OUT");
+      }
       checks.vodPlaybackFlow = playbackReady
         && playbackOpened.state?.status === "ready"
         && playbackHome.state?.page === "home"

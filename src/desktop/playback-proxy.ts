@@ -3,11 +3,18 @@ import { lookup } from "node:dns/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { isIP } from "node:net";
 import type { AddressInfo } from "node:net";
+import {
+  PlaybackRuleError,
+  PlaybackRuleEngine,
+  type PlaybackRule,
+} from "./playback-rules.js";
 
 export interface PlaybackProxySource {
   parse: number;
   url: string;
   headers: Record<string, string>;
+  sourceId?: string;
+  playbackSessionId?: string;
 }
 
 export interface PlaybackProxyServerOptions {
@@ -27,6 +34,7 @@ export interface PlaybackProxyServerOptions {
   now?: () => number;
   resolveAddresses?: (hostname: string) => Promise<readonly string[]>;
   fetchImpl?: typeof fetch;
+  rules?: readonly PlaybackRule[];
 }
 
 export interface PlaybackProxySession {
@@ -57,6 +65,8 @@ interface ProxySessionState {
   activeControllers: Set<AbortController>;
   activeRequests: number;
   revoked: boolean;
+  sourceId: string;
+  playbackSessionId: string;
 }
 
 interface UpstreamResponse {
@@ -123,6 +133,7 @@ export class PlaybackProxyServer {
   private readonly now: () => number;
   private readonly resolveAddresses: (hostname: string) => Promise<readonly string[]>;
   private readonly fetchImpl: typeof fetch;
+  private readonly ruleEngine: PlaybackRuleEngine;
   private readonly sessions = new Map<string, ProxySessionState>();
   private server: Server | undefined;
   private boundUrl = "";
@@ -156,6 +167,7 @@ export class PlaybackProxyServer {
     this.now = options.now ?? Date.now;
     this.resolveAddresses = options.resolveAddresses ?? resolveHostAddresses;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.ruleEngine = new PlaybackRuleEngine(options.rules ?? []);
   }
 
   public get url(): string {
@@ -184,7 +196,8 @@ export class PlaybackProxyServer {
   }
 
   public async createSession(source: PlaybackProxySource): Promise<PlaybackProxySession> {
-    const normalized = await this.validateSource(source);
+    const playbackSessionId = source.playbackSessionId ?? randomToken(12);
+    const normalized = await this.validateSource({ ...source, playbackSessionId });
     await this.start();
     this.removeExpiredSessions();
 
@@ -202,6 +215,8 @@ export class PlaybackProxyServer {
       activeControllers: new Set(),
       activeRequests: 0,
       revoked: false,
+      sourceId: source.sourceId ?? "",
+      playbackSessionId,
     };
     this.sessions.set(token, state);
 
@@ -234,9 +249,18 @@ export class PlaybackProxyServer {
       throw new PlaybackProxyError("PLAYBACK_PARSE_UNSUPPORTED", "LocalProxy only supports parse=0 media.");
     }
     const parsed = parseHttpUrl(source.url);
-    const headers = normalizeUpstreamHeaders(source.headers, this.allowedUpstreamHeaders);
-    await this.assertSafeUrl(parsed, parsed.origin);
-    return { url: parsed.toString(), origin: parsed.origin, headers };
+    const rules = this.ruleEngine.applySource(
+      { url: parsed.toString(), headers: source.headers },
+      {
+        sourceId: source.sourceId ?? "",
+        playbackSessionId: source.playbackSessionId ?? "",
+        url: parsed.toString(),
+      },
+    );
+    const ruledUrl = parseHttpUrl(rules.url);
+    const headers = normalizeUpstreamHeaders(rules.headers, this.allowedUpstreamHeaders);
+    await this.assertSafeUrl(ruledUrl, ruledUrl.origin);
+    return { url: ruledUrl.toString(), origin: ruledUrl.origin, headers };
   }
 
   private async assertSafeUrl(value: URL, expectedOrigin: string): Promise<void> {
@@ -364,7 +388,16 @@ export class PlaybackProxyServer {
     }
     if (isPlaylistResponse(upstream.response, upstream.url)) {
       const body = await this.readResponse(upstream.response, this.maxPlaylistBytes, controller);
-      const rewritten = await this.rewritePlaylist(session, upstream.url, body.toString("utf8"));
+      const ruled = this.ruleEngine.applyPlaylist(
+        body.toString("utf8"),
+        upstream.url,
+        {
+          sourceId: session.sourceId,
+          playbackSessionId: session.playbackSessionId,
+          url: upstream.url,
+        },
+      );
+      const rewritten = await this.rewritePlaylist(session, upstream.url, ruled.body);
       writeUpstreamHeaders(response, upstream.response, responseStatus, Buffer.byteLength(rewritten, "utf8"));
       response.end(rewritten);
       return;
@@ -545,6 +578,8 @@ export class PlaybackProxyServer {
     if (response.headersSent || response.writableEnded) return;
     const proxyError = error instanceof PlaybackProxyError
       ? error
+      : error instanceof PlaybackRuleError
+        ? new PlaybackProxyError(error.code, error.message)
       : new PlaybackProxyError("PLAYBACK_PROXY_ERROR", "The playback proxy request failed.");
     const status = statusForProxyError(proxyError.code);
     writeProxyError(response, status, proxyError.code);
@@ -778,6 +813,7 @@ function writeCorsHeaders(response: ServerResponse): void {
 }
 
 function statusForProxyError(code: string): number {
+  if (code === "PLAYBACK_RULE_INVALID") return 422;
   if (code.includes("TIMEOUT")) return 504;
   if (code.includes("TOO_LARGE")) return 413;
   if (code.includes("ORIGIN") || code.includes("PRIVATE") || code.includes("DNS") || code.includes("PROTOCOL")) return 403;

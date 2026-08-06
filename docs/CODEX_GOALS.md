@@ -425,9 +425,41 @@ checkpoint: complete G30-G41 multi-engine foundation
 checkpoint: complete G42 parse chain
 ```
 
-## G43—G49（未开始）
+## G43（已完成）
 
-按串行 Gate 继续：Playback Rules/m3u8、隔离网页嗅探、mpv backend 合同、播放调试面板、字幕轨道、流健康与自动线路回退、综合播放增强验收。
+### 目标
+建立受控 Playback Rules 与 m3u8 安全处理层。
+
+### 状态
+已完成。规则按 source/session/path 作用域执行，支持 URL/header/query/host/path/URI/filter/marker action；处理后的清单保留 Key、Map、segment 和播放顺序，空清单返回 `PLAYBACK_RULE_INVALID`。packaged E2E 首启与重启均验证 protected fixture marker 经 LocalProxy 被移除。
+
+### 依赖
+- G42 parse=1 解析链
+- G21—G23 LocalProxy、内嵌播放器与 Playback Session
+
+### 验收标准
+- 规则只作用于明确 source、session、origin 或 path，不拦截全局网络
+- 相对 URI、主/子清单、segment、EXT-X-KEY、EXT-X-MAP、DISCONTINUITY 和明确 marker 可安全处理
+- 规则冲突、命中、删除/保留数量可 dry run，差异脱敏
+- 规则导致清单为空时拒绝结果，不把空清单传给播放器
+- 不接入未授权来源，不把规则层变成开放代理
+
+### 验证结果
+- `tests/playback-rules.test.ts`、`tests/playback-proxy.test.ts`、`tests/electron-e2e.test.ts`：通过
+- `npm run typecheck`：通过
+- `npm run electron:e2e:package`：通过；首次和重启轮次 `playbackRules` 均为 true
+
+### 文档
+- `docs/spike-43-playback-rules.md`
+
+### checkpoint
+```text
+checkpoint: complete G43 playback rules
+```
+
+## G44—G49（未开始）
+
+按串行 Gate 继续：隔离网页嗅探、mpv backend 合同、播放调试面板、字幕轨道、流健康与自动线路回退、综合播放增强验收。
 
 DEX-1 ~ DEX-5（实验支线）
 

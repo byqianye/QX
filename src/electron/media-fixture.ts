@@ -197,6 +197,7 @@ function servePlaylist(request: IncomingMessage, response: ServerResponse, prefi
     "#EXT-X-TARGETDURATION:1",
     "#EXT-X-MEDIA-SEQUENCE:0",
     "#EXT-X-PLAYLIST-TYPE:VOD",
+    ...(prefix === "/protected" ? ["#EXT-X-CUE-OUT:DURATION=1"] : []),
     `#EXT-X-MAP:URI=\"${prefix}/fixture-init.mp4\"`,
     "#EXTINF:1.0,",
     `${prefix}/fixture-0.m4s`,

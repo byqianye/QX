@@ -1,4 +1,5 @@
 import { createServer, type Server } from "node:http";
+import { createHash } from "node:crypto";
 import {
   mkdtempSync,
   readFileSync,
@@ -52,6 +53,22 @@ function parserEnvironment(): Record<string, string> {
   };
 }
 
+function playbackRuleEnvironment(configJson: string): Record<string, string> {
+  const sourceId = `inline:${createHash("sha256").update(configJson, "utf8").digest("hex").slice(0, 16)}`;
+  return {
+    QX_PLAYBACK_RULES_JSON: JSON.stringify([{
+      id: "fixture-remove-cue-marker",
+      sourceId,
+      enabled: true,
+      priority: 1,
+      match: { pathPrefix: "/protected" },
+      action: { type: "marker-filter", markers: ["#EXT-X-CUE-OUT"] },
+      scope: "path",
+      safeDescription: "Remove the explicit local fixture cue marker",
+    }]),
+  };
+}
+
 try {
   await mediaFixture.start();
   const playbackConfig = JSON.stringify({
@@ -77,6 +94,7 @@ try {
     QX_E2E_PLAYBACK_CONFIG: playbackConfig,
     QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,
     ...parserEnvironment(),
+    ...playbackRuleEnvironment(playbackConfig),
   });
   const firstResultValue = readResult(firstResult);
   assertRun("first packaged E2E", first, firstResultValue);
@@ -93,6 +111,7 @@ try {
     QX_E2E_PLAYBACK_CONFIG: playbackConfig,
     QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,
     ...parserEnvironment(),
+    ...playbackRuleEnvironment(playbackConfig),
   });
   const secondResultValue = readResult(secondResult);
   assertRun("restarted packaged E2E", second, secondResultValue);

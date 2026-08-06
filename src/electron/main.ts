@@ -9,6 +9,7 @@ import { DesktopSpiderImportController } from "../desktop/spider-import.js";
 import { DesktopSpiderSession } from "../desktop/spider-session.js";
 import { DesktopSpiderUiServer } from "../desktop/spider-ui.js";
 import type { ParserCandidate } from "../desktop/parse-chain.js";
+import type { PlaybackRule, PlaybackRuleAction, PlaybackRuleMatch, PlaybackRuleScope } from "../desktop/playback-rules.js";
 import {
   JsonFileDesktopStateStore,
   restoreWindowBounds,
@@ -33,6 +34,7 @@ const STARTUP_TIMEOUT_MS = 5_000;
 const PLAYBACK_PROXY_ORIGINS = listEnvironment("QX_PLAYBACK_PROXY_ORIGINS");
 const PARSER_ALLOWED_ORIGINS = listEnvironment("QX_PARSE_ALLOWED_ORIGINS");
 const PARSER_CANDIDATES = parserCandidatesEnvironment("QX_PARSE_CANDIDATES_JSON");
+const PLAYBACK_RULES = playbackRulesEnvironment("QX_PLAYBACK_RULES_JSON");
 
 if (process.env.QX_E2E_USER_DATA) {
   mkdirSync(process.env.QX_E2E_USER_DATA, { recursive: true });
@@ -115,6 +117,7 @@ function createShell(): DesktopShellRuntime {
         ...(PLAYBACK_PROXY_ORIGINS.length > 0 ? { playbackProxyOrigins: PLAYBACK_PROXY_ORIGINS } : {}),
         ...(PARSER_CANDIDATES.length > 0 ? { parserCandidates: PARSER_CANDIDATES } : {}),
         ...(PARSER_ALLOWED_ORIGINS.length > 0 ? { parserAllowedOrigins: PARSER_ALLOWED_ORIGINS } : {}),
+        ...(PLAYBACK_RULES.length > 0 ? { playbackRules: PLAYBACK_RULES } : {}),
       });
       uiServer = server;
       return server;
@@ -369,6 +372,7 @@ async function runE2e(baseUrl: string): Promise<void> {
           read();
         }))()`);
       },
+      verifyPlaybackRules: PLAYBACK_RULES.length > 0,
       ...(process.env.QX_E2E_PLAYBACK_CONFIG
         ? { playback: { configJson: process.env.QX_E2E_PLAYBACK_CONFIG } }
         : {}),
@@ -537,6 +541,109 @@ function isParserType(value: unknown): value is ParserCandidate["type"] {
     || value === "html-declared"
     || value === "source-provided"
     || value === "fixture";
+}
+
+function playbackRulesEnvironment(name: string): PlaybackRule[] {
+  const raw = process.env[name];
+  if (!raw) return [];
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!Array.isArray(value)) return [];
+    return value
+      .filter(isRecord)
+      .map((rule): PlaybackRule | null => {
+        const id = typeof rule.id === "string" ? rule.id.trim() : "";
+        const sourceId = typeof rule.sourceId === "string" ? rule.sourceId.trim() : "";
+        const safeDescription = typeof rule.safeDescription === "string" ? rule.safeDescription.trim() : "";
+        const scope = rule.scope;
+        const priority = rule.priority;
+        const match = parsePlaybackRuleMatch(rule.match);
+        const action = parsePlaybackRuleAction(rule.action);
+        if (!id || !sourceId || !safeDescription
+          || typeof rule.enabled !== "boolean"
+          || typeof priority !== "number"
+          || !Number.isFinite(priority)
+          || !isPlaybackRuleScope(scope)
+          || !match
+          || !action) return null;
+        return {
+          id: id.slice(0, 120),
+          sourceId: sourceId.slice(0, 240),
+          enabled: rule.enabled,
+          priority: Math.floor(priority),
+          match,
+          action,
+          scope,
+          safeDescription: safeDescription.slice(0, 240),
+        };
+      })
+      .filter((rule): rule is PlaybackRule => rule !== null)
+      .slice(0, 32);
+  } catch {
+    return [];
+  }
+}
+
+function parsePlaybackRuleMatch(value: unknown): PlaybackRuleMatch | null {
+  if (!isRecord(value)) return null;
+  const match: PlaybackRuleMatch = {};
+  if (value.origin !== undefined && typeof value.origin !== "string") return null;
+  if (value.pathPrefix !== undefined && typeof value.pathPrefix !== "string") return null;
+  if (value.extension !== undefined && typeof value.extension !== "string") return null;
+  if (value.playbackSessionId !== undefined && typeof value.playbackSessionId !== "string") return null;
+  if (value.lineContains !== undefined && typeof value.lineContains !== "string") return null;
+  if (typeof value.origin === "string") match.origin = value.origin.slice(0, 2048);
+  if (typeof value.pathPrefix === "string") match.pathPrefix = value.pathPrefix.slice(0, 512);
+  if (typeof value.extension === "string") match.extension = value.extension.slice(0, 64);
+  if (typeof value.playbackSessionId === "string") match.playbackSessionId = value.playbackSessionId.slice(0, 120);
+  if (typeof value.lineContains === "string") match.lineContains = value.lineContains.slice(0, 160);
+  return match;
+}
+
+function parsePlaybackRuleAction(value: unknown): PlaybackRuleAction | null {
+  if (!isRecord(value) || typeof value.type !== "string") return null;
+  if (value.type === "url-rewrite" || value.type === "path-replace" || value.type === "uri-rewrite") {
+    return typeof value.from === "string" && typeof value.to === "string"
+      ? { type: value.type, from: value.from.slice(0, 1024), to: value.to.slice(0, 2048) }
+      : null;
+  }
+  if (value.type === "header-merge") {
+    if (!isRecord(value.headers)) return null;
+    const headers = Object.fromEntries(
+      Object.entries(value.headers)
+        .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+        .slice(0, 16),
+    );
+    return { type: "header-merge", headers };
+  }
+  if (value.type === "query-parameter") {
+    return typeof value.name === "string" && typeof value.value === "string"
+      && (value.mode === undefined || value.mode === "set" || value.mode === "append")
+      ? { type: "query-parameter", name: value.name.slice(0, 120), value: value.value.slice(0, 512), ...(value.mode ? { mode: value.mode } : {}) }
+      : null;
+  }
+  if (value.type === "host-replace") {
+    return typeof value.host === "string"
+      && (value.port === undefined || typeof value.port === "number")
+      ? { type: "host-replace", host: value.host.slice(0, 255), ...(value.port !== undefined ? { port: Math.floor(value.port) } : {}) }
+      : null;
+  }
+  if (value.type === "line-filter") {
+    return typeof value.contains === "string" ? { type: "line-filter", contains: value.contains.slice(0, 160) } : null;
+  }
+  if (value.type === "marker-filter") {
+    return Array.isArray(value.markers)
+      ? { type: "marker-filter", markers: value.markers.filter((marker): marker is string => typeof marker === "string").slice(0, 16) }
+      : null;
+  }
+  return null;
+}
+
+function isPlaybackRuleScope(value: unknown): value is PlaybackRuleScope {
+  return value === "source"
+    || value === "playback-session"
+    || value === "media-origin"
+    || value === "path";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -45,6 +45,7 @@ import {
   type ParserCandidate,
   type ParseUiState,
 } from "./parse-chain.js";
+import type { PlaybackRule } from "./playback-rules.js";
 
 const require = createRequire(import.meta.url);
 
@@ -134,6 +135,7 @@ export interface DesktopSpiderUiOptions {
   parserCandidates?: readonly ParserCandidate[];
   parserAllowedOrigins?: readonly string[];
   parserFetch?: typeof fetch;
+  playbackRules?: readonly PlaybackRule[];
 }
 
 export class DesktopSpiderUiController {
@@ -167,9 +169,10 @@ export class DesktopSpiderUiController {
       ...(options.parserFetch ? { fetchImpl: options.parserFetch } : {}),
     });
     this.playbackProxy = new PlaybackProxyServer(
-      options.playbackProxyOrigins
-        ? { allowedOrigins: options.playbackProxyOrigins }
-        : {},
+      {
+        ...(options.playbackProxyOrigins ? { allowedOrigins: options.playbackProxyOrigins } : {}),
+        ...(options.playbackRules ? { rules: options.playbackRules } : {}),
+      },
     );
   }
 
@@ -601,6 +604,8 @@ export class DesktopSpiderUiController {
       parse: 0,
       url: resolved.url,
       headers: resolved.headers,
+      sourceId: this.session.view.source,
+      playbackSessionId,
     });
     return { parse: 0, url: this.proxySession.url, headers: {} };
   }
@@ -639,6 +644,7 @@ export interface DesktopSpiderUiServerOptions {
   parserCandidates?: readonly ParserCandidate[];
   parserAllowedOrigins?: readonly string[];
   parserFetch?: typeof fetch;
+  playbackRules?: readonly PlaybackRule[];
 }
 
 export class DesktopSpiderUiServer {
@@ -657,6 +663,7 @@ export class DesktopSpiderUiServer {
   private readonly parserCandidates: readonly ParserCandidate[] | undefined;
   private readonly parserAllowedOrigins: readonly string[] | undefined;
   private readonly parserFetch: typeof fetch | undefined;
+  private readonly playbackRules: readonly PlaybackRule[] | undefined;
   private server: Server | undefined;
   private boundUrl: string | undefined;
   private boundSession: DesktopSpiderSessionPort | undefined;
@@ -687,6 +694,7 @@ export class DesktopSpiderUiServer {
     this.parserCandidates = options.parserCandidates?.map(cloneParserCandidate);
     this.parserAllowedOrigins = options.parserAllowedOrigins;
     this.parserFetch = options.parserFetch;
+    this.playbackRules = options.playbackRules;
   }
 
   public get url(): string {
@@ -983,6 +991,7 @@ export class DesktopSpiderUiServer {
         ...(this.parserCandidates ? { parserCandidates: this.parserCandidates } : {}),
         ...(this.parserAllowedOrigins ? { parserAllowedOrigins: this.parserAllowedOrigins } : {}),
         ...(this.parserFetch ? { parserFetch: this.parserFetch } : {}),
+        ...(this.playbackRules ? { playbackRules: this.playbackRules } : {}),
       });
       this.importedUiBySession.set(session, this.importedUi);
     }

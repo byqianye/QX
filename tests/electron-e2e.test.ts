@@ -78,6 +78,55 @@ describe("packaged Electron E2E flow", () => {
       },
     });
   });
+
+  it("runs the embedded MP4/HLS and proxy-required playback checks", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "qx-electron-playback-e2e-"));
+    directories.push(directory);
+    const config = JSON.stringify({
+      spider: "fixture.jar",
+      sites: [{ key: "douban", api: "csp_Douban", ext: "fixture" }],
+    });
+    const playbackConfig = JSON.stringify({
+      spider: "fixture.jar",
+      sites: [{ key: "playable", api: "csp_PlayableFixture", ext: "fixture-player" }],
+    });
+    const configFile = join(directory, "config.json");
+    writeFileSync(configFile, config, "utf8");
+    const configServer = await startConfigServer(config);
+    resources.push(configServer);
+
+    const importer = new DesktopSpiderImportController({
+      trustStore: new ImportTrustStore(),
+      createSession: (_source, _config, site) => new SessionFixture(site.api ?? "csp_Douban"),
+    });
+    const uiServer = new DesktopSpiderUiServer({ importer });
+    resources.push(uiServer);
+    await uiServer.start();
+
+    const result = await runPackagedE2e({
+      baseUrl: uiServer.url,
+      configUrl: configServer.url,
+      configFile,
+      configJson: config,
+      freshTrust: true,
+      playback: { configJson: playbackConfig },
+      startAgain: async () => ({ url: uiServer.url }),
+      closeWindow: async () => uiServer.close(),
+      getSidecarPid: () => 4321,
+      waitForSidecarExit: async () => true,
+    });
+
+    expect(result).toMatchObject({
+      status: "passed",
+      checks: {
+        doubanUnavailable: true,
+        embeddedMp4: true,
+        embeddedHls: true,
+        proxyRequired: true,
+        noExternalBrowser: true,
+      },
+    });
+  });
 });
 
 async function startConfigServer(config: string): Promise<ServerResource> {
@@ -105,19 +154,25 @@ interface ServerResource {
 
 class SessionFixture implements DesktopSpiderSessionPort {
   public destroyed = false;
-  public view: DesktopSpiderView = {
-    source: "inline:fixture",
-    api: "csp_Douban",
-    status: "idle",
-    warning: null,
-    error: null,
-    sidecarRunning: false,
-    playback: {
-      available: false,
-      label: "Douban：无正片播放源",
-      message: "Douban 当前仅提供元数据/详情，未提供可直接播放的正片地址。",
-    },
-  };
+  public view: DesktopSpiderView;
+
+  public constructor(private readonly api = "csp_Douban") {
+    this.view = {
+      source: "inline:fixture",
+      api,
+      status: "idle",
+      warning: null,
+      error: null,
+      sidecarRunning: false,
+      playback: {
+        available: false,
+        label: api === "csp_PlayableFixture" ? "Playable source" : "Douban：无正片播放源",
+        message: api === "csp_PlayableFixture"
+          ? "Select a title and resolve its playback URL"
+          : "Douban 当前仅提供元数据/详情，未提供可直接播放的正片地址。",
+      },
+    };
+  }
 
   public confirmImport(): void {
     this.view.status = "idle";
@@ -145,12 +200,33 @@ class SessionFixture implements DesktopSpiderSessionPort {
     return ok({ list: [{ vod_id: ids[0], vod_name: "Fixture Detail" }] });
   }
 
-  public async playerContent(): Promise<SpiderResponse> {
-    return {
-      id: "fixture",
-      ok: false,
-      error: { code: "PLAYBACK_UNAVAILABLE", message: "Douban has no playback" },
+  public async playerContent(_flag: string, id: string): Promise<SpiderResponse> {
+    if (this.api !== "csp_PlayableFixture") {
+      return {
+        id: "fixture",
+        ok: false,
+        error: { code: "PLAYBACK_UNAVAILABLE", message: "Douban has no playback" },
+      };
+    }
+    if (id === "headered") {
+      return {
+        id: "fixture",
+        ok: false,
+        error: { code: "PLAYBACK_PROXY_REQUIRED", message: "该地址需要 LocalProxy 才能播放。" },
+      };
+    }
+    const url = id === "direct-hls"
+      ? "http://127.0.0.1:43123/media/fixture.m3u8"
+      : "http://127.0.0.1:43123/media/fixture.mp4";
+    this.view.playback = {
+      available: true,
+      label: "Playable source",
+      message: "Direct playback URL resolved",
+      parse: 0,
+      url,
+      headers: {},
     };
+    return ok({ parse: 0, url, header: {} });
   }
 
   public async destroy(): Promise<void> {

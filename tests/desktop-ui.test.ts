@@ -64,11 +64,39 @@ describe("desktop Spider UI", () => {
         available: true,
         parse: 0,
         url: "https://media.example.invalid/fixture.m3u8",
-        headers: { "User-Agent": "Spike19" },
+        headers: {},
+      },
+      player: {
+        status: "loading",
+        source: {
+          url: "https://media.example.invalid/fixture.m3u8",
+          parse: 0,
+        },
       },
     });
     expect(renderDesktopSpiderUi(ui.state)).toContain("https://media.example.invalid/fixture.m3u8");
+    expect(renderDesktopSpiderUi(ui.state)).toContain('data-testid="embedded-player"');
+    expect(renderDesktopSpiderUi(ui.state)).not.toContain("window.open");
+    expect(renderDesktopSpiderUi(ui.state)).toContain("hlsInstance.destroy");
+    expect(renderDesktopSpiderUi(ui.state)).toContain("removeEventListener");
     expect(renderDesktopSpiderUi(ui.state)).not.toMatch(/data-testid="play-button"[^>]*disabled/);
+  });
+
+  it("shows the LocalProxy requirement instead of exposing a headered URL", async () => {
+    const fixture = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
+    const ui = new DesktopSpiderUiController({ session: fixture });
+
+    ui.confirmImport();
+    await ui.open("playable", "fixture-endpoint");
+    await ui.player("default", "headered", []);
+
+    expect(ui.state).toMatchObject({
+      status: "error",
+      error: { code: "PLAYBACK_PROXY_REQUIRED" },
+      player: { status: "error", error: { code: "PLAYBACK_PROXY_REQUIRED" } },
+    });
+    expect(renderDesktopSpiderUi(ui.state)).toContain("该地址需要 LocalProxy");
+    expect(renderDesktopSpiderUi(ui.state)).toMatch(/data-testid="play-button"[^>]*disabled/);
   });
 
   it("drives home, category, search and detail, then destroys on switch and close", async () => {
@@ -158,6 +186,23 @@ describe("desktop Spider UI", () => {
     expect(closed.state.status).toBe("destroyed");
     expect(fixture.destroyed).toBe(true);
   });
+
+  it("serves the bundled hls.js asset locally", async () => {
+    const fixture = new FixtureSession();
+    const ui = new DesktopSpiderUiController({ session: fixture });
+    const server = new DesktopSpiderUiServer({
+      ui,
+      siteKey: "douban",
+      ext: "fixture-endpoint",
+    });
+    servers.push(server);
+    await server.start();
+
+    const response = await fetch(new URL("/assets/hls.min.js", server.url));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("javascript");
+    expect(await response.text()).toContain("Hls");
+  });
 });
 
 class FixtureSession implements DesktopSpiderSessionPort {
@@ -231,13 +276,20 @@ class FixtureSession implements DesktopSpiderSessionPort {
     if (this.view.api !== "csp_PlayableFixture") {
       return { id: "fixture", ok: false, error: { code: "PLAYBACK_UNAVAILABLE", message: "Douban has no playback" } };
     }
+    if (id === "headered") {
+      return {
+        id: "fixture",
+        ok: false,
+        error: { code: "PLAYBACK_PROXY_REQUIRED", message: "该地址需要 LocalProxy 才能播放。" },
+      };
+    }
     this.view.playback = {
       available: true,
       label: "Playable fixture",
       message: "Direct HLS URL resolved",
       parse: 0,
       url: "https://media.example.invalid/fixture.m3u8",
-      headers: { "User-Agent": "Spike19" },
+      headers: {},
     };
     return ok({
       parse: 0,

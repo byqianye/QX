@@ -214,6 +214,17 @@ async function runE2e(baseUrl: string): Promise<void> {
       },
       getSidecarPid: () => lastClient?.pid ?? null,
       waitForSidecarExit: waitForProcessExit,
+      reloadWindow: async () => {
+        if (!mainWindow || mainWindow.isDestroyed()) throw new Error("Main window is unavailable for playback probe");
+        await mainWindow.loadURL(baseUrl);
+      },
+      evaluateWindow: async (script) => {
+        if (!mainWindow || mainWindow.isDestroyed()) throw new Error("Main window is unavailable for playback probe");
+        return mainWindow.webContents.executeJavaScript(script);
+      },
+      ...(process.env.QX_E2E_PLAYBACK_CONFIG
+        ? { playback: { configJson: process.env.QX_E2E_PLAYBACK_CONFIG } }
+        : {}),
     });
     writeE2eResult(result);
     process.exitCode = result.status === "passed" ? 0 : 1;

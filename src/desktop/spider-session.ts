@@ -3,6 +3,7 @@ import type { TvBoxConfig, TvBoxSite } from "../config/decoder.js";
 import { DesktopSpiderClient } from "../spider/desktop-client.js";
 import { findJvmSpider } from "../spider/jvm-spiders.js";
 import { routeSpiderApi, type SpiderResponse } from "../spider/rpc.js";
+import { validatePlaybackSource } from "./playback.js";
 
 export type DesktopSpiderSessionStatus =
   | "confirmation_required"
@@ -56,6 +57,12 @@ const PLAYABLE_PENDING: DesktopSpiderPlaybackState = {
   available: false,
   label: "Playable source",
   message: "Select a title and resolve its playback URL",
+};
+
+const PLAYBACK_PROXY_REQUIRED: DesktopSpiderPlaybackState = {
+  available: false,
+  label: "需要 LocalProxy",
+  message: "该地址需要 LocalProxy 才能播放。",
 };
 
 export class DesktopSpiderSession {
@@ -194,16 +201,34 @@ export class DesktopSpiderSession {
     if (!response.ok) return response;
 
     try {
-      this.viewState.playback = playbackFrom(response.result);
+      const playback = playbackFrom(response.result);
+      const validation = validatePlaybackSource({
+        parse: playback.parse,
+        url: playback.url,
+        headers: playback.headers,
+      });
+      if (validation) {
+        this.viewState.playback = playbackUnavailableFor(validation.code, validation.message);
+        const rejectedResponse: SpiderResponse = {
+          id: response.id,
+          ok: false,
+          error: validation,
+        };
+        this.setRpcError(rejectedResponse);
+        return rejectedResponse;
+      }
+      this.viewState.playback = playback;
     } catch (error) {
+      const invalidError = {
+        code: "PLAYBACK_INVALID_RESPONSE",
+        message: error instanceof Error ? error.message : String(error),
+      };
       const invalidResponse: SpiderResponse = {
         id: response.id,
         ok: false,
-        error: {
-          code: "PLAYBACK_INVALID_RESPONSE",
-          message: error instanceof Error ? error.message : String(error),
-        },
+        error: invalidError,
       };
+      this.viewState.playback = playbackUnavailableFor(invalidError.code, invalidError.message);
       this.setRpcError(invalidResponse);
       return invalidResponse;
     }
@@ -302,6 +327,15 @@ export class DesktopSpiderSession {
 
 function playbackPendingFor(api: string | null): DesktopSpiderPlaybackState {
   return findJvmSpider(api ?? undefined)?.playback === "player" ? PLAYABLE_PENDING : NO_PLAYBACK;
+}
+
+function playbackUnavailableFor(code: string, message: string): DesktopSpiderPlaybackState {
+  if (code === "PLAYBACK_PROXY_REQUIRED") return PLAYBACK_PROXY_REQUIRED;
+  return {
+    available: false,
+    label: "播放不可用",
+    message,
+  };
 }
 
 function playbackFrom(value: unknown): Extract<DesktopSpiderPlaybackState, { available: true }> {

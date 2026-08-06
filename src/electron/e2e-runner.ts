@@ -8,6 +8,11 @@ export interface PackagedE2eOptions {
   closeWindow?: () => Promise<void>;
   getSidecarPid?: () => number | null;
   waitForSidecarExit?: (pid: number) => Promise<boolean>;
+  reloadWindow?: () => Promise<void>;
+  evaluateWindow?: (script: string) => Promise<unknown>;
+  playback?: {
+    configJson: string;
+  };
 }
 
 export interface PackagedE2eChecks {
@@ -20,6 +25,13 @@ export interface PackagedE2eChecks {
   sidecarStopped: boolean;
   repeatedStart: boolean;
   trustedReimport: boolean;
+  doubanUnavailable: boolean;
+  embeddedMp4?: boolean;
+  embeddedHls?: boolean;
+  proxyRequired?: boolean;
+  noExternalBrowser?: boolean;
+  embeddedMp4Dom?: boolean;
+  embeddedHlsDom?: boolean;
 }
 
 export interface PackagedE2eResult {
@@ -77,6 +89,10 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
     searchVodId = firstVodId(search.state);
     const detail = await post(options.baseUrl, "/api/detail", { vodId: searchVodId });
     detailVodId = stringField(detail.state?.detail?.vod_id);
+    const doubanPlayback = await post(options.baseUrl, "/api/player", {
+      flag: "default",
+      id: searchVodId,
+    });
     const closed = await post(options.baseUrl, "/api/import/cancel");
     checks.searchDetail = jsonReady
       && opened.state?.status === "ready"
@@ -84,6 +100,51 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       && detail.state?.page === "detail"
       && detailVodId === searchVodId;
     checks.jsonImport = jsonReady && closed.import.status === "cancelled";
+    checks.doubanUnavailable = doubanPlayback.state?.error?.code === "PLAYBACK_UNAVAILABLE";
+
+    if (options.playback) {
+      const playbackImport = await load(options.baseUrl, options.playback.configJson);
+      const playbackReady = await confirmIfNeeded(options.baseUrl, playbackImport.import.status);
+      const playbackOpened = await post(options.baseUrl, "/api/open");
+      const mp4 = await post(options.baseUrl, "/api/player", {
+        flag: "default",
+        id: "direct-mp4",
+      });
+      const mp4Html = await page(options.baseUrl);
+      const mp4Dom = await probeWindow(options, mp4Html);
+      const hls = await post(options.baseUrl, "/api/player", {
+        flag: "default",
+        id: "direct-hls",
+      });
+      const hlsHtml = await page(options.baseUrl);
+      const hlsDom = await probeWindow(options, hlsHtml);
+      const headered = await post(options.baseUrl, "/api/player", {
+        flag: "default",
+        id: "headered",
+      });
+      checks.embeddedMp4 = playbackReady
+        && playbackOpened.state?.status === "ready"
+        && mp4.state?.player?.status === "loading"
+        && playerSourceUrl(mp4.state) !== null
+        && playerSourceUrl(mp4.state)?.endsWith("/media/fixture.mp4") === true
+        && mp4Html.includes('data-testid="embedded-player"');
+      checks.embeddedHls = hls.state?.player?.status === "loading"
+        && playerSourceUrl(hls.state)?.endsWith("/media/fixture.m3u8") === true
+        && hlsHtml.includes('data-testid="embedded-player"')
+        && hlsHtml.includes("/assets/hls.min.js");
+      checks.proxyRequired = headered.state?.error?.code === "PLAYBACK_PROXY_REQUIRED"
+        && headered.state?.player?.error?.code === "PLAYBACK_PROXY_REQUIRED";
+      checks.noExternalBrowser = !mp4Html.includes("window.open")
+        && !hlsHtml.includes("window.open")
+        && !mp4Html.includes("_blank")
+        && !hlsHtml.includes("_blank");
+      if (mp4Dom && hlsDom) {
+        checks.embeddedMp4Dom = mp4Dom.hasVideo
+          && mp4Dom.readyState >= 1
+          && mp4Dom.src.endsWith("/media/fixture.mp4");
+        checks.embeddedHlsDom = hlsDom.hasVideo && hlsDom.hlsLoaded && hlsDom.readyState >= 1;
+      }
+    }
 
     const repeated = await load(options.baseUrl, options.configJson);
     checks.trustedReimport = repeated.import.status === "ready" && repeated.import.trusted;
@@ -188,6 +249,7 @@ function emptyChecks(): PackagedE2eChecks {
     sidecarStopped: false,
     repeatedStart: false,
     trustedReimport: false,
+    doubanUnavailable: false,
   };
 }
 
@@ -206,6 +268,44 @@ interface UiState {
   status: string;
   items: readonly Record<string, unknown>[];
   detail: Record<string, unknown> | null;
+  error?: { code?: string; message?: string } | null;
+  player?: {
+    status?: string;
+    source?: { url?: string } | null;
+    error?: { code?: string; message?: string } | null;
+  } | null;
+}
+
+function playerSourceUrl(state: UiState | null): string | null {
+  const source = state?.player?.source;
+  return typeof source?.url === "string" ? source.url : null;
+}
+
+async function probeWindow(
+  options: PackagedE2eOptions,
+  html: string,
+): Promise<{ hasVideo: boolean; readyState: number; src: string; hlsLoaded: boolean } | null> {
+  if (!options.reloadWindow || !options.evaluateWindow) return null;
+  await options.reloadWindow();
+  const value = await options.evaluateWindow(`(() => new Promise((resolve) => {
+    window.setTimeout(() => {
+      const video = document.querySelector('[data-testid="embedded-player"]');
+      resolve({
+        hasVideo: Boolean(video),
+        readyState: video ? video.readyState : 0,
+        src: video ? (video.currentSrc || video.src || '') : '',
+        hlsLoaded: Boolean(window.Hls),
+      });
+    }, 500);
+  }))()`);
+  if (!isRecord(value)
+    || typeof value.hasVideo !== "boolean"
+    || typeof value.readyState !== "number"
+    || typeof value.src !== "string"
+    || typeof value.hlsLoaded !== "boolean") {
+    throw new Error(`Packaged playback probe returned an invalid result: ${html.length}`);
+  }
+  return value as { hasVideo: boolean; readyState: number; src: string; hlsLoaded: boolean };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

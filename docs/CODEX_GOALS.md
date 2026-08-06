@@ -37,7 +37,23 @@ npm test
 npm run electron:e2e
 ```
 
-G21–G78（未开始）
+## G21（已完成）
+
+### 目标
+将 Spike 19 的 `playerContent` 结果交给 Electron 内嵌 MP4/HLS 播放器。
+
+### 状态
+已完成。带 headers 的结果明确返回 `PLAYBACK_PROXY_REQUIRED`；`csp_Douban` 保持 `PLAYBACK_UNAVAILABLE`。
+
+### 验证
+- `npm run typecheck`
+- `npm test`
+- `npm run electron:e2e:package`
+
+### 文档
+- `docs/spike-20-embedded-player.md`
+
+G22–G78（未开始）
 
 （略，按主路线图执行）
 

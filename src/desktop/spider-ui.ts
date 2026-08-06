@@ -1,4 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 
 import type {
@@ -10,7 +12,11 @@ import {
   renderDesktopSpiderImportUi,
   type DesktopSpiderImportController,
 } from "./spider-import.js";
+import { renderEmbeddedPlayer } from "./embedded-player-ui.js";
+import { EmbeddedPlaybackController, type PlaybackState } from "./playback.js";
 import type { SpiderResponse } from "../spider/rpc.js";
+
+const require = createRequire(import.meta.url);
 
 export type {
   DesktopSpiderPlaybackState,
@@ -58,6 +64,7 @@ export interface DesktopSpiderUiState {
   error: { code: string; message: string } | null;
   sidecarRunning: boolean;
   playback: DesktopSpiderPlaybackState;
+  player: PlaybackState;
   canPlay: boolean;
   items: readonly Record<string, unknown>[];
   detail: Record<string, unknown> | null;
@@ -77,6 +84,7 @@ export class DesktopSpiderUiController {
   private localError: { code: string; message: string } | null = null;
   private items: Record<string, unknown>[] = [];
   private detailItem: Record<string, unknown> | null = null;
+  private readonly playerController = new EmbeddedPlaybackController();
 
   public constructor(options: DesktopSpiderUiOptions) {
     this.session = options.session;
@@ -96,6 +104,7 @@ export class DesktopSpiderUiController {
       error: this.localError ?? view.error,
       sidecarRunning: view.sidecarRunning,
       playback: { ...view.playback },
+      player: this.playerController.state,
       canPlay: view.playback.available,
       items: this.items.map((item) => ({ ...item })),
       detail: this.detailItem ? { ...this.detailItem } : null,
@@ -190,12 +199,21 @@ export class DesktopSpiderUiController {
       () => this.session.playerContent(flag, id, vipFlags, timeoutMs),
       () => {
         this.page = "detail";
+        const playback = this.session.view.playback;
+        if (playback.available) {
+          this.playerController.load({
+            parse: playback.parse,
+            url: playback.url,
+            headers: playback.headers,
+          });
+        }
       },
     );
   }
 
   public async switchSource(): Promise<DesktopSpiderUiState> {
     await this.session.destroy();
+    this.playerController.stop();
     const nextSession = this.createSession?.();
     if (!nextSession) {
       this.localStatus = "destroyed";
@@ -217,6 +235,7 @@ export class DesktopSpiderUiController {
     this.activeOperation = null;
     try {
       await this.session.destroy();
+      this.playerController.stop();
       this.localStatus = "destroyed";
       this.localError = null;
     } catch (error) {
@@ -240,28 +259,34 @@ export class DesktopSpiderUiController {
         this.localStatus = null;
       } else {
         this.localStatus = "error";
-        this.localError = response.error ?? {
+        const error = response.error ?? {
           code: "SPIDER_RPC_ERROR",
           message: "Desktop Spider returned an unsuccessful response",
         };
+        this.localError = error;
+        if (operation === "player") this.playerController.markError(error.code, error.message);
       }
     } catch (error) {
-      this.setError(error);
+      this.setError(error, operation);
     } finally {
       this.activeOperation = null;
     }
     return this.state;
   }
 
-  private setError(error: unknown): void {
+  private setError(error: unknown, operation?: string): void {
     const message = error instanceof Error ? error.message : String(error);
     const isTimeout = error instanceof Error
       && (error.name === "JvmSidecarTimeoutError" || /timeout/i.test(message));
+    const sessionError = this.session.view.error;
+    const code = sessionError?.code ?? (isTimeout ? "SPIDER_TIMEOUT" : "SPIDER_RUNTIME_ERROR");
+    const displayMessage = sessionError?.message ?? message;
     this.localStatus = "error";
     this.localError = {
-      code: isTimeout ? "SPIDER_TIMEOUT" : "SPIDER_RUNTIME_ERROR",
-      message,
+      code,
+      message: displayMessage,
     };
+    if (operation === "player") this.playerController.markError(code, displayMessage);
   }
 }
 
@@ -346,6 +371,10 @@ export class DesktopSpiderUiServer {
         } else {
           writeJson(response, { error: "Import UI is not ready" }, 409);
         }
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/assets/hls.min.js") {
+        this.writeHlsAsset(response);
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/state") {
@@ -470,6 +499,21 @@ export class DesktopSpiderUiServer {
       writeJson(response, { state: ui?.state ?? null });
     }
   }
+
+  private writeHlsAsset(response: ServerResponse): void {
+    try {
+      const assetPath = require.resolve("hls.js/dist/hls.min.js");
+      const asset = readFileSync(assetPath);
+      response.writeHead(200, {
+        "content-type": "application/javascript; charset=utf-8",
+        "content-length": asset.byteLength,
+        "cache-control": "no-store",
+      });
+      response.end(asset);
+    } catch {
+      writeJson(response, { error: "Bundled hls.js asset is unavailable" }, 500);
+    }
+  }
 }
 
 export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
@@ -552,6 +596,10 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
       .vod-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
       .vod-card { border: 1px solid #dce1e6; border-radius: 8px; padding: 12px; background: #fff; }
       .meta { color: #5b6570; font-size: .9rem; }
+      .embedded-player-panel video { display: block; width: 100%; max-height: 520px; background: #101418; }
+      .player-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+      .player-controls label { display: inline-flex; gap: 4px; align-items: center; }
+      .player-error { color: #b42318; }
     </style>
   </head>
   <body>
@@ -569,6 +617,7 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
         <button type="submit">搜索</button>
       </form>
       ${detail}
+      ${renderEmbeddedPlayer(state.player)}
       <section class="vod-list" data-testid="vod-list">${items}</section>
     </main>
     <script>
@@ -584,10 +633,6 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
         document.querySelectorAll('[data-action="home"]').forEach((button) => button.addEventListener('click', () => send('/api/home')));
         document.querySelectorAll('[data-action="category"]').forEach((button) => button.addEventListener('click', () => send('/api/category', { typeId: button.dataset.typeId, page: Number(button.dataset.page || '1') })));
         document.querySelectorAll('[data-action="detail"]').forEach((button) => button.addEventListener('click', () => send('/api/detail', { vodId: button.dataset.vodId })));
-        document.querySelectorAll('[data-action="play"]').forEach((button) => button.addEventListener('click', () => {
-          const url = button.dataset.playUrl;
-          if (url) window.open(url, '_blank', 'noopener');
-        }));
         document.querySelectorAll('[data-action="switch"]').forEach((button) => button.addEventListener('click', () => send('/api/switch')));
         document.querySelectorAll('[data-action="close"]').forEach((button) => button.addEventListener('click', () => send('/api/close')));
         document.querySelector('[data-action="search-form"]')?.addEventListener('submit', (event) => {

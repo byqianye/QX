@@ -15,6 +15,7 @@ import {
   runPackagedExecutable,
   type PackagedProcessResult,
 } from "./packaged-process.js";
+import { createMediaFixtureServer } from "./media-fixture.js";
 
 const config = JSON.stringify({
   spider: "csp_Douban.jvm.jar",
@@ -34,8 +35,20 @@ const secondResult = join(workDirectory, "second-result.json");
 writeFileSync(configFile, config, "utf8");
 
 let configServer: Server | undefined;
+const mediaFixture = createMediaFixtureServer();
 
 try {
+  await mediaFixture.start();
+  const playbackConfig = JSON.stringify({
+    spider: "csp_PlayableFixture.jvm.jar",
+    sites: [{
+      key: "playable",
+      name: "Playable fixture",
+      type: 3,
+      api: "csp_PlayableFixture",
+      ext: mediaFixture.playerUrl,
+    }],
+  });
   const configUrl = await startConfigServer(config);
   const executable = resolvePackagedExecutable();
   const first = await runPackagedExecutable(executable, {
@@ -46,6 +59,7 @@ try {
     QX_E2E_FRESH_TRUST: "1",
     QX_E2E_RESULT_PATH: firstResult,
     QX_E2E_USER_DATA: userData,
+    QX_E2E_PLAYBACK_CONFIG: playbackConfig,
   });
   const firstResultValue = readResult(firstResult);
   assertRun("first packaged E2E", first, firstResultValue);
@@ -58,6 +72,7 @@ try {
     QX_E2E_FRESH_TRUST: "0",
     QX_E2E_RESULT_PATH: secondResult,
     QX_E2E_USER_DATA: userData,
+    QX_E2E_PLAYBACK_CONFIG: playbackConfig,
   });
   const secondResultValue = readResult(secondResult);
   assertRun("restarted packaged E2E", second, secondResultValue);
@@ -70,6 +85,7 @@ try {
   }, null, 2));
 } finally {
   if (configServer) await closeServer(configServer);
+  await mediaFixture.close();
   rmSync(workDirectory, { recursive: true, force: true });
 }
 

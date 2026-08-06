@@ -38,6 +38,7 @@
     "spike": "tsx src/spikes/run-all.ts"
   },
   "dependencies": {
+    "hls.js": "^1.6.17",
     "quickjs-emscripten": "^0.32.0"
   },
   "devDependencies": {

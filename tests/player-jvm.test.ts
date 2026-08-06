@@ -38,10 +38,13 @@ jvmDescribe("JVM-native playerContent vertical slice", () => {
         return;
       }
       response.writeHead(200, { "content-type": "application/json" });
+      const direct = requestUrl.searchParams.get("id") === "direct-mp4";
       response.end(JSON.stringify({
         parse: 0,
-        url: "https://media.example.invalid/fixture.m3u8",
-        header: {
+        url: direct
+          ? endpoint.replace("/player", "/media/fixture.mp4")
+          : "https://media.example.invalid/fixture.m3u8",
+        header: direct ? {} : {
           "User-Agent": "Spike19",
           Referer: "https://source.example.invalid/",
         },
@@ -116,7 +119,7 @@ jvmDescribe("JVM-native playerContent vertical slice", () => {
     await sidecar.destroy();
   });
 
-  it("maps a playable response through the desktop session and preserves headers", async () => {
+  it("requires LocalProxy when the desktop session receives playback headers", async () => {
     const source = "inline:spike-19-playable";
     const trustStore = new ImportTrustStore();
     const session = new DesktopSpiderSession({
@@ -141,20 +144,51 @@ jvmDescribe("JVM-native playerContent vertical slice", () => {
     try {
       await expect(session.open("playable", endpoint)).resolves.toMatchObject({ ok: true });
       await expect(session.playerContent("default", "movie-1", ["vip"])).resolves.toMatchObject({
+        ok: false,
+        error: { code: "PLAYBACK_PROXY_REQUIRED" },
+      });
+      expect(session.view.playback).toMatchObject({
+        available: false,
+        label: "需要 LocalProxy",
+      });
+    } finally {
+      await session.destroy();
+    }
+  });
+
+  it("maps a header-free HTTP media result for the embedded player", async () => {
+    const source = "inline:spike-19-direct";
+    const trustStore = new ImportTrustStore();
+    const session = new DesktopSpiderSession({
+      source,
+      config: {
+        spider: "csp_PlayableFixture.jvm.jar",
+        sites: [{ key: "playable", api: "csp_PlayableFixture", ext: endpoint }],
+      },
+      trustStore,
+      createClient: (site) => new DesktopSpiderClient({
+        api: site.api ?? "",
+        javaExecutable: javaExecutable as string,
+        hostJar: artifacts.hostJar,
+        spiderJar: artifacts.spiderJar,
+        spiderClass: "com.qx.spike.fixture.PlayableJvmSpider",
+        requestTimeoutMs: 1_000,
+      }),
+      requestTimeoutMs: 1_000,
+    });
+
+    session.confirmImport();
+    try {
+      await session.open("playable", endpoint);
+      await expect(session.playerContent("default", "direct-mp4", [])).resolves.toMatchObject({
         ok: true,
-        result: {
-          parse: 0,
-          url: "https://media.example.invalid/fixture.m3u8",
-        },
+        result: { parse: 0, url: expect.stringContaining("/media/fixture.mp4") },
       });
       expect(session.view.playback).toMatchObject({
         available: true,
         parse: 0,
-        url: "https://media.example.invalid/fixture.m3u8",
-        headers: {
-          "User-Agent": "Spike19",
-          Referer: "https://source.example.invalid/",
-        },
+        url: expect.stringContaining("/media/fixture.mp4"),
+        headers: {},
       });
     } finally {
       await session.destroy();

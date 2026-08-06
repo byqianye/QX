@@ -58,6 +58,7 @@ export interface DesktopSpiderImportOptions {
     config: TvBoxConfig,
     site: TvBoxSite,
   ) => DesktopSpiderSessionPort;
+  preferredSiteKey?: () => string | null;
   fetchText?: (url: string, timeoutMs: number) => Promise<string>;
   readFile?: (path: string) => string;
   requestTimeoutMs?: number;
@@ -66,6 +67,7 @@ export interface DesktopSpiderImportOptions {
 export class DesktopSpiderImportController {
   private readonly trustStore: ImportTrustStore;
   private readonly createSession: DesktopSpiderImportOptions["createSession"];
+  private readonly preferredSiteKey: (() => string | null) | undefined;
   private readonly fetchText: (url: string, timeoutMs: number) => Promise<string>;
   private readonly readFile: (path: string) => string;
   private readonly requestTimeoutMs: number;
@@ -78,6 +80,7 @@ export class DesktopSpiderImportController {
   public constructor(options: DesktopSpiderImportOptions) {
     this.trustStore = options.trustStore;
     this.createSession = options.createSession;
+    this.preferredSiteKey = options.preferredSiteKey;
     this.fetchText = options.fetchText ?? fetchImportText;
     this.readFile = options.readFile ?? ((path) => readFileSync(path, "utf8"));
     this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
@@ -139,9 +142,11 @@ export class DesktopSpiderImportController {
       const config = parseTvBoxConfig(payload);
       const summary = summarizeConfig(config);
       const sites = sitesForUi(config);
-      const selectedSite = sites
-        .map((site) => findSite(config, site.key))
-        .find((site) => isSupportedJvmSite(site));
+      const configuredSites = sites.map((site) => findSite(config, site.key));
+      const preferredSiteKey = this.preferredSiteKey?.();
+      const selectedSite = configuredSites
+        .find((site) => site && siteKeyOf(site) === preferredSiteKey && isSupportedJvmSite(site))
+        ?? configuredSites.find((site) => isSupportedJvmSite(site));
       const assessment = inspectImport(descriptor.source, config, this.trustStore);
 
       this.config = config;

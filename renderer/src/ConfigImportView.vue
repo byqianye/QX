@@ -8,6 +8,7 @@ import type { ImportState } from "./state.js";
 const props = defineProps<{
   state: ImportState;
   pending: string | null;
+  persistenceDiagnostic?: { code: string; message: string } | null;
 }>();
 
 const emit = defineEmits<{
@@ -101,6 +102,12 @@ function submitSite(): void {
     <section v-if="props.state.error" class="panel error" data-testid="import-error">
       <strong>{{ props.state.error.code }}</strong>
       <p>{{ props.state.error.message }}</p>
+    </section>
+
+    <section v-if="props.persistenceDiagnostic" class="panel warning" data-testid="persistence-diagnostic">
+      <strong>{{ props.persistenceDiagnostic.code }}</strong>
+      <p>{{ props.persistenceDiagnostic.message }}</p>
+      <p class="meta">已使用安全默认值；不会显示原始路径或敏感内容。</p>
     </section>
   </main>
 </template>

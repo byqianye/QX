@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import AppSidebar from "./AppSidebar.vue";
 import CategoryTabs from "./CategoryTabs.vue";
@@ -14,13 +14,22 @@ import SettingsSection from "./SettingsSection.vue";
 import SourceSwitcher from "./SourceSwitcher.vue";
 import TopSearchBar from "./TopSearchBar.vue";
 import { displaySource } from "./safe-display.js";
-import type { RendererState } from "./state.js";
+import type {
+  RendererNavigation,
+  RendererState,
+  RendererThemeMode,
+  RendererViewStatePatch,
+} from "./state.js";
 
 const props = defineProps<{
   state: RendererState;
   pending: string | null;
   lineIndex: number;
   order: "forward" | "reverse";
+  initialNavigation?: RendererNavigation;
+  initialTheme?: RendererThemeMode;
+  initialSearchQuery?: string;
+  persistenceDiagnostic?: { code: string; message: string } | null;
 }>();
 
 const emit = defineEmits<{
@@ -35,10 +44,11 @@ const emit = defineEmits<{
   order: [order: "forward" | "reverse"];
   switch: [];
   close: [];
+  viewState: [patch: RendererViewStatePatch];
 }>();
 
-const view = ref<"browse" | "settings">("browse");
-const theme = ref<"system" | "light" | "dark">("light");
+const view = ref<"browse" | "settings">(props.initialNavigation === "settings" ? "settings" : "browse");
+const theme = ref<"system" | "light" | "dark">(props.initialTheme ?? "light");
 const systemTheme = ref<"light" | "dark">("light");
 let systemMediaQuery: MediaQueryList | null = null;
 
@@ -82,18 +92,28 @@ const activePage = computed(() => view.value === "settings" ? "settings" : props
 const retryable = computed(() => props.state.error.error?.code.startsWith("PLAYBACK_") === true);
 const hasPlayback = computed(() => props.state.detail.playbackCatalog !== null || props.state.playback.player.source !== null);
 
+watch(theme, () => {
+  emit("viewState", {
+    theme: theme.value,
+    navigation: view.value === "settings" ? "settings" : navigationFromPage(props.state.browse.page),
+  });
+});
+
 function navigate(route: "home" | "category" | "settings"): void {
   if (route === "settings") {
     view.value = "settings";
+    persistNavigation("settings");
     return;
   }
   view.value = "browse";
+  persistNavigation(route);
   if (route === "home") emit("home");
   else emit("category");
 }
 
 function submitSearch(query: string): void {
   view.value = "browse";
+  persistNavigation("search");
   emit("search", query);
 }
 
@@ -105,6 +125,14 @@ function playFirstEpisode(): void {
   const line = selectedLine.value;
   const episode = line?.episodes[0];
   if (line && episode) emit("play", line.index, episode.index);
+}
+
+function persistNavigation(navigation: RendererNavigation): void {
+  emit("viewState", { theme: theme.value, navigation });
+}
+
+function navigationFromPage(page: string): RendererNavigation {
+  return page === "category" || page === "search" || page === "detail" ? page : "home";
 }
 </script>
 
@@ -135,6 +163,7 @@ function playFirstEpisode(): void {
         :source="props.state.spider.source"
         :api="props.state.spider.api"
         :pending="props.pending !== null"
+        :initial-query="props.initialSearchQuery"
         @search="submitSearch"
       />
 
@@ -183,7 +212,12 @@ function playFirstEpisode(): void {
             <div class="settings-row"><span>当前剧集顺序</span><strong>{{ props.order === "forward" ? "正序" : "倒序" }}</strong></div>
           </SettingsSection>
           <SettingsSection title="诊断与日志" description="只展示主进程返回的脱敏诊断，不在 renderer 读取日志文件或凭据。">
-            <DiagnosticPanel :source="props.state.spider.source" :player-status="props.state.playback.player.status" :code="props.state.error.error?.code" />
+            <DiagnosticPanel
+              :source="props.state.spider.source"
+              :player-status="props.state.playback.player.status"
+              :code="props.state.error.error?.code ?? props.persistenceDiagnostic?.code"
+              :message="props.state.error.error?.message ?? props.persistenceDiagnostic?.message"
+            />
           </SettingsSection>
           <SettingsSection title="隐私" description="凭据、Cookie、完整播放地址和本机路径不在界面回显。">
             <div class="settings-row"><span>renderer 数据边界</span><strong>仅 typed IPC</strong></div>

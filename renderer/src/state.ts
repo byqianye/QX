@@ -15,6 +15,30 @@ export type SpiderStatus =
   | "error"
   | "destroyed";
 
+export type RendererThemeMode = "system" | "light" | "dark";
+export type RendererNavigation = "home" | "category" | "search" | "detail" | "settings";
+
+export interface RendererPersistenceState {
+  theme: RendererThemeMode;
+  navigation: RendererNavigation;
+  siteKey: string | null;
+  category: { typeId: string; page: number } | null;
+  search: { key: string; page: number } | null;
+  scrollTop: number;
+  recentDetailId: string | null;
+  diagnostic?: { code: string; message: string } | null;
+}
+
+export interface RendererViewStatePatch {
+  theme?: RendererThemeMode;
+  navigation?: RendererNavigation;
+  siteKey?: string | null;
+  category?: { typeId: string; page: number } | null;
+  search?: { key: string; page: number } | null;
+  scrollTop?: number;
+  recentDetailId?: string | null;
+}
+
 export interface RendererError {
   code: string;
   message: string;
@@ -168,6 +192,7 @@ export interface ApiSpiderState {
 export interface RendererEnvelope {
   import?: ImportState | null;
   state?: ApiSpiderState | null;
+  persistence?: RendererPersistenceState | null;
   error?: string;
   errorCode?: string;
 }

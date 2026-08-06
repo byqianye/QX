@@ -185,6 +185,93 @@ describe("Vue renderer", () => {
     wrapper.unmount();
   });
 
+  it("restores persisted theme, settings navigation and search context", async () => {
+    const envelope = readyEnvelope();
+    envelope.persistence = {
+      theme: "dark",
+      navigation: "settings",
+      siteKey: null,
+      category: { typeId: "hot_gaia", page: 2 },
+      search: { key: "蜘蛛侠", page: 3 },
+      scrollTop: 240,
+      recentDetailId: null,
+      diagnostic: { code: "STATE_PERSISTENCE_CORRUPT", message: "已回退安全默认值" },
+    };
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => envelope }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
+
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="desktop-spider-ui"]').attributes("data-theme")).toBe("dark");
+    expect(wrapper.findAll('[data-testid="settings-section"]')).toHaveLength(6);
+    expect((wrapper.get("#search-key").element as HTMLInputElement).value).toBe("蜘蛛侠");
+    expect(wrapper.get('[data-testid="diagnostic-panel"]').text()).toContain("STATE_PERSISTENCE_CORRUPT");
+
+    await wrapper.get('[data-action="theme-mode"]').setValue("light");
+    await flushPromises();
+    expect((fetchMock.mock.calls as unknown as Array<[string]>).some(([path]) => path === "/api/view-state")).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("reopens a persisted search page only when the imported site key matches", async () => {
+    const persisted = {
+      theme: "light" as const,
+      navigation: "search" as const,
+      siteKey: "douban",
+      category: { typeId: "hot_gaia", page: 2 },
+      search: { key: "蜘蛛侠", page: 3 },
+      scrollTop: 0,
+      recentDetailId: null,
+    };
+    const initial = readyEnvelope();
+    initial.import = {
+      ...initial.import!,
+      status: "confirmation_required",
+      trusted: false,
+      warning: "需要确认",
+      sessionReady: false,
+    };
+    initial.state = null;
+    initial.persistence = persisted;
+    const confirmed = readyEnvelope();
+    confirmed.state = { ...confirmed.state!, status: "idle", page: "home" };
+    confirmed.persistence = persisted;
+    const opened = readyEnvelope();
+    opened.persistence = persisted;
+    const searched = readyEnvelope();
+    searched.state = {
+      ...searched.state!,
+      page: "search",
+      items: [{ vod_id: "msearch:restored", vod_name: "恢复后的搜索结果" }],
+    };
+    searched.persistence = persisted;
+    const responses: Record<string, RendererEnvelope> = {
+      "/api/state": initial,
+      "/api/import/confirm": confirmed,
+      "/api/open": opened,
+      "/api/search": searched,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => ({
+      ok: true,
+      json: async () => responses[String(input)] ?? searched,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('[data-action="confirm-import"]').trigger("click");
+    await flushPromises();
+    await flushPromises();
+
+    const calledPaths = (fetchMock.mock.calls as unknown as Array<[string]>).map(([path]) => path);
+    expect(calledPaths).toContain("/api/open");
+    expect(calledPaths).toContain("/api/search");
+    expect(wrapper.get('[data-testid="vod-list"]').text()).toContain("恢复后的搜索结果");
+    wrapper.unmount();
+  });
+
   it("renders selectable lines, episodes and the complete embedded-player control surface", async () => {
     const selector = mount(PlaybackSelector, {
       attachTo: document.body,

@@ -219,7 +219,55 @@ npm run electron:e2e:package
 ### 文档
 - `docs/spike-25-open-design-desktop-ui.md`
 
-G27–G78（未开始）
+## G27（已完成）
+
+### 目标
+继承 G26 Open Design Token，实现主题、窗口和页面状态的安全持久化与恢复。
+
+### 状态
+已完成安全 JSON 状态存储、原子替换、损坏备份、安全默认值、敏感字段拒绝、显示器工作区 bounds 修正、UI server 页面状态 API、renderer 主题/页面恢复和 Electron 窗口事件接入。专项测试、19 个测试文件/109 个测试、Electron 编译和两轮 packaged E2E 均已通过。
+
+### 依赖
+- G26 / Open Design UI checkpoint
+- Electron `app.getPath("userData")`
+
+### 实现范围
+- `userData/desktop-state.json` 保存主题、窗口 bounds/最大化和非敏感页面元数据
+- 临时文件 + rename 原子写入，损坏文件 `.corrupt-*.bak` 备份和脱敏诊断
+- 显示器工作区检查、屏幕外窗口回主屏、尺寸下限和最大化恢复
+- 导航、站点 key、分类、搜索、滚动位置、最近详情和主题在 UI server/renderer 间恢复
+- 不保存 Proxy token、Authorization、Cookie、临时播放 URL 或 Jellyfin token
+
+### 验收标准
+- 默认浅色，支持浅色/深色/跟随系统；窗口宽高坐标和最大化状态可恢复
+- 页面导航、站点 key、分类/搜索上下文、滚动位置和最近详情可恢复
+- JSON 损坏不阻塞启动，使用安全默认值并备份损坏文件；写入失败不无限重试且诊断脱敏
+- 移除显示器或越界坐标回到主显示器工作区；不把敏感字段写入状态文件
+- 单元、集成、renderer、完整回归和打包 E2E 通过；sidecar/fixture/窗口资源无残留
+
+### 验证结果
+- `npx vitest run tests/desktop-state.test.ts tests/spider-import.test.ts tests/vue-renderer.test.ts`：22 tests passed
+- `npm run typecheck`：通过
+- `npm test`：19 files / 109 tests passed
+- `npm run electron:e2e:package`：first/restarted 两轮通过，并验证持久化 JSON 合同和敏感字段未写入
+
+### 验证命令
+```powershell
+npx vitest run tests/desktop-state.test.ts tests/spider-import.test.ts tests/vue-renderer.test.ts
+npm run typecheck
+npm test
+npm run electron:e2e:package
+```
+
+### 文档
+- `docs/spike-26-state-persistence.md`
+
+### checkpoint
+```text
+checkpoint: complete G27 desktop state persistence
+```
+
+G28–G78（未开始）
 
 （略，按主路线图执行）
 

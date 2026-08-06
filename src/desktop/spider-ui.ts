@@ -24,6 +24,11 @@ import {
   type PlaybackCatalog,
   type PlaybackSelection,
 } from "./vod-playback.js";
+import {
+  type DesktopStatePatch,
+  type DesktopStateStorePort,
+  type PageStatePatch,
+} from "./state-persistence.js";
 import type { SpiderResponse } from "../spider/rpc.js";
 
 const require = createRequire(import.meta.url);
@@ -384,6 +389,7 @@ export class DesktopSpiderUiController {
 export interface DesktopSpiderUiServerOptions {
   ui?: DesktopSpiderUiController;
   importer?: DesktopSpiderImportController;
+  stateStore?: DesktopStateStorePort;
   rendererDirectory?: string;
   siteKey?: string;
   ext?: string;
@@ -395,6 +401,7 @@ export interface DesktopSpiderUiServerOptions {
 export class DesktopSpiderUiServer {
   private readonly directUi: DesktopSpiderUiController | undefined;
   private readonly importer: DesktopSpiderImportController | undefined;
+  private readonly stateStore: DesktopStateStorePort | undefined;
   private readonly rendererDirectory: string | undefined;
   private readonly siteKey: string | undefined;
   private readonly ext: string | undefined;
@@ -415,6 +422,7 @@ export class DesktopSpiderUiServer {
     }
     this.directUi = options.ui;
     this.importer = options.importer;
+    this.stateStore = options.stateStore;
     this.rendererDirectory = options.rendererDirectory
       ? resolvePath(options.rendererDirectory)
       : undefined;
@@ -496,9 +504,11 @@ export class DesktopSpiderUiServer {
         switch (url.pathname) {
           case "/api/import/load":
             await this.importer.import(stringValue(body.input, ""));
+            this.persistImportedSite(this.importer.selectedSiteKey);
             break;
           case "/api/import/select":
             this.importer.selectSite(stringValue(body.siteKey, ""));
+            this.persistImportedSite(this.importer.selectedSiteKey);
             break;
           case "/api/import/confirm":
             this.importer.confirm();
@@ -510,6 +520,12 @@ export class DesktopSpiderUiServer {
             writeJson(response, { error: "Not found" }, 404);
             return;
         }
+        this.writeCurrentState(response);
+        return;
+      }
+
+      if (url.pathname === "/api/view-state") {
+        this.stateStore?.patch(statePatchFromRequest(body));
         this.writeCurrentState(response);
         return;
       }
@@ -528,27 +544,53 @@ export class DesktopSpiderUiServer {
           } else {
             await ui.open(this.siteKey as string, this.ext as string);
           }
+          this.persistPage({
+            siteKey: this.importer?.selectedSiteKey ?? this.siteKey ?? null,
+          });
           break;
         case "/api/home":
           await ui.home(Boolean(body.filter));
+          this.persistPage({ navigation: "home", scrollTop: 0 });
           break;
         case "/api/category":
-          await ui.category(
-            stringValue(body.typeId, "hot_gaia"),
-            numberValue(body.page, 1),
-            Boolean(body.filter),
-            recordOfStrings(body.extend),
-          );
+          {
+            const typeId = stringValue(body.typeId, "hot_gaia");
+            const page = numberValue(body.page, 1);
+            await ui.category(
+              typeId,
+              page,
+              Boolean(body.filter),
+              recordOfStrings(body.extend),
+            );
+            this.persistPage({
+              navigation: "category",
+              category: { typeId, page },
+              scrollTop: 0,
+            });
+          }
           break;
         case "/api/search":
-          await ui.search(
-            stringValue(body.key, ""),
-            Boolean(body.quick),
-            numberValue(body.page, 1),
-          );
+          {
+            const key = stringValue(body.key, "");
+            const page = numberValue(body.page, 1);
+            await ui.search(
+              key,
+              Boolean(body.quick),
+              page,
+            );
+            this.persistPage({
+              navigation: "search",
+              search: { key, page },
+              scrollTop: 0,
+            });
+          }
           break;
         case "/api/detail":
-          await ui.detail(stringValue(body.vodId, ""));
+          {
+            const vodId = stringValue(body.vodId, "");
+            await ui.detail(vodId);
+            this.persistPage({ navigation: "detail", recentDetailId: vodId });
+          }
           break;
         case "/api/player":
           if (Object.prototype.hasOwnProperty.call(body, "lineIndex")
@@ -617,11 +659,41 @@ export class DesktopSpiderUiServer {
 
   private writeCurrentState(response: ServerResponse): void {
     const ui = this.activeUi();
+    const persistence = this.stateStore?.rendererState();
     if (this.importer) {
-      writeJson(response, { import: this.importer.state, state: ui?.state ?? null });
+      writeJson(response, {
+        import: this.importer.state,
+        state: ui?.state ?? null,
+        ...(persistence ? { persistence } : {}),
+      });
     } else {
-      writeJson(response, { state: ui?.state ?? null });
+      writeJson(response, {
+        state: ui?.state ?? null,
+        ...(persistence ? { persistence } : {}),
+      });
     }
+  }
+
+  private persistPage(patch: PageStatePatch): void {
+    this.stateStore?.patch({ page: patch });
+  }
+
+  private persistImportedSite(siteKey: string | null): void {
+    const previousSiteKey = this.stateStore?.state.page.siteKey;
+    if (previousSiteKey && previousSiteKey !== siteKey) {
+      this.stateStore?.patch({
+        page: {
+          siteKey,
+          navigation: "home",
+          category: null,
+          search: null,
+          scrollTop: 0,
+          recentDetailId: null,
+        },
+      });
+      return;
+    }
+    this.persistPage({ siteKey });
   }
 
   private writeHlsAsset(response: ServerResponse): void {
@@ -1003,6 +1075,58 @@ function recordOfStrings(value: unknown): Record<string, string> {
 
 function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function statePatchFromRequest(body: Record<string, unknown>): DesktopStatePatch {
+  const page: PageStatePatch = {};
+  if (isNavigation(body.navigation)) page.navigation = body.navigation;
+  if (Object.prototype.hasOwnProperty.call(body, "siteKey")) {
+    page.siteKey = typeof body.siteKey === "string" ? body.siteKey : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "category")) {
+    page.category = parsePageContext(body.category);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "search")) {
+    page.search = parseSearchContext(body.search);
+  }
+  if (typeof body.scrollTop === "number" && Number.isFinite(body.scrollTop)) {
+    page.scrollTop = body.scrollTop;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "recentDetailId")) {
+    page.recentDetailId = typeof body.recentDetailId === "string" ? body.recentDetailId : null;
+  }
+  return {
+    ...(isThemeMode(body.theme) ? { theme: body.theme } : {}),
+    page,
+  };
+}
+
+function parsePageContext(value: unknown): { typeId: string; page: number } | null {
+  if (!isRecord(value) || typeof value.typeId !== "string") return null;
+  return {
+    typeId: value.typeId,
+    page: numberValue(value.page, 1),
+  };
+}
+
+function parseSearchContext(value: unknown): { key: string; page: number } | null {
+  if (!isRecord(value) || typeof value.key !== "string") return null;
+  return {
+    key: value.key,
+    page: numberValue(value.page, 1),
+  };
+}
+
+function isThemeMode(value: unknown): value is "system" | "light" | "dark" {
+  return value === "system" || value === "light" || value === "dark";
+}
+
+function isNavigation(value: unknown): value is "home" | "category" | "search" | "detail" | "settings" {
+  return value === "home"
+    || value === "category"
+    || value === "search"
+    || value === "detail"
+    || value === "settings";
 }
 
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {

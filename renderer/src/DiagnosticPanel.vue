@@ -5,6 +5,7 @@ import { displaySource } from "./safe-display.js";
 
 const props = withDefaults(defineProps<{
   code?: string | null;
+  message?: string | null;
   source?: string;
   playerStatus?: string;
 }>(), { code: null, source: "当前来源", playerStatus: "idle" });
@@ -25,6 +26,7 @@ const diagnosticSteps = computed(() => [
       <div><dt>来源</dt><dd>{{ displaySource(source) }}</dd></div>
       <div><dt>播放器</dt><dd>{{ playerStatus }}</dd></div>
       <div v-if="code"><dt>错误码</dt><dd>{{ code }}</dd></div>
+      <div v-if="message"><dt>说明</dt><dd>{{ message }}</dd></div>
       <div v-for="step in diagnosticSteps" :key="step.label" data-diagnostic-step><dt>{{ step.label }}</dt><dd>{{ step.value }}</dd></div>
     </dl>
     <p class="meta">诊断摘要已脱敏，不包含 token、Cookie、完整播放地址或本机路径。</p>

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -9,6 +9,7 @@ import {
   type DesktopSpiderImportOptions,
 } from "../src/desktop/spider-import.js";
 import { DesktopSpiderUiServer } from "../src/desktop/spider-ui.js";
+import { JsonFileDesktopStateStore } from "../src/desktop/state-persistence.js";
 import type { DesktopSpiderSessionPort, DesktopSpiderView } from "../src/desktop/spider-ui.js";
 import type { SpiderResponse } from "../src/spider/rpc.js";
 import { ImportTrustStore } from "../src/config/trust.js";
@@ -165,6 +166,23 @@ describe("real configuration import", () => {
     });
   });
 
+  it("restores the persisted preferred JVM-native site without persisting its source URL", async () => {
+    const importer = createImporter({ preferredSiteKey: () => "playable" });
+
+    await importer.import(JSON.stringify({
+      spider: "fixture.jar",
+      sites: [
+        { key: "douban", name: "Douban", type: 3, api: "csp_Douban", ext: "fixture" },
+        { key: "playable", name: "Playable", type: 3, api: "csp_PlayableFixture", ext: "fixture" },
+      ],
+    }));
+
+    expect(importer.state).toMatchObject({
+      selectedSiteKey: "playable",
+      selectedApi: "csp_PlayableFixture",
+    });
+  });
+
   it("connects import actions to the existing UI server", async () => {
     const importer = createImporter();
     const server = new DesktopSpiderUiServer({ importer });
@@ -195,6 +213,48 @@ describe("real configuration import", () => {
     expect(cancelled.state?.status).toBe("destroyed");
     const resetPage = await fetch(server.url);
     expect(await resetPage.text()).toContain('data-testid="config-import-form"');
+  });
+
+  it("persists page context and theme through the UI server without source credentials", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "qx-state-server-"));
+    try {
+      const stateStore = new JsonFileDesktopStateStore(join(directory, "desktop-state.json"));
+      const importer = createImporter();
+      const server = new DesktopSpiderUiServer({ importer, stateStore });
+      servers.push(server);
+      await server.start();
+
+      const initial = await fetch(new URL("/api/state", server.url));
+      const initialValue = await initial.json() as { persistence: Record<string, unknown> };
+      expect(initialValue.persistence).toMatchObject({ theme: "light", siteKey: null });
+
+      await post(server.url, "/api/import/load", { input: configJson() });
+      await post(server.url, "/api/import/confirm");
+      await post(server.url, "/api/open");
+      await post(server.url, "/api/category", { typeId: "hot_gaia", page: 2 });
+      await post(server.url, "/api/search", { key: "蜘蛛侠", page: 3 });
+      await post(server.url, "/api/detail", { vodId: "msearch:fixture" });
+      await post(server.url, "/api/view-state", {
+        theme: "dark",
+        navigation: "settings",
+        scrollTop: 640,
+      });
+
+      expect(stateStore.state).toMatchObject({
+        theme: "dark",
+        page: {
+          navigation: "settings",
+          siteKey: "douban",
+          category: { typeId: "hot_gaia", page: 2 },
+          search: { key: "蜘蛛侠", page: 3 },
+          scrollTop: 640,
+          recentDetailId: "msearch:fixture",
+        },
+      });
+      expect(readFileSync(join(directory, "desktop-state.json"), "utf8")).not.toContain("fixture-endpoint");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
 
@@ -296,7 +356,11 @@ async function post(
   base: string,
   path: string,
   body: Record<string, unknown> = {},
-): Promise<{ import: Record<string, unknown>; state: Record<string, unknown> | null }> {
+): Promise<{
+  import: Record<string, unknown>;
+  state: Record<string, unknown> | null;
+  persistence?: Record<string, unknown>;
+}> {
   const result = await fetch(new URL(path, base), {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -306,5 +370,6 @@ async function post(
   return await result.json() as {
     import: Record<string, unknown>;
     state: Record<string, unknown> | null;
+    persistence?: Record<string, unknown>;
   };
 }

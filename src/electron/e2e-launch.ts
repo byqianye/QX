@@ -64,6 +64,7 @@ try {
   });
   const firstResultValue = readResult(firstResult);
   assertRun("first packaged E2E", first, firstResultValue);
+  assertPersistedDesktopState(userData, "douban");
 
   const second = await runPackagedExecutable(executable, {
     QX_ELECTRON_E2E: "1",
@@ -78,6 +79,7 @@ try {
   });
   const secondResultValue = readResult(secondResult);
   assertRun("restarted packaged E2E", second, secondResultValue);
+  assertPersistedDesktopState(userData, "douban");
 
   console.log(JSON.stringify({
     probe: "packaged-electron-e2e",
@@ -111,6 +113,23 @@ function readResult(path: string): Record<string, unknown> {
 function assertRun(name: string, process: PackagedProcessResult, result: Record<string, unknown>): void {
   if (process.code !== 0 || result.status !== "passed") {
     throw new Error(`${name} failed: ${JSON.stringify({ process, result })}`);
+  }
+}
+
+function assertPersistedDesktopState(userDataPath: string, expectedSiteKey: string): void {
+  const value = JSON.parse(readFileSync(join(userDataPath, "desktop-state.json"), "utf8")) as Record<string, unknown>;
+  const page = value.page as Record<string, unknown> | undefined;
+  const window = value.window as Record<string, unknown> | undefined;
+  if (value.version !== 1
+    || value.theme !== "light"
+    || page?.siteKey !== expectedSiteKey
+    || typeof page?.navigation !== "string"
+    || typeof page?.scrollTop !== "number"
+    || typeof window?.width !== "number"
+    || typeof window?.height !== "number"
+    || typeof window?.isMaximized !== "boolean"
+    || JSON.stringify(value).match(/authorization|cookie|token|api[_-]?key/i)) {
+    throw new Error("Packaged E2E desktop state persistence contract failed");
   }
 }
 

@@ -1,12 +1,17 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { app, BrowserWindow, dialog } from "electron";
+import { app, BrowserWindow, dialog, screen } from "electron";
 
 import { JsonFileTrustPersistence, ImportTrustStore } from "../config/trust.js";
 import { DesktopSpiderImportController } from "../desktop/spider-import.js";
 import { DesktopSpiderSession } from "../desktop/spider-session.js";
 import { DesktopSpiderUiServer } from "../desktop/spider-ui.js";
+import {
+  JsonFileDesktopStateStore,
+  restoreWindowBounds,
+  type PersistedWindowState,
+} from "../desktop/state-persistence.js";
 import { DesktopSpiderClient } from "../spider/desktop-client.js";
 import { findJvmSpider } from "../spider/jvm-spiders.js";
 import { resolveJavaExecutable } from "../spikes/java-probe.js";
@@ -34,8 +39,15 @@ let mainWindow: BrowserWindow | undefined;
 let cleanupPromise: Promise<void> | undefined;
 let quitting = false;
 let lastClient: DesktopSpiderClient | undefined;
+let desktopStateStore: JsonFileDesktopStateStore | undefined;
+let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
+
+function getDesktopStateStore(): JsonFileDesktopStateStore {
+  return desktopStateStore ??= new JsonFileDesktopStateStore(join(app.getPath("userData"), "desktop-state.json"));
+}
 
 function createShell(): DesktopShellRuntime {
+  const stateStore = getDesktopStateStore();
   const trustStore = new ImportTrustStore(
     new JsonFileTrustPersistence(join(app.getPath("userData"), "trusted-sources.json")),
   );
@@ -50,6 +62,7 @@ function createShell(): DesktopShellRuntime {
       const importer = new DesktopSpiderImportController({
         trustStore,
         requestTimeoutMs: REQUEST_TIMEOUT_MS,
+        preferredSiteKey: () => stateStore.state.page.siteKey,
         createSession: (source, config, site) => new DesktopSpiderSession({
           source,
           config,
@@ -73,6 +86,7 @@ function createShell(): DesktopShellRuntime {
       return new DesktopSpiderUiServer({
         importer,
         rendererDirectory: join(app.getAppPath(), "dist", "renderer"),
+        stateStore,
         ...(PLAYBACK_PROXY_ORIGINS.length > 0 ? { playbackProxyOrigins: PLAYBACK_PROXY_ORIGINS } : {}),
       });
     },
@@ -127,10 +141,12 @@ async function createMainWindow(): Promise<void> {
     return;
   }
   const uiUrl = started.url;
+  const persisted = getDesktopStateStore().state;
+  const displays = screen.getAllDisplays().map((display) => display.workArea);
+  const restoredBounds = restoreWindowBounds(persisted.window, displays, screen.getPrimaryDisplay().workArea);
 
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 860,
+    ...restoredBounds,
     minWidth: 960,
     minHeight: 640,
     show: !SMOKE_MODE && !E2E_MODE,
@@ -140,7 +156,14 @@ async function createMainWindow(): Promise<void> {
       nodeIntegration: false,
     },
   });
+  mainWindow.on("move", queueWindowStatePersistence);
+  mainWindow.on("resize", queueWindowStatePersistence);
+  mainWindow.on("maximize", queueWindowStatePersistence);
+  mainWindow.on("unmaximize", queueWindowStatePersistence);
+  mainWindow.on("close", persistWindowStateNow);
+  if (persisted.window.isMaximized) mainWindow.maximize();
   mainWindow.on("closed", () => {
+    clearWindowStateTimer();
     mainWindow = undefined;
     void closeShell();
   });
@@ -176,6 +199,7 @@ app.on("before-quit", (event) => {
   if (quitting || !shell || shell.state.status === "closed") return;
   event.preventDefault();
   quitting = true;
+  persistWindowStateNow();
   void closeShell().finally(() => app.quit());
 });
 
@@ -261,6 +285,33 @@ async function runE2e(baseUrl: string): Promise<void> {
   }
   await closeShell();
   app.quit();
+}
+
+function queueWindowStatePersistence(): void {
+  clearWindowStateTimer();
+  windowStateTimer = setTimeout(() => {
+    windowStateTimer = undefined;
+    persistWindowStateNow();
+  }, 100);
+}
+
+function clearWindowStateTimer(): void {
+  if (windowStateTimer !== undefined) clearTimeout(windowStateTimer);
+  windowStateTimer = undefined;
+}
+
+function persistWindowStateNow(): void {
+  clearWindowStateTimer();
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const bounds = mainWindow.isMaximized() ? mainWindow.getNormalBounds() : mainWindow.getBounds();
+  const window: Partial<PersistedWindowState> = {
+    width: bounds.width,
+    height: bounds.height,
+    x: bounds.x,
+    y: bounds.y,
+    isMaximized: mainWindow.isMaximized(),
+  };
+  getDesktopStateStore().patch({ window });
 }
 
 async function runNetworkTimeoutE2e(baseUrl: string): Promise<void> {

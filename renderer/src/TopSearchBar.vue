@@ -4,14 +4,14 @@ import { ref } from "vue";
 import Icon from "./Icon.vue";
 import { displaySource } from "./safe-display.js";
 
-defineProps<{
+const emit = defineEmits<{ search: [query: string] }>();
+const props = defineProps<{
   source: string;
   api: string | null;
   pending: boolean;
+  initialQuery?: string;
 }>();
-
-const emit = defineEmits<{ search: [query: string] }>();
-const query = ref("");
+const query = ref(props.initialQuery ?? "");
 
 function submit(): void {
   emit("search", query.value.trim());

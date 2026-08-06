@@ -7,6 +7,8 @@ export interface PlaybackEpisode {
 export interface PlaybackLine {
   index: number;
   name: string;
+  protocol?: "MP4" | "HLS";
+  status?: "ready" | "proxy-required" | "unavailable";
   episodes: readonly PlaybackEpisode[];
 }
 

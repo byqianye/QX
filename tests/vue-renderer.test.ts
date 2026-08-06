@@ -18,8 +18,12 @@ import {
   type RendererEnvelope,
 } from "../renderer/src/state.js";
 import App from "../renderer/src/App.vue";
+import CategoryTabs from "../renderer/src/CategoryTabs.vue";
 import EmbeddedPlayer from "../renderer/src/EmbeddedPlayer.vue";
+import MediaCard from "../renderer/src/MediaCard.vue";
 import PlaybackSelector from "../renderer/src/PlaybackSelector.vue";
+import SpiderView from "../renderer/src/SpiderView.vue";
+import { displaySource } from "../renderer/src/safe-display.js";
 
 describe("Vue renderer", () => {
   const servers: DesktopSpiderUiServer[] = [];
@@ -143,6 +147,11 @@ describe("Vue renderer", () => {
     expect(await asset.text()).toContain("local renderer");
   });
 
+  it("redacts source addresses before they reach user-facing context", () => {
+    expect(displaySource("https://media.example/internal/path?token=secret")).toBe("https://media.example/…");
+    expect(displaySource("inline:fixture")).toBe("inline:fixture");
+  });
+
   it("mounts the import/trust flow and switches to the Spider renderer", async () => {
     const ready = readyEnvelope();
     const responses: RendererEnvelope[] = [
@@ -178,6 +187,7 @@ describe("Vue renderer", () => {
 
   it("renders selectable lines, episodes and the complete embedded-player control surface", async () => {
     const selector = mount(PlaybackSelector, {
+      attachTo: document.body,
       props: {
         catalog: {
           lines: [
@@ -218,6 +228,117 @@ describe("Vue renderer", () => {
     expect(player.get('[data-action="player-mute"]').text()).toContain("取消静音");
     player.unmount();
     selector.unmount();
+  });
+
+  it("keeps long titles, many episodes and keyboard focus reachable", async () => {
+    const longTitle = "一部用于验证桌面工作台长标题布局的超长影视名称不会被业务层截断";
+    const card = mount(MediaCard, {
+      props: { item: { vod_id: "long-title", vod_name: longTitle } },
+    });
+    expect(card.text()).toContain(longTitle);
+
+    const selector = mount(PlaybackSelector, {
+      props: {
+        catalog: {
+          lines: [
+            {
+              index: 0,
+              name: "主线路",
+              protocol: "HLS",
+              status: "ready",
+              episodes: Array.from({ length: 48 }, (_, index) => ({
+                index,
+                name: `第${index + 1}集`,
+                id: `episode-${index + 1}`,
+              })),
+            },
+            { index: 1, name: "备用线", episodes: [] },
+          ],
+        },
+        selection: { lineIndex: 0, episodeIndex: 0 },
+        order: "forward",
+        retryable: false,
+      },
+    });
+    expect(selector.findAll('[data-action="player-episode"]')).toHaveLength(48);
+    const lineTabs = selector.findAll('[data-action="playback-line"]');
+    const lineFocus = vi.spyOn(lineTabs[1]!.element as HTMLElement, "focus");
+    await lineTabs[0]!.trigger("keydown", { key: "ArrowRight" });
+    expect(selector.emitted("line")).toEqual([[1]]);
+    expect(lineFocus).toHaveBeenCalledOnce();
+
+    const categoryTabs = mount(CategoryTabs, { attachTo: document.body, props: { active: "home" } });
+    const homeTab = categoryTabs.get('[data-action="home-tab"]');
+    const categoryTab = categoryTabs.get('[data-action="category-tab"]');
+    const categoryFocus = vi.spyOn(categoryTab.element as HTMLElement, "focus");
+    await homeTab.trigger("keydown", { key: "ArrowRight" });
+    expect(categoryTabs.emitted("select")).toEqual([["category"]]);
+    expect(categoryFocus).toHaveBeenCalledOnce();
+
+    categoryTabs.unmount();
+    selector.unmount();
+    card.unmount();
+  });
+
+  it("renders the Open Design desktop shell and recoverable playback states", async () => {
+    const envelope = formalDesignEnvelope();
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => envelope }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="app-sidebar"]')).toBeTruthy();
+    expect(wrapper.get('[data-testid="top-search-bar"]')).toBeTruthy();
+    expect(wrapper.get('[data-testid="source-switcher"]')).toBeTruthy();
+    expect(wrapper.get('[data-testid="category-tabs"]')).toBeTruthy();
+    expect(wrapper.get('[data-testid="media-grid"]')).toBeTruthy();
+    expect(wrapper.get('[data-testid="detail-drawer"]')).toBeTruthy();
+    expect(wrapper.get('[data-testid="playback-selector"]')).toBeTruthy();
+    expect(wrapper.get('[data-testid="playback-lines"]').text()).toContain("HLS");
+    expect(wrapper.findAll('[data-od-id]').length).toBeGreaterThan(10);
+    expect(wrapper.find('[data-play-url]').exists()).toBe(false);
+    expect(wrapper.findAll('[data-diagnostic-step]').length).toBeGreaterThan(0);
+    expect(wrapper.findAll('[data-action$="-placeholder"]')).toHaveLength(5);
+    expect(wrapper.get('[data-testid="detail-drawer"]').text()).toContain("导演");
+    await wrapper.get('[data-action="settings"]').trigger("click");
+    expect(wrapper.findAll('[data-testid="settings-section"]').length).toBeGreaterThanOrEqual(5);
+    const themeMode = wrapper.get('[data-action="theme-mode"]');
+    await themeMode.setValue("dark");
+    expect(wrapper.get('[data-testid="desktop-spider-ui"]').attributes("data-theme")).toBe("dark");
+    await themeMode.setValue("system");
+    expect(wrapper.get('[data-testid="desktop-spider-ui"]').attributes("data-theme-mode")).toBe("system");
+    wrapper.unmount();
+
+    const proxyState = applyRendererEnvelope(createRendererState(), {
+      ...envelope,
+      state: {
+        ...envelope.state!,
+        error: { code: "PLAYBACK_PROXY_REQUIRED", message: "需要代理才能播放" },
+      },
+      errorCode: "PLAYBACK_PROXY_REQUIRED",
+    });
+    const proxy = mount(SpiderView, {
+      props: { state: proxyState, pending: null, lineIndex: 0, order: "forward" },
+    });
+    expect(proxy.get('[data-testid="error-state"]').text()).toContain("需要代理才能播放");
+    expect(proxy.find('[data-action="enable-proxy"]').exists()).toBe(true);
+    proxy.unmount();
+
+    const unavailableState = applyRendererEnvelope(createRendererState(), {
+      ...envelope,
+      state: {
+        ...envelope.state!,
+        error: { code: "PLAYBACK_UNAVAILABLE", message: "当前线路暂时无法播放" },
+      },
+      errorCode: "PLAYBACK_UNAVAILABLE",
+    });
+    const unavailable = mount(SpiderView, {
+      props: { state: unavailableState, pending: null, lineIndex: 0, order: "forward" },
+    });
+    expect(unavailable.get('[data-testid="error-state"]').text()).toContain("当前线路暂时无法播放");
+    expect(unavailable.find('[data-action="switch-line"]').exists()).toBe(true);
+    unavailable.unmount();
   });
 });
 
@@ -265,6 +386,37 @@ function readyEnvelope(): RendererEnvelope {
       playbackSelection: null,
     },
   };
+}
+
+function formalDesignEnvelope(): RendererEnvelope {
+  const envelope = readyEnvelope();
+  envelope.state = {
+    ...envelope.state!,
+    api: "csp_PlayableFixture",
+    items: [
+      { vod_id: "fixture:movie-1", vod_name: "星际航线", vod_remarks: "MP4 · 电影" },
+      { vod_id: "fixture:movie-2", vod_name: "城市放映室", vod_remarks: "HLS · 剧集" },
+    ],
+    detail: {
+      vod_id: "fixture:movie-1",
+      vod_name: "星际航线",
+      vod_content: "受控播放测试媒体",
+      vod_score: "8.2",
+      vod_year: "2025",
+      vod_area: "中国大陆",
+      vod_class: "剧情",
+      vod_director: "测试导演",
+      vod_actor: "测试演员",
+    },
+    playbackCatalog: {
+      lines: [
+        { index: 0, name: "主线路", protocol: "HLS", status: "ready", episodes: [{ index: 0, name: "正片", id: "episode-1" }] },
+      ],
+    },
+    playbackSelection: { lineIndex: 0, episodeIndex: 0 },
+    canPlay: true,
+  };
+  return envelope;
 }
 
 function mkdirAsset(directory: string, name: string, content: string): void {

@@ -41,6 +41,15 @@ describe("desktop Spider UI", () => {
     expect(html).toMatch(/data-testid="play-button"[^>]*disabled/);
   });
 
+  it("does not render source query credentials in the legacy shell", () => {
+    const fixture = new FixtureSession("https://media.example/internal/config.json?token=secret");
+    const ui = new DesktopSpiderUiController({ session: fixture });
+
+    const html = renderDesktopSpiderUi(ui.state);
+    expect(html).not.toContain("token=secret");
+    expect(html).toContain("https://media.example/…");
+  });
+
   it("enables the playback entry after a playable JVM source resolves playerContent", async () => {
     const fixture = new FixtureSession(
       "inline:playable",
@@ -177,6 +186,23 @@ describe("desktop Spider UI", () => {
 
     const retried = await ui.playEpisode(0, 0);
     expect(retried).toMatchObject({ status: "ready", playbackSelection: { lineIndex: 0, episodeIndex: 0 } });
+    await ui.close();
+  });
+
+  it("keeps the active playback context while browsing home", async () => {
+    const fixture = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
+    const ui = new DesktopSpiderUiController({ session: fixture });
+
+    ui.confirmImport();
+    await ui.open("playable", "fixture-endpoint");
+    await ui.detail("fixture:movie-1");
+    await ui.playEpisode(0, 0);
+    await ui.home();
+
+    expect(ui.state.page).toBe("home");
+    expect(ui.state.detail).toBeNull();
+    expect(ui.state.playbackCatalog?.lines).toHaveLength(2);
+    expect(ui.state.player.source).not.toBeNull();
     await ui.close();
   });
 

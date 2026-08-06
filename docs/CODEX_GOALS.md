@@ -175,23 +175,46 @@ npm run electron:e2e:package
 ### 文档
 - `docs/spike-24-vue-renderer.md`
 
-## G26（blocked_open_design_unavailable）
+## G26（complete）
 
 ### 目标
 使用可直接调用的 Open Design 生成正式桌面 UI 设计，并按设计产物实现。
 
 ### 状态
-已检查当前 Codex 环境的 Open Design MCP 能力。工具声明存在，但 `get_active_context`、`list_projects`、`list_agents`、`list_skills`、`list_plugins` 的实际调用均返回 `Transport closed`，因此 Open Design 不可用。未生成设计方向、设计系统、截图或 implementation handoff；G25 Vue UI 保持可用。
+Open Design transport 已实际可用。已用 UTF-8 简报成功启动校正后的正式 design run，生成唯一方向“安静的桌面工作台（quiet desktop workbench）”；5 位评审均无 MUST_FIX，最终 `ship_ready=true`、退出码 0。已按 handoff 实现 G26 正式桌面 UI，补齐长标题、超多选集和键盘焦点回归测试，完整测试、packaged E2E 和设计产物归档均已完成。
 
 ### 依赖
 - G25 / Vue renderer 迁移
 - 当前环境可用的 Open Design MCP transport
 
+### 实现范围
+- 归档 Open Design 的简报、token、页面/组件/交互规格和实现交接
+- 实现正式 Vue 桌面壳层、搜索/来源/分类/筛选、媒体网格、详情抽屉、线路/选集、播放器控制、信任、错误恢复、设置和诊断组件
+- 保留既有 API envelope、错误码、Spider、Proxy、播放器和 Jellyfin 边界
+- 验证 1280×720、1440×900、1920×1080 的响应式布局规则及本地 SVG 图标
+
+### 设计证据限制
+Open Design 本次没有生成 HTML/SVG 原型，也没有可信截图；仓库在 `docs/design/open-design/screenshots/README.md` 明确记录为空，不以普通 AI 或伪造截图补足证据。
+
+### 验收标准
+- Open Design UTF-8 run 成功且内部审查无 MUST_FIX；设计产物完整归档。
+- Vue UI 按唯一方向实现左侧导航、中央浏览、右侧详情、共存播放器、信任/加载/空/错误/设置/诊断状态。
+- 支持系统/浅色/深色语义切换（默认浅色、不持久化），线路/选集、`Proxy Required`、`Playback Unavailable` 和本地资源均可验证。
+- 组件级回归覆盖长标题、48 集选集、线路/分类 Tab 键盘移动与焦点调用；正式 UI 保留响应式最小窗口规则。
+- 不修改 Spider、LocalProxy、播放器、Jellyfin、JVM sidecar 或配置解码协议；回归测试和 packaged E2E 通过。
+
+### 验证命令
+```text
+npm run typecheck
+npx vitest run tests/vue-renderer.test.ts --reporter=verbose
+npm test
+npm run renderer:build
+npm run electron:e2e:package
+```
+
 ### 阻塞处理
-- 标记：`blocked_open_design_unavailable`
-- 不用普通 AI 或自行 CSS 替代 Open Design
-- 不继续 G27–G29
-- Open Design transport 恢复后，从 G26-A 重新检查并生成唯一最终设计方向
+- G26 完成前不继续 G27–G29
+- 真实 Jellyfin 鉴权/播放需要外部凭据，不能在本地验证时伪造成功
 
 ### 文档
 - `docs/spike-25-open-design-desktop-ui.md`

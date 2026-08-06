@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
+import EpisodeGrid from "./EpisodeGrid.vue";
+import PlaybackLineTabs from "./PlaybackLineTabs.vue";
 import type { PlaybackCatalog, PlaybackSelection } from "./state.js";
 
 const props = defineProps<{
@@ -27,31 +29,14 @@ const currentEpisode = computed(() => {
   return selectedLine.value?.episodes.find((episode) => episode.index === selection?.episodeIndex)?.name ?? "未选择";
 });
 
-function orderedEpisodes(lineIndex: number) {
-  const line = props.catalog.lines.find((value) => value.index === lineIndex);
-  const values = [...(line?.episodes ?? [])];
-  return props.order === "reverse" ? values.reverse() : values;
-}
 </script>
 
 <template>
-  <section data-testid="playback-selector" class="panel playback-selector">
+  <section data-testid="playback-selector" data-od-id="playback-selector" class="panel playback-selector">
     <strong>播放线路</strong>
     <p v-if="props.catalog.lines.length === 0" data-testid="playback-empty">暂无可用选集</p>
     <template v-else>
-      <div data-testid="playback-lines" aria-label="播放线路" class="button-row">
-        <button
-          v-for="line in props.catalog.lines"
-          :key="line.index"
-          type="button"
-          data-action="playback-line"
-          :data-line-index="line.index"
-          :aria-pressed="line.index === selectedLine?.index"
-          @click="emit('line', line.index)"
-        >
-          {{ line.name }}
-        </button>
-      </div>
+      <PlaybackLineTabs :lines="props.catalog.lines" :selected-index="selectedLine?.index ?? 0" @select="emit('line', $event)" />
       <p>当前线路：<span data-testid="current-line">{{ selectedLine?.name ?? "" }}</span></p>
       <p>当前选集：<span data-testid="current-episode">{{ currentEpisode }}</span></p>
       <div data-testid="playback-order" aria-label="剧集顺序" class="button-row">
@@ -74,27 +59,15 @@ function orderedEpisodes(lineIndex: number) {
         </button>
       </div>
       <div data-testid="playback-episodes" class="episode-list">
-        <div
+        <EpisodeGrid
           v-for="line in props.catalog.lines"
           :key="line.index"
-          :data-playback-line="line.index"
+          :line="line"
+          :order="props.order"
+          :selected-episode="line.index === selectedLine?.index ? props.selection?.episodeIndex ?? null : null"
           :hidden="line.index !== selectedLine?.index"
-        >
-          <p v-if="line.episodes.length === 0" data-testid="playback-line-empty">暂无可用选集</p>
-          <button
-            v-for="episode in orderedEpisodes(line.index)"
-            :key="episode.index"
-            type="button"
-            data-action="player-episode"
-            :data-line-index="line.index"
-            :data-episode-index="episode.index"
-            :data-play-flag="line.name"
-            :data-play-id="episode.id"
-            @click="emit('episode', line.index, episode.index)"
-          >
-            {{ episode.name }}
-          </button>
-        </div>
+          @select="emit('episode', line.index, $event)"
+        />
       </div>
     </template>
   </section>

@@ -2,29 +2,18 @@
 
 ## 状态
 
-G26 当前标记为 `blocked_open_design_unavailable`。本次已确认 Open Design MCP 工具声明存在，但实际 transport 不可用；以下调用均返回 `Transport closed`：
+G26-A 已解除并完成：Open Design transport 已实际握手，项目、能力上下文和设计 run 均可调用。校正后的 UTF-8 设计运行生成了唯一方向“安静的桌面工作台（quiet desktop workbench）”；5 位评审均为 `MUST_FIX=none`，最终 `ship_ready=true`。
 
-- `get_active_context`
-- `list_projects`
-- `list_agents`
-- `list_skills`
-- `list_plugins`
+Open Design 生成了设计系统、页面规格、组件规格、交互规格、实现交接和设计合同；没有生成 HTML/SVG 原型，也没有可信截图。仓库不伪造这两类证据，真实产物按实现所需文件名归档在 `docs/design/open-design/`。
 
-因此没有启动 Open Design run，也没有生成或伪造设计方向、Token、截图、组件规格或 implementation handoff。G25 Vue renderer 保持为当前可用 UI。
+## 设计结论
 
-## 阻塞决策
+- Neutral Modern：`--bg` 浅灰工作区、`--surface` 白色内容面、单一 cobalt `--accent`。
+- Windows 桌面工作台：232/248px 侧栏、64px 顶栏、24px gutter、右侧详情抽屉。
+- 组件覆盖来源、搜索、分类/筛选、媒体网格、详情、线路/选集、播放器、错误恢复、信任、设置和诊断。
+- 明确区分 `Proxy Required` 与 `Playback Unavailable`，均提供可恢复动作。
+- 不使用外部图片 CDN、渐变、玻璃拟态、虚构指标或 emoji 功能图标。
 
-根据 G26 情况 3：
+## 证据与后续
 
-- 标记 `blocked_open_design_unavailable`；
-- 不使用普通 AI 或自行写 CSS 代替 Open Design；
-- 不继续 G27–G29；
-- Open Design transport 恢复后，从 G26-A 重新检查能力，再生成唯一最终设计方向。
-
-## 保留内容
-
-G25 的 Vue renderer、既有 API/错误码、LocalProxy、播放器合同和打包 E2E 不受此阻塞影响。未创建 `docs/design/open-design/` 设计产物目录，以避免把非 Open Design 内容误标为正式设计。
-
-## 解锁条件
-
-需要 Open Design MCP transport 恢复，且至少能够读取项目/能力上下文并成功启动一个 design run。解锁后必须按目标要求覆盖主框架、导入/信任、浏览、详情、线路/选集、播放器、加载/错误/空状态、设置、主题、窗口尺寸和设计系统状态。
+Open Design 设计运行记录和内部审查结论已用于 G26 实现。截图中另有一条旧 run 显示 `AGENT_EXECUTION_FAILED`，不作为本次证据；校正 run 返回退出码 0。项目验证命令、完整测试、响应式规则检查和 packaged E2E 已通过，G26 checkpoint 固化本次实现。G27–G29 尚未启动，真实 Jellyfin 鉴权/播放仍需外部凭据，未在本地冒充验证。

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 
+import TrustConfirmationDialog from "./TrustConfirmationDialog.vue";
+import { displaySource } from "./safe-display.js";
 import type { ImportState } from "./state.js";
 
 const props = defineProps<{
@@ -43,29 +45,28 @@ function submitSite(): void {
   <main
     data-testid="config-import-ui"
     :data-status="props.state.status"
-    class="renderer-shell import-shell"
+    class="import-shell"
   >
-    <header class="page-header">
-      <p class="eyebrow">QX 影视</p>
-      <h1>导入配置</h1>
-      <p data-testid="import-status" :class="{ loading: props.state.loading }">
-        {{ props.state.loading ? "正在读取配置" : props.state.status }}
-      </p>
+    <div class="import-brand" aria-label="QX 影视">
+      <span class="brand-mark" aria-hidden="true">Q</span>
+      <div><strong>QX 影视</strong><span>媒体工作台</span></div>
+    </div>
+    <header class="import-header">
+      <span class="section-kicker">开始使用</span>
+      <h1>导入你的媒体配置</h1>
+      <p data-testid="import-status" :class="{ loading: props.state.loading }">{{ props.state.loading ? "正在读取配置" : "连接一个已授权来源" }}</p>
     </header>
 
-    <form data-testid="config-import-form" @submit.prevent="submit">
-      <label for="config-input">粘贴配置 URL、文件路径或原始 JSON</label>
-      <textarea
-        id="config-input"
-        v-model="input"
-        name="input"
-        placeholder="https://... / C:\\config.json / {&quot;sites&quot;:[...]}"
-        :disabled="props.pending !== null"
-      />
-      <button type="submit" :disabled="props.pending !== null">
-        导入配置
-      </button>
-    </form>
+    <section class="import-card">
+      <form data-testid="config-import-form" @submit.prevent="submit">
+        <label for="config-input">配置 URL、文件路径或原始 JSON</label>
+        <textarea id="config-input" v-model="input" name="input" placeholder="https://... / C:\\config.json / {&quot;sites&quot;:[...]}" :disabled="props.pending !== null" />
+        <div class="form-footer">
+          <span class="meta">配置只在本机解析；导入前会显示来源摘要。</span>
+          <button type="submit" class="button-primary" :disabled="props.pending !== null">导入配置</button>
+        </div>
+      </form>
+    </section>
 
     <section v-if="props.state.summary" data-testid="config-summary" class="panel">
       <strong>配置摘要</strong>
@@ -82,26 +83,20 @@ function submitSite(): void {
       <label for="site-key">Spider 站点</label>
       <select id="site-key" v-model="selectedSiteKey" name="siteKey" @change="selectSite">
         <option v-for="site in props.state.sites" :key="site.key" :value="site.key">
-          {{ site.name }} · {{ site.api }}
+          {{ site.name }} · {{ displaySource(site.api) }}
         </option>
       </select>
       <button type="submit" :disabled="props.pending !== null">选择站点</button>
     </form>
 
-    <section
-      v-if="props.state.status === 'confirmation_required' && props.state.warning"
-      class="panel warning"
-      data-testid="import-warning"
-    >
-      <strong>首次导入需要确认</strong>
-      <p>{{ props.state.warning }}</p>
-      <button type="button" data-action="confirm-import" :disabled="props.pending !== null" @click="emit('confirm')">
-        确认并信任
-      </button>
-      <button type="button" data-action="cancel-import" :disabled="props.pending !== null" @click="emit('cancel')">
-        取消
-      </button>
-    </section>
+    <TrustConfirmationDialog
+      :open="props.state.status === 'confirmation_required'"
+      :warning="props.state.warning"
+      :pending="props.pending !== null"
+      :target="props.state.source ?? undefined"
+      @confirm="emit('confirm')"
+      @cancel="emit('cancel')"
+    />
 
     <section v-if="props.state.error" class="panel error" data-testid="import-error">
       <strong>{{ props.state.error.code }}</strong>

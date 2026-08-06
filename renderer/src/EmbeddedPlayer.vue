@@ -2,6 +2,7 @@
 import Hls from "hls.js";
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 
+import PlayerControls from "./PlayerControls.vue";
 import type { PlayerState } from "./state.js";
 
 const windowWithHls = window as Window & { Hls?: typeof Hls };
@@ -94,15 +95,13 @@ function loadSource(): void {
   });
 }
 
-function setVolume(event: Event): void {
-  const target = event.target;
-  if (target instanceof HTMLInputElement && video.value) video.value.volume = Number(target.value);
+function setVolume(value: number): void {
+  if (video.value) video.value.volume = value;
 }
 
-function setSeek(event: Event): void {
-  const target = event.target;
-  if (target instanceof HTMLInputElement && video.value) {
-    video.value.currentTime = Number(target.value);
+function setSeek(value: number): void {
+  if (video.value) {
+    video.value.currentTime = value;
     currentTime.value = video.value.currentTime;
   }
 }
@@ -147,6 +146,10 @@ function isHls(url: string): boolean {
   return /\.m3u8(?:$|[?#])/i.test(url);
 }
 
+function play(): void { void video.value?.play(); }
+function pause(): void { video.value?.pause(); }
+function fullscreen(): void { void video.value?.requestFullscreen?.(); }
+
 function statusLabel(state: PlayerState, status: string, error: string | null): string {
   if (error) return error;
   if (status === state.status && state.error) return state.error.message;
@@ -167,26 +170,28 @@ function statusLabel(state: PlayerState, status: string, error: string | null): 
 <template>
   <section
     data-testid="embedded-player-panel"
+    data-od-id="embedded-player"
     class="panel embedded-player-panel"
     :data-player-status="localStatus"
   >
     <strong>内嵌播放器</strong>
     <template v-if="props.state.source">
       <video ref="video" data-testid="embedded-player" playsinline controls preload="metadata" />
-      <div class="player-controls" aria-label="播放器控制">
-        <button data-action="player-play" data-testid="player-play" type="button" @click="void video?.play()">播放</button>
-        <button data-action="player-pause" type="button" @click="video?.pause()">暂停</button>
-        <button data-action="player-resume" type="button" @click="void video?.play()">恢复</button>
-        <button data-action="player-stop" type="button" @click="stopPlayback">停止</button>
-        <button data-action="player-reload" type="button" @click="loadSource">重新加载</button>
-        <label>进度
-          <input data-action="player-seek" data-testid="player-seek" type="range" min="0" :max="duration" step="0.1" :value="currentTime" @input="setSeek">
-        </label>
-        <span data-testid="player-time">{{ formatTime(currentTime) }} / {{ formatTime(duration) }}</span>
-        <label>音量 <input data-action="player-volume" type="range" min="0" max="1" step="0.01" :value="props.state.volume" @input="setVolume"></label>
-        <button data-action="player-mute" type="button" @click="toggleMute">{{ muted ? "取消静音" : "静音" }}</button>
-        <button data-action="player-fullscreen" type="button" @click="void video?.requestFullscreen?.()">全屏</button>
-      </div>
+      <PlayerControls
+        :current-time="currentTime"
+        :duration="duration"
+        :volume="props.state.volume"
+        :muted="muted"
+        @play="play"
+        @pause="pause"
+        @resume="play"
+        @stop="stopPlayback"
+        @reload="loadSource"
+        @seek="setSeek"
+        @volume="setVolume"
+        @mute="toggleMute"
+        @fullscreen="fullscreen"
+      />
     </template>
     <p data-testid="player-status">{{ statusLabel(props.state, localStatus, localError) }}</p>
     <p v-if="localError" class="player-error" data-testid="player-error">{{ localError }}</p>

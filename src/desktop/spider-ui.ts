@@ -163,7 +163,6 @@ export class DesktopSpiderUiController {
         this.page = "home";
         this.items = listFrom(response);
         this.detailItem = null;
-        this.clearPlaybackCatalog();
       },
     );
   }
@@ -182,7 +181,6 @@ export class DesktopSpiderUiController {
         this.page = "category";
         this.items = listFrom(response);
         this.detailItem = null;
-        this.clearPlaybackCatalog();
       },
     );
   }
@@ -200,7 +198,6 @@ export class DesktopSpiderUiController {
         this.page = "search";
         this.items = listFrom(response);
         this.detailItem = null;
-        this.clearPlaybackCatalog();
       },
     );
   }
@@ -763,10 +760,8 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
         <button data-action="close">关闭</button>
       </nav>`
     : "";
-  const playUrl = state.player.source?.url
-    ?? (state.playback.available ? state.playback.url : "");
   const playButton = state.canPlay && state.playback.available
-    ? `<button data-testid="play-button" data-action="play" data-play-url="${escapeHtml(playUrl)}" data-play-parse="${state.playback.available ? state.playback.parse : 0}">播放</button>`
+    ? `<button data-testid="play-button" data-action="play" data-play-parse="${state.playback.available ? state.playback.parse : 0}">播放</button>`
     : `<button data-testid="play-button" disabled>播放</button>`;
   const playbackCatalog = state.playbackCatalog
     ? renderPlaybackCatalog(
@@ -817,7 +812,7 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
     <main data-testid="desktop-spider-ui" data-status="${escapeHtml(state.status)}">
       <header>
         <h1>QX 影视 · ${escapeHtml(spiderLabel)}</h1>
-        <p class="meta">来源：${escapeHtml(state.source)} · API：${escapeHtml(state.api ?? "未选择")}</p>
+        <p class="meta">来源：${escapeHtml(displaySource(state.source))} · API：${escapeHtml(displaySource(state.api ?? "未选择"))}</p>
         <p data-testid="status" class="${state.loading ? "loading" : ""}">${escapeHtml(statusLabel[state.status])}${state.loading ? " · 加载中" : ""}</p>
       </header>
       ${warning}
@@ -965,6 +960,17 @@ function listFrom(response: SpiderResponse): Record<string, unknown>[] {
 
 function stringValue(value: unknown, fallback: string): string {
   return typeof value === "string" ? value : fallback;
+}
+
+function displaySource(value: string): string {
+  const text = value.trim();
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) return text.length <= 64 ? text : `${text.slice(0, 36)}…${text.slice(-12)}`;
+  try {
+    const url = new URL(text);
+    return `${url.protocol}//${url.host}/…`;
+  } catch {
+    return text.length <= 64 ? text : `${text.slice(0, 36)}…${text.slice(-12)}`;
+  }
 }
 
 function numberValue(value: unknown, fallback: number): number {

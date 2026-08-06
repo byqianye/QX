@@ -113,7 +113,38 @@ npm run electron:e2e:package
 ### 文档
 - `docs/spike-22-vod-playback-e2e.md`
 
-G24–G78（未开始）
+## G24（已完成）
+
+### 目标
+接入独立、授权的 Jellyfin REST 媒体源，并把 Direct Play 资源安全地接入 LocalProxy 与 Electron 内嵌播放器。
+
+### 状态
+本地适配器、协议合同 fixture、播放桥接和普通 Electron 打包验证已完成。当前未提供完整 Jellyfin 环境变量，真实服务器验证为 `external-environment-blocked`，不宣称真实环境已验证。
+
+### 依赖
+- G23 / 受控 VOD 播放闭环
+- Spike 23 / 授权 Jellyfin 媒体源
+
+### 范围与验收标准
+- 读取并校验 `QX_JELLYFIN_URL`、`QX_JELLYFIN_TOKEN`、`QX_JELLYFIN_USER_ID`，拒绝不安全 URL、部分配置和凭据泄露
+- 独立 `JellyfinAdapter` 覆盖连接、认证、媒体库、电影、剧集、季、集、搜索和详情
+- 仅选择真实 Direct Play；转码-only 或无 Direct Play 时返回明确能力错误，不伪造播放地址
+- 通过受控 LocalProxy 注入 `X-Emby-Token`，向内嵌播放器暴露本地无凭据 URL，并在切换/关闭时释放播放资源
+- 本地 loopback fixture 合同测试稳定通过；可选真实 E2E 仅在三项环境变量齐全时运行
+- 不接入来源不明接口，不绕过认证或 DRM，不实现复杂服务端转码控制
+
+### 验证命令
+```powershell
+npm run typecheck
+npx vitest run tests/jellyfin-adapter.test.ts
+npm test
+npm run electron:e2e:package
+```
+
+### 文档
+- `docs/spike-23-jellyfin-source.md`
+
+G25–G78（未开始）
 
 （略，按主路线图执行）
 

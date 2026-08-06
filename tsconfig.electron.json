@@ -14,6 +14,7 @@
     "src/electron/shell-runtime.ts",
     "src/config/**/*.ts",
     "src/desktop/**/*.ts",
+    "src/jellyfin/**/*.ts",
     "src/spider/**/*.ts",
     "src/spikes/config-probe.ts",
     "src/spikes/java-probe.ts"

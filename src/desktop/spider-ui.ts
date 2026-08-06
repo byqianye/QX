@@ -18,6 +18,11 @@ import {
   PlaybackProxyServer,
   type PlaybackProxySession,
 } from "./playback-proxy.js";
+import {
+  parseVodPlayback,
+  type PlaybackCatalog,
+  type PlaybackSelection,
+} from "./vod-playback.js";
 import type { SpiderResponse } from "../spider/rpc.js";
 
 const require = createRequire(import.meta.url);
@@ -72,6 +77,8 @@ export interface DesktopSpiderUiState {
   canPlay: boolean;
   items: readonly Record<string, unknown>[];
   detail: Record<string, unknown> | null;
+  playbackCatalog: PlaybackCatalog | null;
+  playbackSelection: PlaybackSelection | null;
 }
 
 export interface DesktopSpiderUiOptions {
@@ -89,6 +96,8 @@ export class DesktopSpiderUiController {
   private localError: { code: string; message: string } | null = null;
   private items: Record<string, unknown>[] = [];
   private detailItem: Record<string, unknown> | null = null;
+  private playbackCatalog: PlaybackCatalog | null = null;
+  private playbackSelection: PlaybackSelection | null = null;
   private readonly playerController = new EmbeddedPlaybackController();
   private readonly playbackProxy: PlaybackProxyServer;
   private proxySession: PlaybackProxySession | undefined;
@@ -120,6 +129,8 @@ export class DesktopSpiderUiController {
       canPlay: view.playback.available,
       items: this.items.map((item) => ({ ...item })),
       detail: this.detailItem ? { ...this.detailItem } : null,
+      playbackCatalog: clonePlaybackCatalog(this.playbackCatalog),
+      playbackSelection: this.playbackSelection ? { ...this.playbackSelection } : null,
     };
   }
 
@@ -139,6 +150,7 @@ export class DesktopSpiderUiController {
       this.page = "home";
       this.items = [];
       this.detailItem = null;
+      this.clearPlaybackCatalog();
     });
   }
 
@@ -150,6 +162,7 @@ export class DesktopSpiderUiController {
         this.page = "home";
         this.items = listFrom(response);
         this.detailItem = null;
+        this.clearPlaybackCatalog();
       },
     );
   }
@@ -168,6 +181,7 @@ export class DesktopSpiderUiController {
         this.page = "category";
         this.items = listFrom(response);
         this.detailItem = null;
+        this.clearPlaybackCatalog();
       },
     );
   }
@@ -185,6 +199,7 @@ export class DesktopSpiderUiController {
         this.page = "search";
         this.items = listFrom(response);
         this.detailItem = null;
+        this.clearPlaybackCatalog();
       },
     );
   }
@@ -196,6 +211,8 @@ export class DesktopSpiderUiController {
       (response) => {
         this.page = "detail";
         this.detailItem = listFrom(response)[0] ?? null;
+        this.playbackCatalog = this.detailItem ? parseVodPlayback(this.detailItem) : null;
+        this.playbackSelection = null;
       },
     );
   }
@@ -206,6 +223,7 @@ export class DesktopSpiderUiController {
     vipFlags: string[] = [],
     timeoutMs?: number,
   ): Promise<DesktopSpiderUiState> {
+    this.playerController.stop();
     return this.run(
       "player",
       () => this.session.playerContent(flag, id, vipFlags, timeoutMs),
@@ -222,6 +240,26 @@ export class DesktopSpiderUiController {
         }
       },
     );
+  }
+
+  public playEpisode(
+    lineIndex: number,
+    episodeIndex: number,
+    vipFlags: string[] = [],
+    timeoutMs?: number,
+  ): Promise<DesktopSpiderUiState> {
+    const line = this.playbackCatalog?.lines[lineIndex];
+    const episode = line?.episodes[episodeIndex];
+    if (!line || !episode || !Number.isInteger(lineIndex) || !Number.isInteger(episodeIndex)) {
+      this.localStatus = "error";
+      this.localError = {
+        code: "PLAYBACK_FORMAT_INVALID",
+        message: "播放线路或选集不存在。",
+      };
+      return Promise.resolve(this.state);
+    }
+    this.playbackSelection = { lineIndex, episodeIndex };
+    return this.player(line.name, episode.id, vipFlags, timeoutMs);
   }
 
   public async switchSource(): Promise<DesktopSpiderUiState> {
@@ -242,6 +280,7 @@ export class DesktopSpiderUiController {
     this.localError = null;
     this.items = [];
     this.detailItem = null;
+    this.clearPlaybackCatalog();
     return this.state;
   }
 
@@ -336,6 +375,11 @@ export class DesktopSpiderUiController {
     this.proxySession = undefined;
     if (session) await session.close();
     await this.playbackProxy.close();
+  }
+
+  private clearPlaybackCatalog(): void {
+    this.playbackCatalog = null;
+    this.playbackSelection = null;
   }
 }
 
@@ -499,11 +543,20 @@ export class DesktopSpiderUiServer {
           await ui.detail(stringValue(body.vodId, ""));
           break;
         case "/api/player":
-          await ui.player(
-            stringValue(body.flag, "default"),
-            stringValue(body.id, ""),
-            stringList(body.vipFlags),
-          );
+          if (Object.prototype.hasOwnProperty.call(body, "lineIndex")
+            || Object.prototype.hasOwnProperty.call(body, "episodeIndex")) {
+            await ui.playEpisode(
+              indexValue(body.lineIndex),
+              indexValue(body.episodeIndex),
+              stringList(body.vipFlags),
+            );
+          } else {
+            await ui.player(
+              stringValue(body.flag, "default"),
+              stringValue(body.id, ""),
+              stringList(body.vipFlags),
+            );
+          }
           break;
         case "/api/switch":
           if (this.importer) {
@@ -626,6 +679,13 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
   const playButton = state.canPlay && state.playback.available
     ? `<button data-testid="play-button" data-action="play" data-play-url="${escapeHtml(playUrl)}" data-play-parse="${state.playback.available ? state.playback.parse : 0}">播放</button>`
     : `<button data-testid="play-button" disabled>播放</button>`;
+  const playbackCatalog = state.playbackCatalog
+    ? renderPlaybackCatalog(
+      state.playbackCatalog,
+      state.playbackSelection,
+      state.status === "error" && state.error?.code.startsWith("PLAYBACK_") === true,
+    )
+    : "";
   const detail = state.detail
     ? `<section data-testid="detail-panel" class="detail-panel">
         <h2>${escapeHtml(stringValue(state.detail.vod_name, "详情"))}</h2>
@@ -679,6 +739,7 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
         <button type="submit">搜索</button>
       </form>
       ${detail}
+      ${playbackCatalog}
       ${renderEmbeddedPlayer(state.player)}
       <section class="vod-list" data-testid="vod-list">${items}</section>
     </main>
@@ -697,6 +758,51 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
         document.querySelectorAll('[data-action="detail"]').forEach((button) => button.addEventListener('click', () => send('/api/detail', { vodId: button.dataset.vodId })));
         document.querySelectorAll('[data-action="switch"]').forEach((button) => button.addEventListener('click', () => send('/api/switch')));
         document.querySelectorAll('[data-action="close"]').forEach((button) => button.addEventListener('click', () => send('/api/close')));
+        const lineButtons = [...document.querySelectorAll('[data-action="playback-line"]')];
+        const linePanels = [...document.querySelectorAll('[data-playback-line]')];
+        const activateLine = (lineIndex) => {
+          lineButtons.forEach((button) => {
+            const active = button.dataset.lineIndex === String(lineIndex);
+            button.setAttribute('aria-pressed', String(active));
+          });
+          linePanels.forEach((panel) => {
+            panel.hidden = panel.dataset.playbackLine !== String(lineIndex);
+          });
+          const activeButton = lineButtons.find((button) => button.dataset.lineIndex === String(lineIndex));
+          const currentLine = document.querySelector('[data-testid="current-line"]');
+          const currentEpisode = document.querySelector('[data-testid="current-episode"]');
+          if (currentLine && activeButton) currentLine.textContent = activeButton.textContent || '';
+          if (currentEpisode) currentEpisode.textContent = '未选择';
+        };
+        lineButtons.forEach((button) => button.addEventListener('click', () => activateLine(button.dataset.lineIndex || '0')));
+        const orderButtons = [...document.querySelectorAll('[data-action="playback-order"]')];
+        const setPlaybackOrder = (order) => {
+          orderButtons.forEach((button) => {
+            button.setAttribute('aria-pressed', String(button.dataset.order === order));
+          });
+          linePanels.forEach((panel) => {
+            const episodes = [...panel.querySelectorAll('[data-action="player-episode"]')];
+            episodes.sort((left, right) => {
+              const difference = Number(left.dataset.episodeIndex) - Number(right.dataset.episodeIndex);
+              return order === 'reverse' ? -difference : difference;
+            }).forEach((episode) => panel.appendChild(episode));
+          });
+        };
+        orderButtons.forEach((button) => button.addEventListener('click', () => setPlaybackOrder(button.dataset.order || 'forward')));
+        document.querySelectorAll('[data-action="player-episode"]').forEach((button) => button.addEventListener('click', () => {
+          void send('/api/player', {
+            lineIndex: Number(button.dataset.lineIndex),
+            episodeIndex: Number(button.dataset.episodeIndex),
+            vipFlags: [],
+          });
+        }));
+        document.querySelectorAll('[data-action="player-retry"]').forEach((button) => button.addEventListener('click', () => {
+          void send('/api/player', {
+            lineIndex: Number(button.dataset.lineIndex),
+            episodeIndex: Number(button.dataset.episodeIndex),
+            vipFlags: [],
+          });
+        }));
         document.querySelector('[data-action="search-form"]')?.addEventListener('submit', (event) => {
           event.preventDefault();
           const key = new FormData(event.currentTarget).get('key');
@@ -706,6 +812,61 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
     </script>
   </body>
 </html>`;
+}
+
+function renderPlaybackCatalog(
+  catalog: PlaybackCatalog,
+  selection: PlaybackSelection | null,
+  retryable: boolean,
+): string {
+  if (catalog.lines.length === 0) {
+    return `<section data-testid="playback-selector" class="playback-selector">
+      <strong>播放线路</strong><p data-testid="playback-empty">暂无可用选集</p>
+    </section>`;
+  }
+
+  const selectedLineIndex = selection?.lineIndex ?? catalog.lines[0]?.index ?? 0;
+  const currentLine = catalog.lines.find((line) => line.index === selectedLineIndex) ?? catalog.lines[0];
+  const currentEpisode = currentLine && selection?.lineIndex === currentLine.index
+    ? currentLine.episodes.find((episode) => episode.index === selection.episodeIndex)
+    : undefined;
+  const retry = retryable && selection
+    ? `<button
+        type="button"
+        data-testid="playback-retry"
+        data-action="player-retry"
+        data-line-index="${selection.lineIndex}"
+        data-episode-index="${selection.episodeIndex}">重试</button>`
+    : "";
+  const lineButtons = catalog.lines.map((line) => `<button
+        type="button"
+        data-action="playback-line"
+        data-line-index="${line.index}"
+        aria-pressed="${line.index === selectedLineIndex}">${escapeHtml(line.name)}</button>`).join("");
+  const linePanels = catalog.lines.map((line) => `<div
+      data-playback-line="${line.index}"
+      ${line.index === selectedLineIndex ? "" : "hidden"}>
+      ${line.episodes.length === 0
+        ? `<p data-testid="playback-line-empty">暂无可用选集</p>`
+        : line.episodes.map((episode) => `<button
+          type="button"
+          data-action="player-episode"
+          data-line-index="${line.index}"
+          data-episode-index="${episode.index}"
+          data-play-flag="${escapeHtml(line.name)}"
+          data-play-id="${escapeHtml(episode.id)}">${escapeHtml(episode.name)}</button>`).join("")}
+    </div>`).join("");
+  return `<section data-testid="playback-selector" class="playback-selector">
+    <div data-testid="playback-lines" aria-label="播放线路">${lineButtons}</div>
+    <p>当前线路：<span data-testid="current-line">${escapeHtml(currentLine?.name ?? "")}</span></p>
+    <p>当前选集：<span data-testid="current-episode">${escapeHtml(currentEpisode?.name ?? "未选择")}</span></p>
+    <div data-testid="playback-order" aria-label="剧集顺序">
+      <button type="button" data-action="playback-order" data-order="forward" aria-pressed="true">正序</button>
+      <button type="button" data-action="playback-order" data-order="reverse" aria-pressed="false">倒序</button>
+      ${retry}
+    </div>
+    <div data-testid="playback-episodes">${linePanels}</div>
+  </section>`;
 }
 
 function listFrom(response: SpiderResponse): Record<string, unknown>[] {
@@ -719,6 +880,23 @@ function stringValue(value: unknown, fallback: string): string {
 
 function numberValue(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function indexValue(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error("PLAYBACK_FORMAT_INVALID: playback selection index is invalid");
+  }
+  return value;
+}
+
+function clonePlaybackCatalog(catalog: PlaybackCatalog | null): PlaybackCatalog | null {
+  if (!catalog) return null;
+  return {
+    lines: catalog.lines.map((line) => ({
+      ...line,
+      episodes: line.episodes.map((episode) => ({ ...episode })),
+    })),
+  };
 }
 
 function recordOfStrings(value: unknown): Record<string, string> {

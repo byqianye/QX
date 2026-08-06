@@ -125,6 +125,7 @@ describe("packaged Electron E2E flow", () => {
         doubanUnavailable: true,
         embeddedMp4: true,
         embeddedHls: true,
+        vodPlaybackFlow: true,
         proxyRequired: true,
         noExternalBrowser: true,
       },
@@ -200,7 +201,12 @@ class SessionFixture implements DesktopSpiderSessionPort {
   }
 
   public async detailContent(ids: string[]): Promise<SpiderResponse> {
-    return ok({ list: [{ vod_id: ids[0], vod_name: "Fixture Detail" }] });
+    const item: Record<string, unknown> = { vod_id: ids[0], vod_name: "Fixture Detail" };
+    if (this.api === "csp_PlayableFixture") {
+      item.vod_play_from = "主线$$$备用线";
+      item.vod_play_url = "第一集$direct-hls#第二集$headered$$$电影$direct-mp4";
+    }
+    return ok({ list: [item] });
   }
 
   public async playerContent(_flag: string, id: string): Promise<SpiderResponse> {

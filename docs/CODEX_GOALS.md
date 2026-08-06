@@ -82,7 +82,38 @@ npm run electron:e2e:package
 ### 文档
 - `docs/spike-21-local-proxy.md`
 
-G23–G78（未开始）
+## G23（已完成）
+
+### 目标
+将详情页的 CatVod 线路与选集协议接入同一个 Spider Session、`playerContent`、G22 LocalProxy 和 Electron 内嵌播放器，完成受控点播闭环。
+
+### 状态
+已完成。JVM-native fixture 已覆盖导入后的首页、分类、搜索、详情、线路、选集和播放路径；线路/选集解析、顺序切换、失败恢复和播放资源生命周期均有测试，未接入第三方影视源。
+
+### 依赖
+- G21 / Spike 20 内嵌 MP4/HLS 播放器
+- G22 / Spike 21 受控 LocalProxy
+
+### 验收标准
+- `vod_play_from` 与 `vod_play_url` 按 `$$$`、`#`、第一个未编码 `$` 解析
+- 支持多线路、多集、空线路、缺失集名、重复集名和 Unicode/编码 URL
+- 无法区分未编码保留字符时返回 `PLAYBACK_FORMAT_INVALID`
+- UI 正确传递 `flag`、真实播放 `id` 和 `vipFlags`
+- 切集/切线路停止旧播放器并释放旧 LocalProxy，不重启 Spider Session
+- 播放失败保留详情、线路、选集并支持重试/切线路
+- 开发版和打包版受控点播闭环通过验证，sidecar、fixture、端口和播放 token 无泄漏
+
+### 验证命令
+```powershell
+npm run typecheck
+npm test
+npm run electron:e2e:package
+```
+
+### 文档
+- `docs/spike-22-vod-playback-e2e.md`
+
+G24–G78（未开始）
 
 （略，按主路线图执行）
 

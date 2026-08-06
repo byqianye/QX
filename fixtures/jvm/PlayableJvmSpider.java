@@ -47,14 +47,46 @@ public final class PlayableJvmSpider implements Spider {
     }
 
     @Override
+    public String categoryContent(
+            String typeId,
+            int page,
+            boolean filter,
+            Map<String, String> extend) {
+        ensureInitialized();
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("vod_id", "fixture:movie-1");
+        item.put("vod_name", "Category Fixture");
+        return JsonCodec.stringify(Map.of(
+                "page", page,
+                "pagecount", 1,
+                "limit", 20,
+                "total", 1,
+                "list", List.of(item)));
+    }
+
+    @Override
+    public String searchContent(String key, boolean quick, int page) {
+        ensureInitialized();
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("vod_id", "fixture:movie-1");
+        item.put("vod_name", "Search Fixture: " + key);
+        return JsonCodec.stringify(Map.of(
+                "page", page,
+                "pagecount", 1,
+                "limit", 20,
+                "total", 1,
+                "list", List.of(item)));
+    }
+
+    @Override
     public String detailContent(List<String> ids) {
         ensureInitialized();
         String id = ids.isEmpty() ? "fixture:movie-1" : ids.get(0);
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("vod_id", id);
         item.put("vod_name", "Playable Fixture");
-        item.put("vod_play_from", "fixture");
-        item.put("vod_play_url", "default$" + id);
+        item.put("vod_play_from", "主线$$$备用线");
+        item.put("vod_play_url", "第一集$direct-hls#第二集$headered$$$电影$direct-mp4");
 
         return JsonCodec.stringify(Map.of("list", List.of(item)));
     }

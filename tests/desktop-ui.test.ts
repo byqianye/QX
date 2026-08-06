@@ -111,6 +111,75 @@ describe("desktop Spider UI", () => {
     await ui.close();
   });
 
+  it("renders playback lines and passes episode selection through the same Spider session", async () => {
+    const fixture = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
+    const ui = new DesktopSpiderUiController({
+      session: fixture,
+      playbackProxyOrigins: ["http://127.0.0.1:43123"],
+    });
+
+    ui.confirmImport();
+    await ui.open("playable", "fixture-endpoint");
+    await ui.detail("fixture:movie-1");
+
+    expect(ui.state.playbackCatalog).toMatchObject({
+      lines: [
+        { name: "主线", episodes: [{ name: "第一集" }, { name: "第二集" }] },
+        { name: "备用线", episodes: [{ name: "电影" }] },
+      ],
+    });
+    const html = renderDesktopSpiderUi(ui.state);
+    expect(html).toContain('data-testid="playback-selector"');
+    expect(html).toContain('data-testid="current-line"');
+    expect(html).toContain('data-action="player-episode"');
+    expect(html).toContain('data-testid="playback-order"');
+    expect(html).toContain('data-order="forward"');
+    expect(html).toContain('data-order="reverse"');
+    expect(html).toContain("正序");
+    expect(html).toContain("倒序");
+    expect(html).toContain('data-play-flag="主线"');
+    expect(html).toContain('data-play-id="headered"');
+
+    await ui.playEpisode(0, 1, ["vip"]);
+    expect(fixture.calls).toContain("player:主线:headered:vip");
+    expect(ui.state.playbackSelection).toEqual({ lineIndex: 0, episodeIndex: 1 });
+    expect(fixture.destroyed).toBe(false);
+
+    await ui.playEpisode(1, 0);
+    expect(fixture.calls).toContain("player:备用线:direct-mp4:");
+    expect(ui.state.playbackSelection).toEqual({ lineIndex: 1, episodeIndex: 0 });
+    expect(fixture.calls.filter((call) => call.startsWith("open:")).length).toBe(1);
+    await ui.close();
+  });
+
+  it("preserves the selected episode and detail when playback fails", async () => {
+    const fixture = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
+    const ui = new DesktopSpiderUiController({
+      session: fixture,
+      playbackProxyOrigins: ["http://127.0.0.1:43123"],
+    });
+
+    ui.confirmImport();
+    await ui.open("playable", "fixture-endpoint");
+    await ui.detail("fixture:movie-1");
+    await ui.playEpisode(0, 0);
+    const failed = await ui.player("主线", "fail", []);
+
+    expect(failed).toMatchObject({
+      page: "detail",
+      status: "error",
+      error: { code: "PLAYBACK_UPSTREAM_ERROR" },
+      playbackSelection: { lineIndex: 0, episodeIndex: 0 },
+    });
+    expect(failed.detail?.vod_id).toBe("fixture:movie-1");
+    expect(failed.playbackCatalog?.lines).toHaveLength(2);
+    expect(renderDesktopSpiderUi(failed)).toContain('data-testid="playback-retry"');
+
+    const retried = await ui.playEpisode(0, 0);
+    expect(retried).toMatchObject({ status: "ready", playbackSelection: { lineIndex: 0, episodeIndex: 0 } });
+    await ui.close();
+  });
+
   it("drives home, category, search and detail, then destroys on switch and close", async () => {
     const first = new FixtureSession();
     const second = new FixtureSession("http://example.invalid/second.json");
@@ -199,6 +268,36 @@ describe("desktop Spider UI", () => {
     expect(fixture.destroyed).toBe(true);
   });
 
+  it("routes HTTP episode selection to the real flag, id and vipFlags", async () => {
+    const fixture = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
+    const ui = new DesktopSpiderUiController({
+      session: fixture,
+      playbackProxyOrigins: ["https://media.example.invalid"],
+    });
+    const server = new DesktopSpiderUiServer({
+      ui,
+      siteKey: "playable",
+      ext: "fixture-endpoint",
+    });
+    servers.push(server);
+    await server.start();
+
+    await post(server.url, "/api/import/confirm");
+    await post(server.url, "/api/open");
+    await post(server.url, "/api/detail", { vodId: "fixture:movie-1" });
+    const player = await post(server.url, "/api/player", {
+      lineIndex: 0,
+      episodeIndex: 1,
+      vipFlags: ["vip"],
+    });
+
+    expect(player.state).toMatchObject({
+      page: "detail",
+      playbackSelection: { lineIndex: 0, episodeIndex: 1 },
+    });
+    expect(fixture.calls).toContain("player:主线:headered:vip");
+  });
+
   it("serves the bundled hls.js asset locally", async () => {
     const fixture = new FixtureSession();
     const ui = new DesktopSpiderUiController({ session: fixture });
@@ -276,7 +375,12 @@ class FixtureSession implements DesktopSpiderSessionPort {
 
   public async detailContent(ids: string[]): Promise<SpiderResponse> {
     this.calls.push(`detail:${ids.join(",")}`);
-    return ok({ list: [{ vod_id: ids[0], vod_name: "Fixture Detail" }] });
+    const item: Record<string, unknown> = { vod_id: ids[0], vod_name: "Fixture Detail" };
+    if (this.view.api === "csp_PlayableFixture") {
+      item.vod_play_from = "主线$$$备用线";
+      item.vod_play_url = "第一集$direct-hls#第二集$headered$$$电影$direct-mp4";
+    }
+    return ok({ list: [item] });
   }
 
   public async playerContent(
@@ -305,6 +409,13 @@ class FixtureSession implements DesktopSpiderSessionPort {
         url: this.view.playback.url,
         header: this.view.playback.headers,
       });
+    }
+    if (id === "fail") {
+      return {
+        id: "fixture",
+        ok: false,
+        error: { code: "PLAYBACK_UPSTREAM_ERROR", message: "Fixture playback failed" },
+      };
     }
     this.view.playback = {
       available: true,
@@ -356,8 +467,16 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   return { promise, resolve };
 }
 
-async function post(base: string, path: string): Promise<{ state: Record<string, unknown> }> {
-  const response = await fetch(new URL(path, base), { method: "POST" });
+async function post(base: string, path: string, body?: unknown): Promise<{ state: Record<string, unknown> }> {
+  const response = await fetch(new URL(path, base), {
+    method: "POST",
+    ...(body === undefined
+      ? {}
+      : {
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+  });
   expect(response.status).toBe(200);
   return await response.json() as { state: Record<string, unknown> };
 }

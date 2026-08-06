@@ -33,6 +33,7 @@ export interface PackagedE2eChecks {
   embeddedMp4Dom?: boolean;
   embeddedHlsDom?: boolean;
   proxyHlsDom?: boolean;
+  vodPlaybackFlow?: boolean;
 }
 
 export interface PackagedE2eResult {
@@ -107,21 +108,25 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       const playbackImport = await load(options.baseUrl, options.playback.configJson);
       const playbackReady = await confirmIfNeeded(options.baseUrl, playbackImport.import.status);
       const playbackOpened = await post(options.baseUrl, "/api/open");
+      const playbackHome = await post(options.baseUrl, "/api/home");
+      const playbackDetail = await post(options.baseUrl, "/api/detail", { vodId: "fixture:movie-1" });
+      const playbackDetailHtml = await page(options.baseUrl);
       const mp4 = await post(options.baseUrl, "/api/player", {
-        flag: "default",
-        id: "direct-mp4",
+        lineIndex: 1,
+        episodeIndex: 0,
+        vipFlags: ["e2e"],
       });
       const mp4Html = await page(options.baseUrl);
       const mp4Dom = await probeWindow(options, mp4Html);
       const hls = await post(options.baseUrl, "/api/player", {
-        flag: "default",
-        id: "direct-hls",
+        lineIndex: 0,
+        episodeIndex: 0,
       });
       const hlsHtml = await page(options.baseUrl);
       const hlsDom = await probeWindow(options, hlsHtml);
       const headered = await post(options.baseUrl, "/api/player", {
-        flag: "default",
-        id: "headered",
+        lineIndex: 0,
+        episodeIndex: 1,
       });
       const headeredHtml = await page(options.baseUrl);
       const headeredDom = await probeWindow(options, headeredHtml);
@@ -135,6 +140,22 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
         && playerSourceUrl(hls.state)?.endsWith("/media/fixture.m3u8") === true
         && hlsHtml.includes('data-testid="embedded-player"')
         && hlsHtml.includes("/assets/hls.min.js");
+      checks.vodPlaybackFlow = playbackReady
+        && playbackOpened.state?.status === "ready"
+        && playbackHome.state?.page === "home"
+        && playbackDetail.state?.page === "detail"
+        && playbackDetailHtml.includes('data-testid="playback-selector"')
+        && playbackDetailHtml.includes('data-order="forward"')
+        && playbackDetailHtml.includes('data-order="reverse"')
+        && playbackDetailHtml.includes('data-play-flag="主线"')
+        && playbackDetailHtml.includes('data-play-id="headered"')
+        && playbackDetailHtml.includes('data-play-id="direct-mp4"')
+        && mp4.state?.playbackSelection?.lineIndex === 1
+        && mp4.state?.playbackSelection?.episodeIndex === 0
+        && hls.state?.playbackSelection?.lineIndex === 0
+        && hls.state?.playbackSelection?.episodeIndex === 0
+        && headered.state?.playbackSelection?.lineIndex === 0
+        && headered.state?.playbackSelection?.episodeIndex === 1;
       checks.proxyRequired = headered.state?.error?.code === "PLAYBACK_PROXY_REQUIRED"
         ? false
         : headered.state?.player?.status === "loading"
@@ -289,6 +310,7 @@ interface UiState {
     source?: { url?: string; headers?: Record<string, unknown> } | null;
     error?: { code?: string; message?: string } | null;
   } | null;
+  playbackSelection?: { lineIndex?: number; episodeIndex?: number } | null;
 }
 
 function playerSourceUrl(state: UiState | null): string | null {

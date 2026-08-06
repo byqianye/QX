@@ -93,6 +93,46 @@ jvmDescribe("JVM-native playerContent vertical slice", () => {
     }
   });
 
+  it("covers the full controlled VOD flow and serializes the selected line", async () => {
+    const sidecar = createSidecar();
+    try {
+      await sidecar.start();
+      await expect(sidecar.init(endpoint)).resolves.toMatchObject({ ok: true });
+      await expect(sidecar.homeContent(false)).resolves.toMatchObject({
+        ok: true,
+        result: { list: [{ vod_id: "fixture:movie-1" }] },
+      });
+      await expect(sidecar.categoryContent("fixture", 2, false, {})).resolves.toMatchObject({
+        ok: true,
+        result: { page: 2, list: [{ vod_name: "Category Fixture" }] },
+      });
+      await expect(sidecar.searchContent("demo", false, 1)).resolves.toMatchObject({
+        ok: true,
+        result: { list: [{ vod_name: "Search Fixture: demo" }] },
+      });
+      await expect(sidecar.detailContent(["fixture:movie-1"])).resolves.toMatchObject({
+        ok: true,
+        result: {
+          list: [{
+            vod_play_from: "主线$$$备用线",
+            vod_play_url: "第一集$direct-hls#第二集$headered$$$电影$direct-mp4",
+          }],
+        },
+      });
+
+      await expect(sidecar.playerContent("备用线", "direct-mp4", ["vip", "e2e"])).resolves.toMatchObject({
+        ok: true,
+        result: { parse: 0, url: expect.stringContaining("/media/fixture.mp4") },
+      });
+      const requestUrl = new URL(requests.at(-1) ?? "/", endpoint);
+      expect(requestUrl.searchParams.get("flag")).toBe("备用线");
+      expect(requestUrl.searchParams.get("id")).toBe("direct-mp4");
+      expect(requestUrl.searchParams.get("vipFlags")).toBe("vip,e2e");
+    } finally {
+      await sidecar.destroy();
+    }
+  });
+
   it("keeps the sidecar alive when the player upstream returns an error", async () => {
     const sidecar = createSidecar();
     try {

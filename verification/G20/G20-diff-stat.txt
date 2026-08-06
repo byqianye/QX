@@ -1,0 +1,6 @@
+git diff --stat
+warning: in the working copy of 'AGENTS.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/CODEX_GOALS.md', LF will be replaced by CRLF the next time Git touches it
+ AGENTS.md           | 59 ++++++++++++++++++++++++++++++++++++++++++++++
+ docs/CODEX_GOALS.md | 68 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 127 insertions(+)

@@ -1,0 +1,168 @@
+G20 verification command log
+Local user/workspace paths are redacted as <USER_HOME> and <WORKSPACE>.
+Exit codes are recorded after each command.
+
+===== COMMAND: git diff --stat =====
+warning: in the working copy of 'AGENTS.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/CODEX_GOALS.md', LF will be replaced by CRLF the next time Git touches it
+ AGENTS.md           | 59 ++++++++++++++++++++++++++++++++++++++++++++++
+ docs/CODEX_GOALS.md | 68 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 127 insertions(+)
+EXIT CODE: 0
+
+===== COMMAND: git diff --check =====
+warning: in the working copy of 'AGENTS.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/CODEX_GOALS.md', LF will be replaced by CRLF the next time Git touches it
+EXIT CODE: 0
+
+===== COMMAND: npm run typecheck =====
+
+> qx-yingshi@0.1.0 typecheck
+> tsc --noEmit
+
+EXIT CODE: 0
+
+===== COMMAND: npm test =====
+
+> qx-yingshi@0.1.0 test
+> vitest run
+
+
+ RUN  v3.2.7 <WORKSPACE>
+
+ ✓ tests/electron-jre.test.ts (3 tests) 3ms
+ ✓ tests/spider-rpc.test.ts (4 tests) 4ms
+ ✓ tests/trust.test.ts (3 tests) 4ms
+ ✓ tests/config-decoder.test.ts (4 tests) 4ms
+ ✓ tests/java-probe.test.ts (2 tests) 4ms
+ ✓ tests/desktop-ui.test.ts (5 tests) 50ms
+ ✓ tests/electron-shell.test.ts (5 tests) 16ms
+ ✓ tests/spider-import.test.ts (6 tests) 80ms
+ ✓ tests/electron-e2e.test.ts (1 test) 107ms
+ ✓ tests/jvm-sidecar.test.ts (2 tests) 3386ms
+   ✓ JVM-native HTTP Spider Host > passes ext and filter through the CatVod-like contract and returns HTTP JSON  349ms
+   ✓ JVM-native HTTP Spider Host > terminates the isolated sidecar when the HTTP request exceeds its timeout  324ms
+ ✓ tests/player-jvm.test.ts (4 tests) 4115ms
+   ✓ JVM-native playerContent vertical slice > returns direct URL, parse flag and request headers through player RPC  339ms
+   ✓ JVM-native playerContent vertical slice > keeps the sidecar alive when the player upstream returns an error  338ms
+   ✓ JVM-native playerContent vertical slice > terminates the sidecar when playerContent exceeds its timeout  368ms
+   ✓ JVM-native playerContent vertical slice > maps a playable response through the desktop session and preserves headers  340ms
+ ✓ tests/douban-jvm.test.ts (16 tests) 9042ms
+   ✓ JVM-native csp_Douban minimum port > maps the extracted Douban response to CatVod class/list JSON  340ms
+   ✓ JVM-native csp_Douban minimum port > routes all seven categories, filters, and pages to CatVod pagination JSON  438ms
+   ✓ JVM-native csp_Douban minimum port > resolves msearch ids through movie then tv and returns CatVod detail JSON  362ms
+   ✓ JVM-native csp_Douban minimum port > returns a detail upstream exception without killing the sidecar  402ms
+   ✓ JVM-native csp_Douban minimum port > searches paged Douban results and maps embedded subject data to CatVod list JSON  327ms
+   ✓ JVM-native csp_Douban minimum port > returns a search upstream exception without killing the sidecar  547ms
+   ✓ JVM-native csp_Douban minimum port > retries a rate-limited primary search and uses the bounded JSON fallback  502ms
+   ✓ JVM-native csp_Douban minimum port > preserves fallback search errors without killing the sidecar  499ms
+   ✓ JVM-native csp_Douban minimum port > passes search vod_ids directly into movie-first detail and tv fallback  371ms
+   ✓ JVM-native csp_Douban minimum port > routes csp_Douban through the desktop client for all supported methods  376ms
+   ✓ JVM-native csp_Douban minimum port > gates csp_Douban behind confirmation and exposes the four desktop calls  373ms
+   ✓ JVM-native csp_Douban minimum port > keeps RPC errors visible and records timeout sidecar termination  404ms
+   ✓ JVM-native csp_Douban minimum port > preserves RPC errors and terminates the desktop client on timeout  421ms
+   ✓ JVM-native csp_Douban minimum port > terminates the isolated sidecar when categoryContent exceeds its timeout  322ms
+   ✓ JVM-native csp_Douban minimum port > terminates the isolated sidecar when detailContent exceeds its timeout  316ms
+   ✓ JVM-native csp_Douban minimum port > terminates the isolated sidecar when searchContent exceeds its timeout  312ms
+
+ Test Files  12 passed (12)
+      Tests  55 passed (55)
+   Start at  13:16:10
+   Duration  9.90s (transform 1.00s, setup 0ms, collect 2.62s, tests 16.81s, environment 2ms, prepare 1.90s)
+
+EXIT CODE: 0
+
+===== COMMAND: npm run electron:e2e =====
+
+npm error Missing script: "electron:e2e"
+npm error
+npm error Did you mean one of these?
+npm error   npm run electron:dev # run the "electron:dev" package script
+npm error   npm run electron:smoke # run the "electron:smoke" package script
+npm error
+npm error To see a list of scripts, run:
+npm error   npm run
+npm error A complete log of this run can be found in: <USER_HOME>/AppData/Local/npm-cache/_logs/2026-08-06T05_16_25_490Z-debug-0.log
+EXIT CODE: 1
+
+===== COMMAND: npm run electron:package:win =====
+
+> qx-yingshi@0.1.0 electron:package:win
+> npm run electron:build && electron-packager . QX影视 --platform=win32 --arch=x64 --out=dist/electron-package --overwrite --prune=true --extra-resource=dist/electron-runtime
+
+
+> qx-yingshi@0.1.0 electron:build
+> npm run electron:build-runtime && tsc -p tsconfig.electron.json
+
+
+> qx-yingshi@0.1.0 electron:build-runtime
+> tsx src/electron/package-runtime.ts
+
+Spike18 development fallback: set QX_TEMURIN_JDK for the pinned Eclipse Temurin 21.0.7+6; using Oracle Corporation 21.0.7+8-LTS-245
+electron runtime toolchain: development-fallback 21.0.7+8-LTS-245
+electron runtime: <WORKSPACE>/dist/electron-runtime
+Packaging app for platform win32 x64 using electron v43.3.0
+Wrote new app to: dist\electron-package\QX影视-win32-x64
+EXIT CODE: 0
+
+===== COMMAND: npm run electron:e2e:package =====
+
+> qx-yingshi@0.1.0 electron:e2e:package
+> npm run electron:package:win && tsx src/electron/e2e-launch.ts
+
+
+> qx-yingshi@0.1.0 electron:package:win
+> npm run electron:build && electron-packager . QX影视 --platform=win32 --arch=x64 --out=dist/electron-package --overwrite --prune=true --extra-resource=dist/electron-runtime
+
+
+> qx-yingshi@0.1.0 electron:build
+> npm run electron:build-runtime && tsc -p tsconfig.electron.json
+
+
+> qx-yingshi@0.1.0 electron:build-runtime
+> tsx src/electron/package-runtime.ts
+
+Spike18 development fallback: set QX_TEMURIN_JDK for the pinned Eclipse Temurin 21.0.7+6; using Oracle Corporation 21.0.7+8-LTS-245
+electron runtime toolchain: development-fallback 21.0.7+8-LTS-245
+electron runtime: <WORKSPACE>/dist/electron-runtime
+Packaging app for platform win32 x64 using electron v43.3.0
+Wrote new app to: dist\electron-package\QX影视-win32-x64
+{
+  "probe": "packaged-electron-e2e",
+  "status": "passed",
+  "first": {
+    "status": "passed",
+    "checks": {
+      "initialImportForm": true,
+      "urlImport": true,
+      "cancellation": true,
+      "fileImport": true,
+      "jsonImport": true,
+      "searchDetail": true,
+      "sidecarStopped": true,
+      "repeatedStart": true,
+      "trustedReimport": true
+    },
+    "searchVodId": "msearch:36246195",
+    "detailVodId": "msearch:36246195",
+    "sidecarPid": 77732
+  },
+  "restarted": {
+    "status": "passed",
+    "checks": {
+      "initialImportForm": true,
+      "urlImport": true,
+      "cancellation": true,
+      "fileImport": true,
+      "jsonImport": true,
+      "searchDetail": true,
+      "sidecarStopped": true,
+      "repeatedStart": true,
+      "trustedReimport": true
+    },
+    "searchVodId": "msearch:36246195",
+    "detailVodId": "msearch:36246195",
+    "sidecarPid": 40164
+  }
+}
+EXIT CODE: 0

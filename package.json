@@ -1,0 +1,51 @@
+{
+  "name": "qx-yingshi",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/electron/src/electron/main.js",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "electron:build-runtime": "tsx src/electron/package-runtime.ts",
+    "electron:build": "npm run electron:build-runtime && tsc -p tsconfig.electron.json",
+    "electron:dev": "npm run electron:build && electron .",
+    "electron:smoke": "npm run electron:build && tsx src/electron/smoke-launch.ts",
+    "electron:package:win": "npm run electron:build && electron-packager . QX影视 --platform=win32 --arch=x64 --out=dist/electron-package --overwrite --prune=true --extra-resource=dist/electron-runtime",
+    "electron:e2e:package": "npm run electron:package:win && tsx src/electron/e2e-launch.ts",
+    "electron:verify:no-jdk": "tsx src/electron/jdk-missing-launch.ts",
+    "electron:verify:network-timeout": "tsx src/electron/network-timeout-launch.ts",
+    "electron:acceptance": "npm run electron:e2e:package && npm run electron:verify:no-jdk && npm run electron:verify:network-timeout",
+    "spike:config": "tsx src/spikes/config-probe.ts",
+    "spike:js": "tsx src/spikes/js-probe.ts",
+    "spike:python": "tsx src/spikes/python-probe.ts",
+    "spike:java": "tsx src/spikes/java-probe.ts",
+    "spike:jvm": "tsx src/spikes/jvm-probe.ts",
+    "spike:player": "tsx src/spikes/playable-player-probe.ts",
+    "spike:douban": "tsx src/spikes/douban-probe.ts",
+    "spike:douban-detail": "tsx src/spikes/douban-detail-probe.ts",
+    "spike:douban-detail-sidecar": "tsx src/spikes/douban-detail-sidecar-probe.ts",
+    "spike:douban-search": "tsx src/spikes/douban-search-sidecar-probe.ts",
+    "spike:douban-search-detail": "tsx src/spikes/douban-search-detail-sidecar-probe.ts",
+    "spike:douban-desktop-client": "tsx src/spikes/douban-desktop-client-probe.ts",
+    "spike:douban-desktop-session": "tsx src/spikes/douban-desktop-session-probe.ts",
+    "spike:douban-desktop-ui": "tsx src/spikes/douban-desktop-ui-probe.ts",
+    "spike:douban-desktop-import": "tsx src/spikes/douban-desktop-import-probe.ts",
+    "spike:douban-player": "tsx src/spikes/douban-player-probe.ts",
+    "spike": "tsx src/spikes/run-all.ts"
+  },
+  "dependencies": {
+    "quickjs-emscripten": "^0.32.0"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.1.1",
+    "@types/node": "^22.15.0",
+    "electron": "^43.3.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

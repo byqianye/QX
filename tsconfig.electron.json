@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist/electron",
+    "rootDir": ".",
+    "declaration": false,
+    "sourceMap": false,
+    "noEmit": false
+  },
+  "include": [
+    "src/electron/main.ts",
+    "src/electron/e2e-runner.ts",
+    "src/electron/runtime.ts",
+    "src/electron/shell-runtime.ts",
+    "src/config/**/*.ts",
+    "src/desktop/**/*.ts",
+    "src/spider/**/*.ts",
+    "src/spikes/config-probe.ts",
+    "src/spikes/java-probe.ts"
+  ]
+}

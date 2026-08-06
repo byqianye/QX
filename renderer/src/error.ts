@@ -27,6 +27,11 @@ const TITLES: Record<string, string> = {
   HLS_ERROR: "HLS 播放失败",
   HTML_VIDEO_ERROR: "媒体播放失败",
   HTML_VIDEO_PLAY_ERROR: "媒体播放失败",
+  MPV_UNAVAILABLE: "mpv backend unavailable",
+  MPV_TIMEOUT: "mpv playback timeout",
+  MPV_PROCESS_EXITED: "mpv process exited",
+  MPV_IPC_ERROR: "mpv IPC error",
+  MPV_PROXY_REQUIRED: "mpv requires the LocalProxy URL",
   STATE_PERSISTENCE_CORRUPT: "桌面状态已恢复",
   STATE_PERSISTENCE_WRITE_FAILED: "桌面状态未保存",
   RENDERER_REQUEST_ERROR: "界面请求失败",
@@ -83,7 +88,7 @@ export function sourceForCode(code: string): AppErrorSource {
   if (code.startsWith("CLEANUP_") || code.startsWith("RESOURCE_CLEANUP")) return "cleanup";
   if (code.startsWith("PLAYBACK_PROXY_")) return "proxy";
   if (code.startsWith("PARSE_")) return "player";
-  if (code.startsWith("PLAYBACK_") || code.startsWith("MEDIA_") || code.startsWith("VIDEO_") || code.startsWith("HLS_")) return "player";
+  if (code.startsWith("PLAYBACK_") || code.startsWith("MEDIA_") || code.startsWith("VIDEO_") || code.startsWith("HLS_") || code.startsWith("MPV_")) return "player";
   if (code.startsWith("SPIDER_") || code.startsWith("JVM_SPIDER_") || code.includes("RPC")) return "spider";
   return "renderer";
 }
@@ -114,6 +119,8 @@ function defaultRetryable(code: string): boolean {
     || code === "PLAYBACK_PROXY_REQUIRED"
     || code === "PLAYBACK_FORMAT_INVALID"
     || code === "PLAYBACK_NOT_LOADED"
+    || code === "MPV_UNAVAILABLE"
+    || code === "MPV_PROXY_REQUIRED"
     || code === "IMPORT_INVALID_CONFIG"
     || code === "IMPORT_READ_ERROR"
     || code === "IMPORT_INPUT_ERROR"
@@ -132,6 +139,9 @@ function defaultRetryable(code: string): boolean {
     || code.startsWith("MEDIA_")
     || code.startsWith("VIDEO_")
     || code.startsWith("HLS_")
+    || code.startsWith("MPV_TIMEOUT")
+    || code.startsWith("MPV_PROCESS_EXITED")
+    || code.startsWith("MPV_IPC_ERROR")
     || code.startsWith("JELLYFIN_REQUEST")
     || code.startsWith("JELLYFIN_CONNECTION");
 }

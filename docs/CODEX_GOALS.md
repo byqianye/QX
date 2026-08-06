@@ -493,9 +493,45 @@ npm run electron:e2e:package
 checkpoint: complete G44 isolated sniffer
 ```
 
-## G45—G49（未开始）
+## G45（已完成）
+### 目标
+建立开发环境播放后端合同，实现 HTML video、hls.js 和 mpv fallback，并保证 mpv 不成为默认播放后端。
+### 状态
+已完成。`PlayerBackend` 统一 `load`、播放控制、时间/音量/静音、状态、错误和销毁；选择顺序固定为 HTMLVideo → hls.js → mpv。mpv 路径只来自用户设置、`QX_MPV_PATH` 或受控开发机探测，缺失返回 `MPV_UNAVAILABLE`，不会自动下载。
+### 依赖
+- G43 Playback Rules 与 LocalProxy
+- G44 隔离网页嗅探
+### 范围
+- `src/desktop/player-backend.ts`：三个 backend、fallback chain、mpv JSON IPC、路径解析和进程树清理
+- `src/electron/mpv-smoke.ts`、`package.json`：显式外部 mpv smoke gate
+- `renderer/src/error.ts`：mpv 稳定错误码映射
+- fake-mpv 合同测试与诊断测试
+### 验证结果
+- `tests/player-backend.test.ts`、`tests/diagnostics.test.ts`：通过；fake-mpv 覆盖参数、IPC、状态、崩溃、超时、无响应、正常退出和强制结束
+- `npm test`：35 files / 207 tests passed
+- `npm run typecheck`：通过
+- `npm run electron:build`：通过
+- `npm run electron:e2e:package`：首次启动与重启轮次均通过，既有 `isolatedSniffer`、`parseChain`、`playbackRules`、`sidecarStopped` 等检查保持通过
+- `npm run mpv:smoke`：无 `QX_MPV_PATH` 时输出 `real_mpv_external_environment_blocked`
+### 验证命令
+```powershell
+npx vitest run tests/player-backend.test.ts tests/diagnostics.test.ts
+npm run typecheck
+npm test
+npm run electron:build
+npm run electron:e2e:package
+npm run mpv:smoke
+```
+### 文档
+- `docs/spike-45-mpv-backend.md`
+### checkpoint
+```text
+checkpoint: complete G45 mpv backend
+```
 
-按串行 Gate 继续：隔离网页嗅探、mpv backend 合同、播放调试面板、字幕轨道、流健康与自动线路回退、综合播放增强验收。
+## G46—G49（未开始）
+
+按串行 Gate 继续：播放调试面板、字幕轨道、流健康与自动线路回退、综合播放增强验收。
 
 DEX-1 ~ DEX-5（实验支线）
 

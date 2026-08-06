@@ -301,6 +301,44 @@ describe("player backend contract", () => {
     expect(fixture.ipc.closeCalls).toBe(1);
   });
 
+  it("loads only proxy subtitle tracks through mpv IPC", async () => {
+    const fixture = createMpv();
+    await fixture.backend.load({
+      ...mp4,
+      url: "http://127.0.0.1:43123/__qx_playback/session/media.mp4",
+      subtitles: [{
+        id: "zh",
+        label: "中文",
+        language: "zh-CN",
+        format: "vtt",
+        url: "http://127.0.0.1:43123/__qx_playback/session/zh.vtt",
+        default: true,
+        forced: false,
+      }],
+    });
+    expect(fixture.ipc.requestCalls).toContainEqual([
+      "sub-add",
+      "http://127.0.0.1:43123/__qx_playback/session/zh.vtt",
+      "select",
+    ]);
+    await fixture.backend.destroy();
+
+    const unsupported = createMpv();
+    await expect(unsupported.backend.load({
+      ...mp4,
+      subtitles: [{
+        id: "ass",
+        label: "ASS",
+        language: "und",
+        format: "ass",
+        url: "http://127.0.0.1:43123/__qx_playback/session/ass.ass",
+        default: false,
+        forced: false,
+      }],
+    })).rejects.toMatchObject({ code: "MPV_SUBTITLE_FORMAT_UNSUPPORTED" });
+    expect(unsupported.spawnCalls).toBe(0);
+  });
+
   it("rejects missing mpv without attempting a download or spawn", async () => {
     const backend = new MpvBackend({
       mpvPath: "C:\\missing\\mpv.exe",

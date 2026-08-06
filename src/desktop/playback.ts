@@ -1,4 +1,5 @@
 import type { ParseUiState } from "./parse-chain.js";
+import type { SubtitleTrack } from "../subtitles.js";
 
 export type PlaybackStatus =
   | "idle"
@@ -14,6 +15,7 @@ export interface PlaybackSource {
   parse: number;
   url: string;
   headers: Record<string, string>;
+  subtitles?: readonly SubtitleTrack[];
 }
 
 export interface PlaybackValidationOptions {
@@ -236,5 +238,16 @@ function cloneState(state: PlaybackState): PlaybackState {
 }
 
 function cloneSource(source: PlaybackSource): PlaybackSource {
-  return { ...source, headers: { ...source.headers } };
+  return {
+    ...source,
+    headers: { ...source.headers },
+    ...(source.subtitles ? { subtitles: source.subtitles.map(cloneSubtitleTrack) } : {}),
+  };
+}
+
+function cloneSubtitleTrack(track: SubtitleTrack): SubtitleTrack {
+  return {
+    ...track,
+    ...(track.headers ? { headers: { ...track.headers } } : {}),
+  };
 }

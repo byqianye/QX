@@ -27,6 +27,9 @@ export interface MediaFixtureServer {
   readonly playerUrl: string;
   readonly sniffUrl: string;
   readonly parserUrl: string;
+  readonly subtitleVttUrl: string;
+  readonly subtitleSrtUrl: string;
+  readonly subtitleAssUrl: string;
   start(): Promise<void>;
   close(): Promise<void>;
 }
@@ -57,6 +60,15 @@ export function createMediaFixtureServer(host = "127.0.0.1"): MediaFixtureServer
     },
     get parserUrl() {
       return `${resource.baseUrl}/parser/resolve`;
+    },
+    get subtitleVttUrl() {
+      return `${resource.baseUrl}/subtitles/fixture.vtt`;
+    },
+    get subtitleSrtUrl() {
+      return `${resource.baseUrl}/subtitles/fixture.srt`;
+    },
+    get subtitleAssUrl() {
+      return `${resource.baseUrl}/subtitles/fixture.ass`;
     },
     async start() {
       if (server) return;
@@ -138,6 +150,30 @@ async function handleRequest(
         Referer: PROTECTED_REFERER,
         "User-Agent": PROTECTED_USER_AGENT,
       } : {},
+      subtitles: id === "direct-hls" || id === "headered"
+        ? [
+            {
+              id: "fixture-zh",
+              label: "简体中文",
+              language: "zh-CN",
+              format: "vtt",
+              url: fixture.subtitleVttUrl,
+              default: true,
+              forced: false,
+              source: "fixture",
+            },
+            {
+              id: "fixture-forced",
+              label: "强制字幕",
+              language: "zh-CN",
+              format: "srt",
+              url: fixture.subtitleSrtUrl,
+              default: false,
+              forced: true,
+              source: "fixture",
+            },
+          ]
+        : [],
     }), "utf8");
     response.writeHead(200, {
       "content-type": "application/json; charset=utf-8",
@@ -238,6 +274,46 @@ async function handleRequest(
     return;
   }
 
+  if (url.pathname === "/subtitles/fixture.vtt") {
+    serveText(request, response, [
+      "WEBVTT",
+      "",
+      "00:00:00.000 --> 00:00:01.000",
+      "Fixture 字幕",
+      "",
+      "00:00:01.000 --> 00:00:02.000",
+      "<script>safe text</script>",
+      "",
+    ].join("\n"), "text/vtt; charset=utf-8");
+    return;
+  }
+
+  if (url.pathname === "/subtitles/fixture.srt") {
+    serveText(request, response, [
+      "1",
+      "00:00:00,000 --> 00:00:01,000",
+      "Fixture SRT",
+      "",
+      "2",
+      "00:00:01,000 --> 00:00:02,000",
+      "强制字幕",
+      "",
+    ].join("\n"), "text/plain; charset=utf-8");
+    return;
+  }
+
+  if (url.pathname === "/subtitles/fixture.ass") {
+    serveText(request, response, [
+      "[Script Info]",
+      "ScriptType: v4.00+",
+      "[Events]",
+      "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+      "Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,Fixture ASS",
+      "",
+    ].join("\n"), "text/plain; charset=utf-8");
+    return;
+  }
+
   if (url.pathname === "/media/fixture.mp4") {
     serveBytes(request, response, MEDIA_FIXTURE_BYTES, "video/mp4");
     return;
@@ -325,6 +401,22 @@ function serveBytes(
     "accept-ranges": "bytes",
     "access-control-allow-origin": "*",
     ...(range ? { "content-range": `bytes ${start}-${end}/${bytes.length}` } : {}),
+  });
+  if (request.method === "HEAD") response.end();
+  else response.end(body);
+}
+
+function serveText(
+  request: IncomingMessage,
+  response: ServerResponse,
+  text: string,
+  contentType: string,
+): void {
+  const body = Buffer.from(text, "utf8");
+  response.writeHead(200, {
+    "content-type": contentType,
+    "content-length": body.length,
+    "access-control-allow-origin": "*",
   });
   if (request.method === "HEAD") response.end();
   else response.end(body);

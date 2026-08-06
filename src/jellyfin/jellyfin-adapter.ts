@@ -1,4 +1,5 @@
 import type { PlaybackSource } from "../desktop/playback.js";
+import { normalizeSubtitleTracks, subtitleFormatFromName } from "../subtitles.js";
 
 export interface JellyfinConfig {
   baseUrl: string;
@@ -230,6 +231,13 @@ export class JellyfinAdapter {
     const directUrl = typeof directSource.DirectPlayUrl === "string"
       ? directSource.DirectPlayUrl
       : `/Videos/${segment(itemId)}/stream?static=true&mediaSourceId=${encodeURIComponent(mediaSourceId)}`;
+    const subtitles = jellyfinSubtitleTracks(
+      directSource.MediaStreams,
+      itemId,
+      mediaSourceId,
+      (value) => this.normalizePlaybackUrl(value),
+      this.token,
+    );
     return {
       parse: 0,
       url: this.normalizePlaybackUrl(directUrl),
@@ -237,6 +245,7 @@ export class JellyfinAdapter {
       directPlay: true,
       itemId,
       mediaSourceId,
+      ...(subtitles.length > 0 ? { subtitles } : {}),
     };
   }
 
@@ -324,6 +333,53 @@ export class JellyfinAdapter {
     url.searchParams.delete("ApiKey");
     return url.toString();
   }
+}
+
+function jellyfinSubtitleTracks(
+  value: unknown,
+  itemId: string,
+  mediaSourceId: string,
+  normalizeUrl: (value: string) => string,
+  token: string,
+): ReturnType<typeof normalizeSubtitleTracks> {
+  if (!Array.isArray(value)) return [];
+  const tracks = value.flatMap((candidate, index) => {
+    if (!isRecord(candidate) || String(candidate.Type ?? "").toLowerCase() !== "subtitle") return [];
+    const codec = typeof candidate.Codec === "string" ? candidate.Codec.toLowerCase() : "";
+    const path = typeof candidate.Path === "string" ? candidate.Path : "";
+    const format = codec === "webvtt" || codec === "vtt"
+      ? "vtt"
+      : codec === "subrip" || codec === "srt"
+        ? "srt"
+        : codec === "ass"
+          ? "ass"
+          : codec === "ssa"
+            ? "ssa"
+            : subtitleFormatFromName(path) ?? "";
+    const streamIndex = typeof candidate.Index === "number" && Number.isInteger(candidate.Index)
+      ? candidate.Index
+      : index;
+    const deliveryUrl = typeof candidate.DeliveryUrl === "string" && candidate.DeliveryUrl.length > 0
+      ? candidate.DeliveryUrl
+      : `/Videos/${encodeURIComponent(itemId)}/${encodeURIComponent(mediaSourceId)}/Subtitles/${streamIndex}/Stream`;
+    const label = typeof candidate.DisplayTitle === "string" && candidate.DisplayTitle.length > 0
+      ? candidate.DisplayTitle
+      : typeof candidate.Language === "string" && candidate.Language.length > 0
+        ? candidate.Language
+        : `字幕 ${index + 1}`;
+    return [{
+      id: `jellyfin-subtitle-${streamIndex}`,
+      label,
+      language: typeof candidate.Language === "string" && candidate.Language.length > 0 ? candidate.Language : "und",
+      format,
+      url: normalizeUrl(deliveryUrl),
+      headers: { "X-Emby-Token": token },
+      default: candidate.IsDefault === true,
+      forced: candidate.IsForced === true,
+      source: "jellyfin" as const,
+    }];
+  });
+  return normalizeSubtitleTracks(tracks);
 }
 
 function normalizeBaseUrl(value: string): string {

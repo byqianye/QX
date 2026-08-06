@@ -95,6 +95,10 @@ export class JellyfinMediaSource implements MediaSource {
       parse: playback.parse,
       url: playback.url,
       headers: { ...playback.headers },
+      ...(playback.subtitles ? { subtitles: playback.subtitles.map((track) => ({
+        ...track,
+        ...(track.headers ? { headers: { ...track.headers } } : {}),
+      })) } : {}),
     };
   }
 

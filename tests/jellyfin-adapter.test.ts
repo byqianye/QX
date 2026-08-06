@@ -126,6 +126,17 @@ describe("JellyfinAdapter", () => {
       directPlay: true,
       itemId: "episode-1",
       mediaSourceId: "source-1",
+      subtitles: [{
+        id: "jellyfin-subtitle-2",
+        label: "简体中文",
+        language: "zh-CN",
+        format: "srt",
+        url: `${origin}/Videos/episode-1/source-1/Subtitles/2/Stream`,
+        headers: { "X-Emby-Token": FIXTURE_TOKEN },
+        default: true,
+        forced: false,
+        source: "jellyfin",
+      }],
     });
   });
 
@@ -138,11 +149,22 @@ describe("JellyfinAdapter", () => {
       expect(state.player).toMatchObject({ status: "loading" });
       expect(state.player.source?.headers).toEqual({});
       expect(state.player.source?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/__qx_playback\//);
+      expect(state.player.source?.subtitles).toMatchObject([{
+        id: "jellyfin-subtitle-2",
+        url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/__qx_playback\//),
+        source: "local-proxy",
+      }]);
       proxyUrl = state.player.source?.url ?? "";
 
       const media = await fetch(state.player.source?.url as string);
       expect(media.status).toBe(200);
       expect(await media.text()).toBe("fixture-jellyfin-media");
+      expect(requests.at(-1)?.headers["x-emby-token"]).toBe(FIXTURE_TOKEN);
+      const subtitleUrl = state.player.source?.subtitles?.[0]?.url;
+      expect(subtitleUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/__qx_playback\//);
+      const subtitle = await fetch(subtitleUrl as string);
+      expect(subtitle.status).toBe(200);
+      expect(await subtitle.text()).toContain("Fixture 字幕");
       expect(requests.at(-1)?.headers["x-emby-token"]).toBe(FIXTURE_TOKEN);
     } finally {
       await session.close();
@@ -265,6 +287,15 @@ async function handleFixtureRequest(
       Id: "source-1",
       SupportsDirectPlay: true,
       DirectPlayUrl: "/Videos/episode-1/stream?static=true&api_key=fixture-token",
+      MediaStreams: [{
+        Index: 2,
+        Type: "Subtitle",
+        Codec: "subrip",
+        Language: "zh-CN",
+        DisplayTitle: "简体中文",
+        IsDefault: true,
+        IsForced: false,
+      }],
     }] });
   }
   if (url.pathname === "/Items/episode-transcode/PlaybackInfo") {
@@ -278,6 +309,11 @@ async function handleFixtureRequest(
     return authorized(request)
       ? text(response, 200, "fixture-jellyfin-media")
       : failure(response, 403, "protected media");
+  }
+  if (url.pathname === "/Videos/episode-1/source-1/Subtitles/2/Stream") {
+    return authorized(request)
+      ? text(response, 200, "1\n00:00:00,000 --> 00:00:01,000\nFixture 字幕\n")
+      : failure(response, 403, "protected subtitle");
   }
   return failure(response, 404, "not found");
 }

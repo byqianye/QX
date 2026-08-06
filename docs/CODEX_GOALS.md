@@ -563,9 +563,35 @@ npm run electron:e2e:package
 checkpoint: complete G46 playback debug panel
 ```
 
-## G47—G49（未开始）
+## G47（已完成）
+### 目标
+接入安全字幕轨道，支持 WebVTT、SRT、基础 ASS/SSA 转换、多编码、远程 LocalProxy 和本地用户选择文件。
+### 状态
+已完成。`SubtitleTrack` 从 playerContent 进入统一播放 source；远程轨道逐条建立 LocalProxy session，renderer 只接收受控 URL；cue 文本转义后转换为原生 `<track>` 使用的 WebVTT。支持 Source、Jellyfin、local、local-proxy 和 fixture 标记，不接受来源提供的本机路径。
+### 依赖
+- G46 播放调试面板
+- G43 LocalProxy
+### 范围
+- `src/subtitles.ts`：轨道合同、VTT/SRT/ASS/SSA、编码检测、时间轴校验、对象 URL 清理
+- `src/desktop/spider-session.ts`、`src/desktop/playback.ts`、`src/desktop/spider-ui.ts`：playerContent 轨道接入和每轨道 Proxy 生命周期
+- `renderer/src/SubtitleTrackPanel.vue`、`renderer/src/EmbeddedPlayer.vue`、`renderer/src/state.ts`：轨道选择、编码、字号、位置、背景、forced、本地文件
+- `src/electron/media-fixture.ts`、`src/electron/e2e-runner.ts`：本地字幕 fixture 和 packaged E2E
+### 验证结果
+- `npm test`：39 个测试文件、221 个测试通过
+- `npm run typecheck`：通过
+- `npm run renderer:build`：通过
+- `npm run electron:build`：通过（使用既有 development-fallback JDK）
+- `npm run electron:e2e:package`：首次/重启均通过，`subtitleTracks=true`，项目进程清理通过
+### 文档
+- `docs/spike-47-subtitle-tracks.md`
+### checkpoint
+```text
+checkpoint: complete G47 subtitle tracks
+```
 
-按串行 Gate 继续：播放调试面板、字幕轨道、流健康与自动线路回退、综合播放增强验收。
+## G48—G49（未开始）
+
+按串行 Gate 继续：流健康与自动线路回退、综合播放增强验收。
 
 DEX-1 ~ DEX-5（实验支线）
 

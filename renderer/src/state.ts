@@ -1,4 +1,5 @@
 import { toAppError } from "./error.js";
+import type { SubtitleTrack } from "../../src/subtitles.js";
 
 export type ImportStatus =
   | "empty"
@@ -144,6 +145,7 @@ export type SpiderPlayback =
       parse: number;
       url: string;
       headers: Record<string, string>;
+      subtitles?: readonly SubtitleTrack[];
     };
 
 export interface SpiderState {
@@ -187,6 +189,7 @@ export interface PlayerSource {
   parse: number;
   url: string;
   headers: Record<string, string>;
+  subtitles?: readonly SubtitleTrack[];
 }
 
 export interface PlayerParseState {
@@ -389,7 +392,11 @@ function cloneImportState(state: ImportState): ImportState {
 
 function cloneSpiderPlayback(playback: SpiderPlayback): SpiderPlayback {
   return playback.available
-    ? { ...playback, headers: {} }
+    ? {
+        ...playback,
+        headers: {},
+        ...(playback.subtitles ? { subtitles: playback.subtitles.map(cloneSubtitleTrack) } : {}),
+      }
     : { ...playback };
 }
 
@@ -407,7 +414,13 @@ function clonePlaybackCatalog(catalog: PlaybackCatalog | null): PlaybackCatalog 
 function clonePlayerState(player: PlayerState): PlayerState {
   return {
     ...player,
-    source: player.source ? { ...player.source, headers: { ...player.source.headers } } : null,
+    source: player.source
+      ? {
+          ...player.source,
+          headers: { ...player.source.headers },
+          ...(player.source.subtitles ? { subtitles: player.source.subtitles.map(cloneSubtitleTrack) } : {}),
+        }
+      : null,
     error: toAppError(player.error),
     ...(player.parse
       ? {
@@ -418,6 +431,13 @@ function clonePlayerState(player: PlayerState): PlayerState {
           },
         }
       : {}),
+  };
+}
+
+function cloneSubtitleTrack(track: SubtitleTrack): SubtitleTrack {
+  return {
+    ...track,
+    ...(track.headers ? { headers: { ...track.headers } } : {}),
   };
 }
 

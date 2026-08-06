@@ -1,9 +1,21 @@
 <script setup lang="ts">
 import Hls from "hls.js";
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import PlayerControls from "./PlayerControls.vue";
+import SubtitleTrackPanel from "./SubtitleTrackPanel.vue";
 import { PLAYBACK_RESTORE_MAX_DRIFT_SECONDS, type PlayerMediaSync, type PlayerState } from "./state.js";
+import {
+  SubtitleObjectUrlRegistry,
+  SubtitleParseError,
+  detectSubtitleFormat,
+  isLocalProxySubtitleUrl,
+  parseSubtitle,
+  subtitleFormatFromName,
+  subtitleToWebVtt,
+  type SubtitleEncoding,
+  type SubtitleTrack,
+} from "../../src/subtitles.js";
 
 const windowWithHls = window as Window & { Hls?: typeof Hls };
 windowWithHls.Hls ??= Hls;
@@ -26,10 +38,34 @@ let hls: Hls | null = null;
 const cleanups: Array<() => void> = [];
 let positionRestored = false;
 let resumeRequested = false;
+const subtitleTracks = ref<SubtitleTrack[]>([]);
+const localSubtitleBytes = new Map<string, Uint8Array>();
+const subtitleSources = ref<Array<{ id: string; url: string; language: string; label: string; forced: boolean }>>([]);
+const subtitleElements = ref<HTMLTrackElement[]>([]);
+const subtitleEnabled = ref(false);
+const selectedSubtitleId = ref<string | null>(null);
+const subtitleEncoding = ref<"auto" | SubtitleEncoding>("auto");
+const subtitleFontSize = ref(24);
+const subtitlePosition = ref<"bottom" | "top">("bottom");
+const subtitleBackground = ref<"none" | "box" | "shadow">("shadow");
+const subtitleLoading = ref(false);
+const subtitleError = ref<string | null>(null);
+const subtitleUrls = new SubtitleObjectUrlRegistry();
+let localSubtitleSequence = 0;
+let subtitleLoadGeneration = 0;
 
 watch(() => props.state.source?.url, () => {
   loadSource();
 });
+
+watch(
+  () => {
+    const tracks = props.state.source?.subtitles ?? [];
+    return `${props.state.source?.url ?? ""}|${tracks.map((track) => `${track.id}:${track.url ?? ""}:${track.format}:${track.default}:${track.forced}`).join(";")}`;
+  },
+  resetSubtitleCatalog,
+  { immediate: true },
+);
 
 watch(() => props.state.volume, (volume) => {
   if (video.value) video.value.volume = volume;
@@ -60,6 +96,8 @@ onBeforeUnmount(() => {
   emitSync(localStatus.value);
   cleanups.splice(0).forEach((cleanup) => cleanup());
   destroyHls();
+  clearSubtitleResources();
+  localSubtitleBytes.clear();
   if (video.value) {
     video.value.pause();
     video.value.removeAttribute("src");
@@ -72,6 +110,7 @@ function loadSource(): void {
   if (!element) return;
   cleanups.splice(0).forEach((cleanup) => cleanup());
   destroyHls();
+  clearSubtitleResources();
   positionRestored = false;
   resumeRequested = false;
   element.pause();
@@ -170,6 +209,7 @@ function toggleMute(): void {
 
 function stopPlayback(): void {
   destroyHls();
+  clearSubtitleResources();
   if (video.value) {
     video.value.pause();
     video.value.removeAttribute("src");
@@ -206,6 +246,154 @@ function formatTime(value: number): string {
 function destroyHls(): void {
   if (hls) hls.destroy();
   hls = null;
+}
+
+function resetSubtitleCatalog(): void {
+  clearSubtitleResources();
+  localSubtitleBytes.clear();
+  subtitleTracks.value = [...(props.state.source?.subtitles ?? [])];
+  const defaultTrack = subtitleTracks.value.find((track) => track.default)
+    ?? subtitleTracks.value.find((track) => track.forced);
+  selectedSubtitleId.value = defaultTrack?.id ?? null;
+  subtitleEnabled.value = defaultTrack !== undefined;
+  subtitleEncoding.value = "auto";
+  if (defaultTrack) void loadSelectedSubtitle();
+}
+
+function clearSubtitleResources(): void {
+  subtitleLoadGeneration += 1;
+  subtitleUrls.revokeAll();
+  subtitleSources.value = [];
+  subtitleLoading.value = false;
+  subtitleError.value = null;
+}
+
+function selectSubtitle(trackId: string | null): void {
+  selectedSubtitleId.value = trackId;
+  subtitleEnabled.value = trackId !== null;
+  void loadSelectedSubtitle();
+}
+
+function toggleSubtitle(enabled: boolean): void {
+  subtitleEnabled.value = enabled;
+  syncNativeTrackModes();
+  if (enabled && selectedSubtitleId.value) void loadSelectedSubtitle();
+}
+
+function changeSubtitleEncoding(encoding: "auto" | SubtitleEncoding): void {
+  subtitleEncoding.value = encoding;
+  if (selectedSubtitleId.value) void loadSelectedSubtitle();
+}
+
+function changeSubtitlePosition(position: "bottom" | "top"): void {
+  subtitlePosition.value = position;
+  if (selectedSubtitleId.value) void loadSelectedSubtitle();
+}
+
+function addLocalSubtitle(file: File): void {
+  void (async () => {
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const format = detectSubtitleFormat(bytes, file.name) ?? subtitleFormatFromName(file.name);
+      if (!format) throw new SubtitleParseError("SUBTITLE_FORMAT_UNKNOWN", "无法识别本地字幕格式。");
+      const id = `local-${++localSubtitleSequence}`;
+      localSubtitleBytes.set(id, bytes);
+      subtitleTracks.value = [
+        ...subtitleTracks.value,
+        {
+          id,
+          label: file.name,
+          language: "und",
+          format,
+          default: false,
+          forced: false,
+          source: "local",
+        },
+      ];
+      selectedSubtitleId.value = id;
+      subtitleEnabled.value = true;
+      subtitleEncoding.value = "auto";
+      await loadSelectedSubtitle();
+    } catch (error) {
+      subtitleError.value = subtitleErrorMessage(error, "本地字幕加载失败。");
+    }
+  })();
+}
+
+async function loadSelectedSubtitle(): Promise<void> {
+  const generation = ++subtitleLoadGeneration;
+  const id = selectedSubtitleId.value;
+  subtitleUrls.revokeAll();
+  subtitleSources.value = [];
+  if (!id) {
+    return;
+  }
+  const track = subtitleTracks.value.find((candidate) => candidate.id === id);
+  if (!track) return;
+  subtitleLoading.value = true;
+  subtitleError.value = null;
+  try {
+    let bytes = localSubtitleBytes.get(track.id);
+    if (!bytes) {
+      if (!track.url) throw new SubtitleParseError("SUBTITLE_FORMAT_UNKNOWN", "字幕没有可读取的地址。");
+      if (track.headers && Object.keys(track.headers).length > 0) {
+        throw new SubtitleParseError("SUBTITLE_PROXY_REQUIRED", "远程字幕必须由 LocalProxy 注入请求头。");
+      }
+      if (/^https?:/i.test(track.url) && !isLocalProxySubtitleUrl(track.url)) {
+        throw new SubtitleParseError("SUBTITLE_PROXY_REQUIRED", "远程字幕必须经过 LocalProxy。");
+      }
+      const response = await fetch(track.url);
+      if (!response.ok) throw new SubtitleParseError("SUBTITLE_LOAD_FAILED", "字幕请求失败。");
+      bytes = new Uint8Array(await response.arrayBuffer());
+    }
+    if (generation !== subtitleLoadGeneration) return;
+    const parsed = parseSubtitle(bytes, {
+      format: track.format,
+      ...(subtitleEncoding.value !== "auto" ? { encoding: subtitleEncoding.value } : {}),
+    });
+    const blob = new Blob([subtitleToWebVtt(parsed, { position: subtitlePosition.value })], { type: "text/vtt;charset=utf-8" });
+    const url = subtitleUrls.create(track.id, blob);
+    if (generation !== subtitleLoadGeneration) {
+      subtitleUrls.revoke(track.id);
+      return;
+    }
+    subtitleSources.value = [{
+      id: track.id,
+      url,
+      language: track.language,
+      label: track.label,
+      forced: track.forced,
+    }];
+    subtitleError.value = null;
+    await nextTick();
+    syncNativeTrackModes();
+  } catch (error) {
+    if (generation !== subtitleLoadGeneration) return;
+    subtitleUrls.revoke(id);
+    subtitleSources.value = [];
+    subtitleError.value = subtitleErrorMessage(error, "字幕加载失败。");
+  } finally {
+    if (generation === subtitleLoadGeneration) subtitleLoading.value = false;
+  }
+}
+
+function syncNativeTrackModes(): void {
+  void nextTick(() => {
+    for (const element of subtitleElements.value) {
+      try {
+        element.track.mode = subtitleEnabled.value && element.dataset.subtitleId === selectedSubtitleId.value
+          ? "showing"
+          : "disabled";
+      } catch {
+        // The browser can expose a track element before its TextTrack is ready.
+      }
+    }
+  });
+}
+
+function subtitleErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof SubtitleParseError) return `${error.code}：${error.message}`;
+  return error instanceof Error ? error.message : fallback;
 }
 
 function listen<K extends keyof HTMLMediaElementEventMap>(
@@ -263,10 +451,44 @@ function parserStatusLabel(
     data-od-id="embedded-player"
     class="panel embedded-player-panel"
     :data-player-status="localStatus"
+    :data-subtitle-position="subtitlePosition"
+    :data-subtitle-background="subtitleBackground"
+    :data-subtitle-font-size="subtitleFontSize"
+    :style="{ '--subtitle-font-size': subtitleFontSize }"
   >
     <strong>内嵌播放器</strong>
     <template v-if="props.state.source">
-      <video ref="video" data-testid="embedded-player" playsinline controls preload="metadata" />
+      <video ref="video" data-testid="embedded-player" playsinline controls preload="metadata">
+        <track
+          v-for="subtitle in subtitleSources"
+          :key="subtitle.id"
+          ref="subtitleElements"
+          kind="subtitles"
+          :src="subtitle.url"
+          :srclang="subtitle.language"
+          :label="subtitle.label"
+          :data-subtitle-id="subtitle.id"
+          :default="subtitle.forced || subtitle.id === selectedSubtitleId"
+        >
+      </video>
+      <SubtitleTrackPanel
+        :tracks="subtitleTracks"
+        :enabled="subtitleEnabled"
+        :selected-track-id="selectedSubtitleId"
+        :encoding="subtitleEncoding"
+        :font-size="subtitleFontSize"
+        :position="subtitlePosition"
+        :background="subtitleBackground"
+        :loading="subtitleLoading"
+        :error="subtitleError"
+        @toggle="toggleSubtitle"
+        @select="selectSubtitle"
+        @encoding="changeSubtitleEncoding"
+        @font-size="subtitleFontSize = $event"
+        @position="changeSubtitlePosition"
+        @background="subtitleBackground = $event"
+        @local-file="addLocalSubtitle"
+      />
       <PlayerControls
         :current-time="currentTime"
         :duration="duration"

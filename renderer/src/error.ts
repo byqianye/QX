@@ -32,6 +32,7 @@ const TITLES: Record<string, string> = {
   MPV_PROCESS_EXITED: "mpv process exited",
   MPV_IPC_ERROR: "mpv IPC error",
   MPV_PROXY_REQUIRED: "mpv requires the LocalProxy URL",
+  MPV_SUBTITLE_FORMAT_UNSUPPORTED: "mpv 只接受已转换的字幕格式",
   STATE_PERSISTENCE_CORRUPT: "桌面状态已恢复",
   STATE_PERSISTENCE_WRITE_FAILED: "桌面状态未保存",
   RENDERER_REQUEST_ERROR: "界面请求失败",
@@ -121,6 +122,7 @@ function defaultRetryable(code: string): boolean {
     || code === "PLAYBACK_NOT_LOADED"
     || code === "MPV_UNAVAILABLE"
     || code === "MPV_PROXY_REQUIRED"
+    || code === "MPV_SUBTITLE_FORMAT_UNSUPPORTED"
     || code === "IMPORT_INVALID_CONFIG"
     || code === "IMPORT_READ_ERROR"
     || code === "IMPORT_INPUT_ERROR"

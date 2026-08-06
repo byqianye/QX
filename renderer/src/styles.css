@@ -270,6 +270,15 @@ p { margin-bottom: 12px; }
 .player-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
 .player-controls label { display: inline-flex; min-height: 44px; align-items: center; gap: 8px; color: var(--muted); }
 .player-controls input[type="range"] { min-height: 44px; }
+.subtitle-track-panel { display: grid; gap: 10px; margin-top: 12px; padding: 12px; background: var(--surface-subtle); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); }
+.subtitle-track-heading, .subtitle-track-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.subtitle-track-controls label { display: inline-flex; min-height: 40px; align-items: center; gap: 6px; color: var(--muted); }
+.subtitle-track-controls select, .subtitle-track-controls input[type="file"] { max-width: 220px; min-height: 36px; }
+.subtitle-track-controls input[type="range"] { min-width: 100px; }
+.subtitle-forced-hint { padding: 2px 8px; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; font-size: 11px; }
+.embedded-player-panel[data-subtitle-background="box"] video::cue { background: rgba(0, 0, 0, 0.72); }
+.embedded-player-panel[data-subtitle-background="shadow"] video::cue { text-shadow: 0 1px 2px #000, 0 -1px 2px #000, 1px 0 2px #000, -1px 0 2px #000; }
+.embedded-player-panel video::cue { font-size: calc(var(--subtitle-font-size, 24) * 1px); }
 .player-error { color: var(--danger); }
 
 .state-card { padding: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }

@@ -8,6 +8,7 @@ import {
   type PlaybackProxySession,
 } from "../desktop/playback-proxy.js";
 import type { JellyfinAdapter, JellyfinPlayback } from "./jellyfin-adapter.js";
+import type { SubtitleTrack } from "../subtitles.js";
 
 export interface JellyfinEmbeddedPlaybackState {
   playback: {
@@ -26,6 +27,7 @@ export class JellyfinPlaybackSession {
   private readonly playerController = new EmbeddedPlaybackController();
   private readonly proxy: PlaybackProxyServer;
   private proxySession: PlaybackProxySession | undefined;
+  private subtitleProxySessions: PlaybackProxySession[] = [];
   private playback: JellyfinPlayback | null = null;
   private source: PlaybackSource | null = null;
 
@@ -58,9 +60,7 @@ export class JellyfinPlaybackSession {
     await this.releaseCurrent();
     const playback = await this.adapter.getPlayback(itemId);
     try {
-      const source = Object.keys(playback.headers).length > 0
-        ? await this.createProxySource(playback)
-        : playback;
+      const source = await this.createProxySource(playback);
       this.playback = playback;
       this.source = source;
       this.playerController.load(source);
@@ -77,8 +77,30 @@ export class JellyfinPlaybackSession {
   }
 
   private async createProxySource(playback: JellyfinPlayback): Promise<PlaybackSource> {
-    this.proxySession = await this.proxy.createSession(playback);
-    return { parse: 0, url: this.proxySession.url, headers: {} };
+    const media = Object.keys(playback.headers).length > 0
+      ? await this.proxy.createSession(playback)
+      : null;
+    this.proxySession = media ?? undefined;
+    const subtitles: SubtitleTrack[] = [];
+    for (const track of playback.subtitles ?? []) {
+      if (!track.url) continue;
+      const proxy = await this.proxy.createSession({
+        parse: 0,
+        url: track.url,
+        headers: { ...(track.headers ?? {}) },
+        sourceId: "jellyfin",
+        playbackSessionId: playback.itemId,
+      });
+      this.subtitleProxySessions.push(proxy);
+      const { headers: _headers, ...safeTrack } = track;
+      subtitles.push({ ...safeTrack, url: proxy.url, source: "local-proxy" });
+    }
+    return {
+      parse: 0,
+      url: media?.url ?? playback.url,
+      headers: {},
+      ...(subtitles.length > 0 ? { subtitles } : {}),
+    };
   }
 
   private async releaseCurrent(): Promise<void> {
@@ -88,5 +110,7 @@ export class JellyfinPlaybackSession {
     const proxySession = this.proxySession;
     this.proxySession = undefined;
     if (proxySession) await proxySession.close();
+    const subtitleSessions = this.subtitleProxySessions.splice(0);
+    for (const session of subtitleSessions) await session.close();
   }
 }

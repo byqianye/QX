@@ -31,6 +31,7 @@ import {
 } from "../source/normalizers.js";
 import { validatePlaybackSource } from "./playback.js";
 import type { SourceHealthRegistry, HealthOperation } from "../health/source-health.js";
+import { normalizeSubtitleTracks, type SubtitleTrack } from "../subtitles.js";
 
 export type DesktopSpiderSessionStatus =
   | "confirmation_required"
@@ -54,6 +55,7 @@ export type DesktopSpiderPlaybackState =
       parse: number;
       url: string;
       headers: Record<string, string>;
+      subtitles?: SubtitleTrack[];
     };
 
 export interface DesktopSpiderView {
@@ -145,7 +147,7 @@ export class DesktopSpiderSession implements MediaSource {
     return {
       ...this.viewState,
       error: this.viewState.error ? { ...this.viewState.error } : null,
-      playback: { ...this.viewState.playback },
+      playback: clonePlayback(this.viewState.playback),
       capabilities: { ...this.capabilities },
     };
   }
@@ -510,6 +512,26 @@ function playbackFrom(value: unknown): Extract<DesktopSpiderPlaybackState, { ava
     parse,
     url,
     headers: playbackHeaders(value.header ?? value.headers),
+    ...(normalizeSubtitleTracks(value.subtitles ?? value.subtitleTracks ?? value.subtitle).length > 0
+      ? { subtitles: normalizeSubtitleTracks(value.subtitles ?? value.subtitleTracks ?? value.subtitle) }
+      : {}),
+  };
+}
+
+function clonePlayback(playback: DesktopSpiderPlaybackState): DesktopSpiderPlaybackState {
+  return playback.available
+    ? {
+        ...playback,
+        headers: { ...playback.headers },
+        ...(playback.subtitles ? { subtitles: playback.subtitles.map(cloneSubtitleTrack) } : {}),
+      }
+    : { ...playback };
+}
+
+function cloneSubtitleTrack(track: SubtitleTrack): SubtitleTrack {
+  return {
+    ...track,
+    ...(track.headers ? { headers: { ...track.headers } } : {}),
   };
 }
 

@@ -8,6 +8,7 @@ import {
   type VodDetail,
   type VodPage,
 } from "./media-source.js";
+import { normalizeSubtitleTracks } from "../subtitles.js";
 
 export function unwrapSpiderResponse(response: SpiderResponse, operation: string): unknown {
   if (response.ok) return response.result;
@@ -58,7 +59,13 @@ export function normalizePlayerResult(result: unknown): PlayerResult {
       "Player result must contain a numeric parse value and an HTTP URL",
     );
   }
-  return { parse, url, headers: headersValue(raw.header ?? raw.headers) };
+  const subtitles = normalizeSubtitleTracks(raw.subtitles ?? raw.subtitleTracks ?? raw.subtitle);
+  return {
+    parse,
+    url,
+    headers: headersValue(raw.header ?? raw.headers),
+    ...(subtitles.length > 0 ? { subtitles } : {}),
+  };
 }
 
 export function normalizeVod(value: unknown): VodDetail {

@@ -16,6 +16,7 @@ import type {
   DesktopSpiderView,
 } from "../src/desktop/spider-ui.js";
 import type { SpiderResponse } from "../src/spider/rpc.js";
+import type { SubtitleTrack } from "../src/subtitles.js";
 import { runPackagedE2e } from "../src/electron/e2e-runner.js";
 
 describe("packaged Electron E2E flow", () => {
@@ -132,6 +133,7 @@ describe("packaged Electron E2E flow", () => {
       closeWindow: async () => uiServer.close(),
       getSidecarPid: () => 4321,
       waitForSidecarExit: async () => true,
+      verifySubtitleTracks: true,
     });
 
     expect(result).toMatchObject({
@@ -148,6 +150,7 @@ describe("packaged Electron E2E flow", () => {
         detachablePlayer: true,
         singlePlaybackSession: true,
         noBackgroundPlayer: true,
+        subtitleTracks: true,
       },
     });
   });
@@ -238,7 +241,7 @@ class SessionFixture implements DesktopSpiderSessionPort {
       };
     }
     if (id === "headered") {
-      this.view.playback = {
+      const playback = {
         available: true,
         label: "Playable source",
         message: "Headered HLS URL resolved",
@@ -248,8 +251,10 @@ class SessionFixture implements DesktopSpiderSessionPort {
           Referer: "https://source.example.invalid/",
           "User-Agent": "G22-fixture",
         },
-      };
-      return ok({ parse: 0, url: this.view.playback.url, header: this.view.playback.headers });
+        subtitles: fixtureSubtitles(),
+      } as const;
+      this.view.playback = playback;
+      return ok({ parse: 0, url: playback.url, header: playback.headers, subtitles: fixtureSubtitles() });
     }
     if (id === "parse-one") {
       this.view.playback = {
@@ -272,8 +277,9 @@ class SessionFixture implements DesktopSpiderSessionPort {
       parse: 0,
       url,
       headers: {},
+      ...(id === "direct-hls" ? { subtitles: fixtureSubtitles() } : {}),
     };
-    return ok({ parse: 0, url, header: {} });
+    return ok({ parse: 0, url, header: {}, ...(id === "direct-hls" ? { subtitles: fixtureSubtitles() } : {}) });
   }
 
   public async destroy(): Promise<void> {
@@ -281,6 +287,31 @@ class SessionFixture implements DesktopSpiderSessionPort {
     this.view.status = "destroyed";
     this.view.sidecarRunning = false;
   }
+}
+
+function fixtureSubtitles(): SubtitleTrack[] {
+  return [
+    {
+      id: "fixture-zh",
+      label: "简体中文",
+      language: "zh-CN",
+      format: "vtt",
+      url: "http://127.0.0.1:43123/subtitles/fixture.vtt",
+      default: true,
+      forced: false,
+      source: "fixture",
+    },
+    {
+      id: "fixture-forced",
+      label: "强制字幕",
+      language: "zh-CN",
+      format: "srt",
+      url: "http://127.0.0.1:43123/subtitles/fixture.srt",
+      default: false,
+      forced: true,
+      source: "fixture",
+    },
+  ];
 }
 
 function ok(result: unknown): SpiderResponse {

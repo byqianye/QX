@@ -20,6 +20,7 @@ import {
   type PlaybackMediaSync,
   type PlaybackStatus,
   type PlaybackState,
+  type PlaybackSource,
 } from "./playback.js";
 import {
   PlaybackProxyServer,
@@ -47,6 +48,7 @@ import {
 } from "./parse-chain.js";
 import type { PlaybackRule } from "./playback-rules.js";
 import type { IsolatedSniffer } from "../electron/isolated-sniffer.js";
+import { isRemoteSubtitleTrack, type SubtitleTrack } from "../subtitles.js";
 
 const require = createRequire(import.meta.url);
 
@@ -55,6 +57,16 @@ export type {
   DesktopSpiderSessionStatus,
   DesktopSpiderView,
 } from "./spider-session.js";
+
+class SubtitlePreparationError extends Error {
+  public readonly code: string;
+
+  public constructor(code: string, message: string) {
+    super(message);
+    this.name = "SubtitlePreparationError";
+    this.code = code;
+  }
+}
 
 export interface DesktopSpiderSessionPort {
   readonly view: DesktopSpiderView;
@@ -163,6 +175,7 @@ export class DesktopSpiderUiController {
   private readonly parserAllowedOrigins: readonly string[];
   private parseState: ParseUiState = initialParseState();
   private proxySession: PlaybackProxySession | undefined;
+  private subtitleProxySessions: PlaybackProxySession[] = [];
 
   public constructor(options: DesktopSpiderUiOptions) {
     this.session = options.session;
@@ -418,11 +431,7 @@ export class DesktopSpiderUiController {
         if (playback.available) {
           const playbackSessionId = randomUUID();
           const source = await this.preparePlayback(playback, playbackSessionId, flag);
-          this.playerController.load({
-            parse: source.parse,
-            url: source.url,
-            headers: source.headers,
-          });
+          this.playerController.load(source);
           const sourceState = this.playerController.state.source;
           if (!sourceState) throw new Error("Playback source was not loaded");
           this.playbackSession = {
@@ -550,7 +559,7 @@ export class DesktopSpiderUiController {
     playback: Extract<DesktopSpiderPlaybackState, { available: true }>,
     playbackSessionId: string,
     flag: string,
-  ): Promise<{ parse: number; url: string; headers: Record<string, string> }> {
+  ): Promise<PlaybackSource> {
     await this.releasePlaybackProxy();
     let resolved = {
       parse: playback.parse,
@@ -645,9 +654,17 @@ export class DesktopSpiderUiController {
         error: null,
       };
     }
-    if (Object.keys(resolved.headers).length === 0) {
-      return { parse: 0, url: resolved.url, headers: {} };
-    }
+    const mediaSource: PlaybackSource = Object.keys(resolved.headers).length === 0
+      ? { parse: 0, url: resolved.url, headers: {} }
+      : await this.createMediaProxy(resolved, playbackSessionId);
+    const subtitles = await this.prepareSubtitleTracks(playback.subtitles ?? [], playbackSessionId);
+    return subtitles.length > 0 ? { ...mediaSource, subtitles } : mediaSource;
+  }
+
+  private async createMediaProxy(
+    resolved: { url: string; headers: Record<string, string> },
+    playbackSessionId: string,
+  ): Promise<PlaybackSource> {
     this.proxySession = await this.playbackProxy.createSession({
       parse: 0,
       url: resolved.url,
@@ -658,10 +675,48 @@ export class DesktopSpiderUiController {
     return { parse: 0, url: this.proxySession.url, headers: {} };
   }
 
+  private async prepareSubtitleTracks(
+    tracks: readonly SubtitleTrack[],
+    playbackSessionId: string,
+  ): Promise<SubtitleTrack[]> {
+    const prepared: SubtitleTrack[] = [];
+    for (const track of tracks) {
+      if (track.localPath) {
+        throw new SubtitlePreparationError(
+          "SUBTITLE_LOCAL_FILE_SELECTION_REQUIRED",
+          "本地字幕必须由用户在播放器中选择，不能接受来源返回的本机路径。",
+        );
+      }
+      if (track.url && !/^https?:/i.test(track.url)) {
+        throw new SubtitlePreparationError(
+          "SUBTITLE_PROTOCOL_UNSUPPORTED",
+          "远程字幕地址必须使用 HTTP(S)，本地字幕请由用户选择文件。",
+        );
+      }
+      if (!isRemoteSubtitleTrack(track)) {
+        prepared.push(cloneSubtitleTrack(track));
+        continue;
+      }
+      const proxy = await this.playbackProxy.createSession({
+        parse: 0,
+        url: track.url,
+        headers: { ...(track.headers ?? {}) },
+        sourceId: this.session.view.source,
+        playbackSessionId,
+      });
+      this.subtitleProxySessions.push(proxy);
+      const { headers: _headers, ...safeTrack } = track;
+      prepared.push({ ...safeTrack, url: proxy.url, source: "local-proxy" });
+    }
+    return prepared;
+  }
+
   private async releasePlaybackProxy(): Promise<void> {
     const session = this.proxySession;
     this.proxySession = undefined;
     if (session) await session.close();
+    const subtitles = this.subtitleProxySessions.splice(0);
+    for (const subtitle of subtitles) await subtitle.close();
     await this.playbackProxy.close();
   }
 
@@ -1202,8 +1257,26 @@ function errorCodeFromMessage(message: string): string | null {
 
 function publicPlaybackState(playback: DesktopSpiderPlaybackState): DesktopSpiderPlaybackState {
   return playback.available
-    ? { ...playback, headers: {} }
+    ? {
+        ...playback,
+        headers: {},
+        ...(playback.subtitles
+          ? { subtitles: playback.subtitles.map(publicSubtitleTrack) }
+          : {}),
+      }
     : { ...playback };
+}
+
+function publicSubtitleTrack(track: SubtitleTrack): SubtitleTrack {
+  const { headers: _headers, localPath: _localPath, ...safeTrack } = track;
+  return safeTrack;
+}
+
+function cloneSubtitleTrack(track: SubtitleTrack): SubtitleTrack {
+  return {
+    ...track,
+    ...(track.headers ? { headers: { ...track.headers } } : {}),
+  };
 }
 
 export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {

@@ -109,6 +109,7 @@ export interface PlayerResult {
   parse: number;
   url: string;
   headers: Record<string, string>;
+  subtitles?: readonly import("../subtitles.js").SubtitleTrack[];
 }
 
 export class MediaSourceError extends Error {

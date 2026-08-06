@@ -540,12 +540,26 @@ export class MpvBackend extends ControllerBackedBackend {
     if (Object.keys(source.headers).length > 0) {
       throw this.fail("MPV_PROXY_REQUIRED", "Headered playback must use the LocalProxy URL.");
     }
+    for (const track of source.subtitles ?? []) {
+      if (track.headers && Object.keys(track.headers).length > 0
+        || track.localPath
+        || !track.url
+        || !/^https?:\/\//i.test(track.url)) {
+        throw this.fail("MPV_PROXY_REQUIRED", "远程字幕必须先经过 LocalProxy。");
+      }
+      if (track.format === "ass" || track.format === "ssa") {
+        throw this.fail("MPV_SUBTITLE_FORMAT_UNSUPPORTED", "mpv 后端只接受已转换的 WebVTT/SRT 字幕。");
+      }
+    }
     const validation = validatePlaybackSource(source);
     if (validation) throw this.fail(validation.code, validation.message);
     if (!this.executablePath) throw this.fail("MPV_UNAVAILABLE", "mpv is not available on this development machine.");
     try {
       await this.ensureProcess();
       await this.command(["loadfile", source.url, "replace"]);
+      for (const track of source.subtitles ?? []) {
+        await this.command(["sub-add", track.url, track.default ? "select" : "auto"]);
+      }
       return this.controller.load(source);
     } catch (error) {
       if (error instanceof PlayerBackendError) throw error;

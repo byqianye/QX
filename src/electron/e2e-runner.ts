@@ -15,6 +15,7 @@ export interface PackagedE2eOptions {
   readWindowHtml?: () => Promise<string>;
   verifyPlaybackRules?: boolean;
   verifyPlaybackDebug?: boolean;
+  verifySubtitleTracks?: boolean;
   verifySniffer?: boolean;
   sniff?: () => Promise<SniffedMedia>;
   playback?: {
@@ -39,6 +40,7 @@ export interface PackagedE2eChecks {
   isolatedSniffer?: boolean;
   playbackRules?: boolean;
   playbackDebug?: boolean;
+  subtitleTracks?: boolean;
   proxyRequired?: boolean;
   noExternalBrowser?: boolean;
   errorSurface?: boolean;
@@ -249,6 +251,20 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       if (options.verifyPlaybackDebug) {
         checks.playbackDebug = await probePlaybackDebug(options);
       }
+      if (options.verifySubtitleTracks) {
+        const tracks = hls.state?.player?.source?.subtitles;
+        const subtitlePanel = !options.readWindowHtml
+          || (hlsHtml.includes('data-testid="subtitle-track-panel"')
+            && hlsHtml.includes('data-action="subtitle-encoding"')
+            && hlsHtml.includes('data-action="subtitle-local-file"'));
+        checks.subtitleTracks = Array.isArray(tracks)
+          && tracks.length >= 2
+          && tracks.every((track) => isRecord(track)
+            && typeof track.url === "string"
+            && track.url.includes("/__qx_playback/")
+            && (!track.headers || Object.keys(track.headers).length === 0))
+          && subtitlePanel;
+      }
     }
 
     const repeated = await load(options.baseUrl, options.configJson);
@@ -380,7 +396,12 @@ interface UiState {
   error?: { code?: string; message?: string } | null;
   player?: {
     status?: string;
-    source?: { parse?: number; url?: string; headers?: Record<string, unknown> } | null;
+    source?: {
+      parse?: number;
+      url?: string;
+      headers?: Record<string, unknown>;
+      subtitles?: readonly Record<string, unknown>[];
+    } | null;
     error?: { code?: string; message?: string } | null;
   } | null;
   playbackSelection?: { lineIndex?: number; episodeIndex?: number } | null;

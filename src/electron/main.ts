@@ -600,6 +600,7 @@ async function runE2e(baseUrl: string): Promise<void> {
       },
       verifyPlaybackRules: PLAYBACK_RULES.length > 0,
       verifyPlaybackDebug: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
+      verifySubtitleTracks: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifySniffer: ISOLATED_SNIFFER_ENABLED,
       ...(ISOLATED_SNIFFER_ENABLED
         ? {

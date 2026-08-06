@@ -8,6 +8,7 @@ import { ConfigHistoryStore, JsonFileConfigHistoryPersistence } from "../config/
 import { DesktopSpiderImportController } from "../desktop/spider-import.js";
 import { DesktopSpiderSession } from "../desktop/spider-session.js";
 import { DesktopSpiderUiServer } from "../desktop/spider-ui.js";
+import type { ParserCandidate } from "../desktop/parse-chain.js";
 import {
   JsonFileDesktopStateStore,
   restoreWindowBounds,
@@ -30,6 +31,8 @@ const E2E_MODE = process.env.QX_ELECTRON_E2E === "1";
 const REQUEST_TIMEOUT_MS = numberEnvironment("QX_ELECTRON_REQUEST_TIMEOUT_MS", 30_000);
 const STARTUP_TIMEOUT_MS = 5_000;
 const PLAYBACK_PROXY_ORIGINS = listEnvironment("QX_PLAYBACK_PROXY_ORIGINS");
+const PARSER_ALLOWED_ORIGINS = listEnvironment("QX_PARSE_ALLOWED_ORIGINS");
+const PARSER_CANDIDATES = parserCandidatesEnvironment("QX_PARSE_CANDIDATES_JSON");
 
 if (process.env.QX_E2E_USER_DATA) {
   mkdirSync(process.env.QX_E2E_USER_DATA, { recursive: true });
@@ -110,6 +113,8 @@ function createShell(): DesktopShellRuntime {
         onPlayerAttach: closePlayerWindow,
         onPlayerStop: closePlayerWindow,
         ...(PLAYBACK_PROXY_ORIGINS.length > 0 ? { playbackProxyOrigins: PLAYBACK_PROXY_ORIGINS } : {}),
+        ...(PARSER_CANDIDATES.length > 0 ? { parserCandidates: PARSER_CANDIDATES } : {}),
+        ...(PARSER_ALLOWED_ORIGINS.length > 0 ? { parserAllowedOrigins: PARSER_ALLOWED_ORIGINS } : {}),
       });
       uiServer = server;
       return server;
@@ -471,6 +476,67 @@ function listEnvironment(name: string): string[] {
     .split(",")
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
+}
+
+function parserCandidatesEnvironment(name: string): ParserCandidate[] {
+  const raw = process.env[name];
+  if (!raw) return [];
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!Array.isArray(value)) return [];
+    return value
+      .filter(isRecord)
+      .map((candidate): ParserCandidate | null => {
+        const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
+        const nameValue = typeof candidate.name === "string" ? candidate.name.trim() : "";
+        const type = candidate.type;
+        const priority = candidate.priority;
+        const timeout = candidate.timeout;
+        if (!id || !nameValue
+          || !isParserType(type)
+          || typeof candidate.enabled !== "boolean"
+          || typeof priority !== "number"
+          || !Number.isFinite(priority)
+          || typeof timeout !== "number"
+          || !Number.isFinite(timeout)
+          || timeout <= 0) {
+          return null;
+        }
+        const endpoint = typeof candidate.endpoint === "string" && candidate.endpoint.trim()
+          ? candidate.endpoint.trim()
+          : undefined;
+        const headers = isRecord(candidate.headers)
+          ? Object.fromEntries(
+            Object.entries(candidate.headers)
+              .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+              .slice(0, 16),
+          )
+          : undefined;
+        return {
+          id: id.slice(0, 120),
+          name: nameValue.slice(0, 120),
+          type,
+          ...(endpoint ? { endpoint: endpoint.slice(0, 2048) } : {}),
+          ...(headers && Object.keys(headers).length > 0 ? { headers } : {}),
+          enabled: candidate.enabled,
+          priority: Math.floor(priority),
+          timeout: Math.floor(timeout),
+        };
+      })
+      .filter((candidate): candidate is ParserCandidate => candidate !== null)
+      .slice(0, 16);
+  } catch {
+    return [];
+  }
+}
+
+function isParserType(value: unknown): value is ParserCandidate["type"] {
+  return value === "direct"
+    || value === "json"
+    || value === "redirect"
+    || value === "html-declared"
+    || value === "source-provided"
+    || value === "fixture";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

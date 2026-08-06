@@ -38,6 +38,13 @@ import {
 import type { SpiderResponse } from "../spider/rpc.js";
 import type { SourceCapabilities } from "../source/media-source.js";
 import type { AggregateSearchSnapshot } from "../search/aggregate-search.js";
+import {
+  ParseChainError,
+  ParseChainResolver,
+  type ParseRequest,
+  type ParserCandidate,
+  type ParseUiState,
+} from "./parse-chain.js";
 
 const require = createRequire(import.meta.url);
 
@@ -124,6 +131,9 @@ export interface DesktopSpiderUiOptions {
   session: DesktopSpiderSessionPort;
   createSession?: () => DesktopSpiderSessionPort;
   playbackProxyOrigins?: readonly string[];
+  parserCandidates?: readonly ParserCandidate[];
+  parserAllowedOrigins?: readonly string[];
+  parserFetch?: typeof fetch;
 }
 
 export class DesktopSpiderUiController {
@@ -143,11 +153,19 @@ export class DesktopSpiderUiController {
   private aggregateSearchValue: AggregateSearchSnapshot | null = null;
   private readonly playerController = new EmbeddedPlaybackController();
   private readonly playbackProxy: PlaybackProxyServer;
+  private readonly parserCandidates: readonly ParserCandidate[];
+  private readonly parseResolver: ParseChainResolver;
+  private parseState: ParseUiState = initialParseState();
   private proxySession: PlaybackProxySession | undefined;
 
   public constructor(options: DesktopSpiderUiOptions) {
     this.session = options.session;
     this.createSession = options.createSession;
+    this.parserCandidates = options.parserCandidates?.map(cloneParserCandidate) ?? [];
+    this.parseResolver = new ParseChainResolver({
+      ...(options.parserAllowedOrigins ? { allowedOrigins: options.parserAllowedOrigins } : {}),
+      ...(options.parserFetch ? { fetchImpl: options.parserFetch } : {}),
+    });
     this.playbackProxy = new PlaybackProxyServer(
       options.playbackProxyOrigins
         ? { allowedOrigins: options.playbackProxyOrigins }
@@ -169,7 +187,10 @@ export class DesktopSpiderUiController {
       error: this.localError ?? view.error,
       sidecarRunning: view.sidecarRunning,
       playback: publicPlaybackState(view.playback),
-      player: this.playerController.state,
+      player: {
+        ...this.playerController.state,
+        parse: cloneParseState(this.parseState),
+      },
       capabilities: { ...capabilities },
       canPlay: capabilities.playback && view.playback.available,
       items: this.items.map((item) => ({ ...item })),
@@ -372,6 +393,7 @@ export class DesktopSpiderUiController {
     metadata?: Pick<DesktopPlaybackSession, "lineIndex" | "episodeIndex" | "lineName" | "episodeName">,
   ): Promise<DesktopSpiderUiState> {
     this.playerController.stop();
+    this.parseState = initialParseState();
     this.playbackSession = null;
     this.playerHost = "embedded";
     return this.run(
@@ -384,7 +406,8 @@ export class DesktopSpiderUiController {
         this.page = "detail";
         const playback = this.session.view.playback;
         if (playback.available) {
-          const source = await this.preparePlayback(playback);
+          const playbackSessionId = randomUUID();
+          const source = await this.preparePlayback(playback, playbackSessionId, flag);
           this.playerController.load({
             parse: source.parse,
             url: source.url,
@@ -393,7 +416,7 @@ export class DesktopSpiderUiController {
           const sourceState = this.playerController.state.source;
           if (!sourceState) throw new Error("Playback source was not loaded");
           this.playbackSession = {
-            id: randomUUID(),
+            id: playbackSessionId,
             host: "embedded",
             lineIndex: metadata?.lineIndex ?? null,
             episodeIndex: metadata?.episodeIndex ?? null,
@@ -435,6 +458,7 @@ export class DesktopSpiderUiController {
 
   public async close(): Promise<DesktopSpiderUiState> {
     this.activeOperation = null;
+    this.parseResolver.close();
     try {
       await this.session.destroy();
       this.playerController.stop();
@@ -511,15 +535,72 @@ export class DesktopSpiderUiController {
 
   private async preparePlayback(
     playback: Extract<DesktopSpiderPlaybackState, { available: true }>,
+    playbackSessionId: string,
+    flag: string,
   ): Promise<{ parse: number; url: string; headers: Record<string, string> }> {
     await this.releasePlaybackProxy();
-    if (Object.keys(playback.headers).length === 0) {
-      return { parse: playback.parse, url: playback.url, headers: {} };
-    }
-    this.proxySession = await this.playbackProxy.createSession({
+    let resolved = {
       parse: playback.parse,
       url: playback.url,
-      headers: playback.headers,
+      headers: { ...playback.headers },
+    };
+    if (playback.parse === 1) {
+      this.parseState = { ...initialParseState(), status: "resolving" };
+      try {
+        const parsed = await this.parseResolver.resolve({
+          sourceId: this.session.view.source,
+          flag,
+          originalUrl: playback.url,
+          parserCandidates: this.parserCandidates,
+          headers: playback.headers,
+          timeout: 15_000,
+          playbackSessionId,
+          parse: 1,
+          onAttempt: (attempt) => {
+            this.parseState = {
+              status: "attempting",
+              parserId: attempt.parserId,
+              attempts: [...this.parseState.attempts, { ...attempt }],
+              error: null,
+            };
+          },
+        } satisfies ParseRequest);
+        this.parseState = {
+          status: "succeeded",
+          parserId: parsed.parserId,
+          attempts: parsed.attempts.map((attempt) => ({ ...attempt })),
+          error: null,
+        };
+        resolved = parsed;
+      } catch (error) {
+        const parseError = error instanceof ParseChainError
+          ? error
+          : new ParseChainError("PARSE_ERROR", error instanceof Error ? error.message : String(error));
+        this.parseState = {
+          status: parseError.code === "PARSE_CANCELLED" ? "cancelled" : "failed",
+          parserId: this.parseState.parserId,
+          attempts: parseError.attempts.map((attempt) => ({ ...attempt })),
+          error: { code: parseError.code, message: parseError.message },
+        };
+        throw parseError;
+      }
+    } else if (playback.parse !== 0) {
+      throw new Error(`Unsupported playback parse mode: ${playback.parse}`);
+    } else {
+      this.parseState = {
+        status: "succeeded",
+        parserId: "direct",
+        attempts: [],
+        error: null,
+      };
+    }
+    if (Object.keys(resolved.headers).length === 0) {
+      return { parse: 0, url: resolved.url, headers: {} };
+    }
+    this.proxySession = await this.playbackProxy.createSession({
+      parse: 0,
+      url: resolved.url,
+      headers: resolved.headers,
     });
     return { parse: 0, url: this.proxySession.url, headers: {} };
   }
@@ -555,6 +636,9 @@ export interface DesktopSpiderUiServerOptions {
   host?: string;
   port?: number;
   playbackProxyOrigins?: readonly string[];
+  parserCandidates?: readonly ParserCandidate[];
+  parserAllowedOrigins?: readonly string[];
+  parserFetch?: typeof fetch;
 }
 
 export class DesktopSpiderUiServer {
@@ -570,6 +654,9 @@ export class DesktopSpiderUiServer {
   private readonly host: string;
   private readonly port: number;
   private readonly playbackProxyOrigins: readonly string[] | undefined;
+  private readonly parserCandidates: readonly ParserCandidate[] | undefined;
+  private readonly parserAllowedOrigins: readonly string[] | undefined;
+  private readonly parserFetch: typeof fetch | undefined;
   private server: Server | undefined;
   private boundUrl: string | undefined;
   private boundSession: DesktopSpiderSessionPort | undefined;
@@ -597,6 +684,9 @@ export class DesktopSpiderUiServer {
     this.host = options.host ?? "127.0.0.1";
     this.port = options.port ?? 0;
     this.playbackProxyOrigins = options.playbackProxyOrigins;
+    this.parserCandidates = options.parserCandidates?.map(cloneParserCandidate);
+    this.parserAllowedOrigins = options.parserAllowedOrigins;
+    this.parserFetch = options.parserFetch;
   }
 
   public get url(): string {
@@ -890,6 +980,9 @@ export class DesktopSpiderUiServer {
       this.importedUi = new DesktopSpiderUiController({
         session,
         ...(this.playbackProxyOrigins ? { playbackProxyOrigins: this.playbackProxyOrigins } : {}),
+        ...(this.parserCandidates ? { parserCandidates: this.parserCandidates } : {}),
+        ...(this.parserAllowedOrigins ? { parserAllowedOrigins: this.parserAllowedOrigins } : {}),
+        ...(this.parserFetch ? { parserFetch: this.parserFetch } : {}),
       });
       this.importedUiBySession.set(session, this.importedUi);
     }
@@ -1361,6 +1454,25 @@ function clonePlaybackSession(session: DesktopPlaybackSession | null): DesktopPl
   return {
     ...session,
     media: { ...session.media },
+  };
+}
+
+function cloneParserCandidate(candidate: ParserCandidate): ParserCandidate {
+  return {
+    ...candidate,
+    ...(candidate.headers ? { headers: { ...candidate.headers } } : {}),
+  };
+}
+
+function initialParseState(): ParseUiState {
+  return { status: "idle", parserId: null, attempts: [], error: null };
+}
+
+function cloneParseState(state: ParseUiState): ParseUiState {
+  return {
+    ...state,
+    attempts: state.attempts.map((attempt) => ({ ...attempt })),
+    error: state.error ? { ...state.error } : null,
   };
 }
 

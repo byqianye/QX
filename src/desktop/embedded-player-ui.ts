@@ -9,11 +9,21 @@ export function renderEmbeddedPlayer(state: PlaybackState): string {
   const error = state.error
     ? `<p class="player-error" data-testid="player-error">${escapeHtml(state.error.message)}</p>`
     : "";
+  const parserStatus = state.parse && state.parse.status !== "idle"
+    ? `<p data-testid="parser-status">${escapeHtml(parserStatusLabel(state.parse.status, state.parse.parserId))}</p>`
+    : "";
+  const parserDiagnostics = state.parse && state.parse.attempts.length > 0
+    ? `<details data-testid="parser-diagnostics"><summary>解析尝试（${state.parse.attempts.length}）</summary><ul>${state.parse.attempts
+      .map((attempt) => `<li>${escapeHtml(attempt.parserId)} · ${escapeHtml(attempt.status)} · ${attempt.elapsedMs}ms</li>`)
+      .join("")}</ul></details>`
+    : "";
 
   if (!hasSource) {
     return `<section data-testid="embedded-player-panel" class="embedded-player-panel" data-player-status="${status}">
       <strong>内嵌播放器</strong>
       <p data-testid="player-status">${escapeHtml(statusLabel(state))}</p>
+      ${parserStatus}
+      ${parserDiagnostics}
       ${error}
     </section>`;
   }
@@ -35,6 +45,8 @@ export function renderEmbeddedPlayer(state: PlaybackState): string {
         <button data-action="player-detach">独立窗口</button>
       </div>
       <p data-testid="player-status">${escapeHtml(statusLabel(state))}</p>
+      ${parserStatus}
+      ${parserDiagnostics}
       ${error}
     </section>
     <script>
@@ -152,6 +164,21 @@ function statusLabel(state: PlaybackState): string {
     error: "播放失败",
   };
   return labels[state.status];
+}
+
+function parserStatusLabel(
+  status: NonNullable<PlaybackState["parse"]>["status"],
+  parserId: string | null,
+): string {
+  const labels: Record<typeof status, string> = {
+    idle: "等待解析",
+    resolving: "正在解析",
+    attempting: "正在尝试解析器",
+    failed: "解析器失败",
+    succeeded: "解析成功",
+    cancelled: "解析已取消",
+  };
+  return parserId ? `${labels[status]}：${parserId}` : labels[status];
 }
 
 function isHlsUrl(url: string): boolean {

@@ -29,6 +29,7 @@ export interface PackagedE2eChecks {
   doubanUnavailable: boolean;
   embeddedMp4?: boolean;
   embeddedHls?: boolean;
+  parseChain?: boolean;
   proxyRequired?: boolean;
   noExternalBrowser?: boolean;
   errorSurface?: boolean;
@@ -145,6 +146,11 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       const opened = await post(options.baseUrl, "/api/player/open");
       const attached = await post(options.baseUrl, "/api/player/attach");
       const attachedHtml = await readPage(options);
+      const parsed = await post(options.baseUrl, "/api/player", {
+        flag: "default",
+        id: "parse-one",
+        vipFlags: [],
+      });
       checks.embeddedMp4 = playbackReady
         && playbackOpened.state?.status === "ready"
         && mp4.state?.player?.status === "loading"
@@ -155,6 +161,11 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
         && playerSourceUrl(hls.state)?.endsWith("/media/fixture.m3u8") === true
         && hlsHtml.includes('data-testid="embedded-player"')
         && (hlsHtml.includes("/assets/hls.min.js") || hlsDom?.hlsLoaded === true);
+      checks.parseChain = parsed.state?.player?.status === "loading"
+        && parsed.state?.error === null
+        && parsed.state?.player?.error === null
+        && parsed.state?.player?.source?.parse === 0
+        && playerSourceUrl(parsed.state)?.endsWith("/media/fixture.m3u8") === true;
       checks.vodPlaybackFlow = playbackReady
         && playbackOpened.state?.status === "ready"
         && playbackHome.state?.page === "home"
@@ -341,7 +352,7 @@ interface UiState {
   error?: { code?: string; message?: string } | null;
   player?: {
     status?: string;
-    source?: { url?: string; headers?: Record<string, unknown> } | null;
+    source?: { parse?: number; url?: string; headers?: Record<string, unknown> } | null;
     error?: { code?: string; message?: string } | null;
   } | null;
   playbackSelection?: { lineIndex?: number; episodeIndex?: number } | null;

@@ -102,6 +102,21 @@ describe("packaged Electron E2E flow", () => {
     const uiServer = new DesktopSpiderUiServer({
       importer,
       playbackProxyOrigins: ["http://127.0.0.1:43123"],
+      parserCandidates: [{
+        id: "fixture-parser",
+        name: "Fixture parser",
+        type: "json",
+        endpoint: "https://parser.example.invalid/resolve",
+        enabled: true,
+        priority: 1,
+        timeout: 100,
+      }],
+      parserAllowedOrigins: ["http://127.0.0.1:43123", "https://parser.example.invalid"],
+      parserFetch: async () => new Response(JSON.stringify({
+        parse: 0,
+        url: "http://127.0.0.1:43123/media/fixture.m3u8",
+        headers: {},
+      }), { headers: { "content-type": "application/json" } }),
     });
     resources.push(uiServer);
     await uiServer.start();
@@ -125,6 +140,7 @@ describe("packaged Electron E2E flow", () => {
         doubanUnavailable: true,
         embeddedMp4: true,
         embeddedHls: true,
+        parseChain: true,
         vodPlaybackFlow: true,
         proxyRequired: true,
         noExternalBrowser: true,
@@ -234,6 +250,17 @@ class SessionFixture implements DesktopSpiderSessionPort {
         },
       };
       return ok({ parse: 0, url: this.view.playback.url, header: this.view.playback.headers });
+    }
+    if (id === "parse-one") {
+      this.view.playback = {
+        available: true,
+        label: "Parser fixture",
+        message: "parse=1 fixture",
+        parse: 1,
+        url: "https://parser.example.invalid/input",
+        headers: {},
+      };
+      return ok({ parse: 1, url: this.view.playback.url, header: {} });
     }
     const url = id === "direct-hls"
       ? "http://127.0.0.1:43123/media/fixture.m3u8"

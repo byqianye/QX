@@ -37,6 +37,21 @@ writeFileSync(configFile, config, "utf8");
 let configServer: Server | undefined;
 const mediaFixture = createMediaFixtureServer();
 
+function parserEnvironment(): Record<string, string> {
+  return {
+    QX_PARSE_CANDIDATES_JSON: JSON.stringify([{
+      id: "fixture-parser",
+      name: "Fixture parser",
+      type: "json",
+      endpoint: mediaFixture.parserUrl,
+      enabled: true,
+      priority: 1,
+      timeout: 5_000,
+    }]),
+    QX_PARSE_ALLOWED_ORIGINS: mediaFixture.baseUrl,
+  };
+}
+
 try {
   await mediaFixture.start();
   const playbackConfig = JSON.stringify({
@@ -61,6 +76,7 @@ try {
     QX_E2E_USER_DATA: userData,
     QX_E2E_PLAYBACK_CONFIG: playbackConfig,
     QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,
+    ...parserEnvironment(),
   });
   const firstResultValue = readResult(firstResult);
   assertRun("first packaged E2E", first, firstResultValue);
@@ -76,6 +92,7 @@ try {
     QX_E2E_USER_DATA: userData,
     QX_E2E_PLAYBACK_CONFIG: playbackConfig,
     QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,
+    ...parserEnvironment(),
   });
   const secondResultValue = readResult(secondResult);
   assertRun("restarted packaged E2E", second, secondResultValue);

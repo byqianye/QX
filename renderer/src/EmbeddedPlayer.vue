@@ -240,6 +240,21 @@ function statusLabel(state: PlayerState, status: string, error: string | null): 
   };
   return labels[status as PlayerState["status"]] ?? labels.idle;
 }
+
+function parserStatusLabel(
+  status: NonNullable<PlayerState["parse"]>["status"],
+  parserId: string | null,
+): string {
+  const labels: Record<typeof status, string> = {
+    idle: "等待解析",
+    resolving: "正在解析",
+    attempting: "正在尝试解析器",
+    failed: "解析器失败",
+    succeeded: "解析成功",
+    cancelled: "解析已取消",
+  };
+  return parserId ? `${labels[status]}：${parserId}` : labels[status];
+}
 </script>
 
 <template>
@@ -271,6 +286,19 @@ function statusLabel(state: PlayerState, status: string, error: string | null): 
       />
     </template>
     <p data-testid="player-status">{{ statusLabel(props.state, localStatus, localError) }}</p>
+    <p
+      v-if="props.state.parse && props.state.parse.status !== 'idle'"
+      data-testid="parser-status"
+      class="meta"
+    >{{ parserStatusLabel(props.state.parse.status, props.state.parse.parserId) }}</p>
+    <details v-if="props.state.parse && props.state.parse.attempts.length > 0" data-testid="parser-diagnostics">
+      <summary>解析尝试（{{ props.state.parse.attempts.length }}）</summary>
+      <ul>
+        <li v-for="attempt in props.state.parse.attempts" :key="`${attempt.parserId}-${attempt.elapsedMs}`">
+          {{ attempt.parserId }} · {{ attempt.status }} · {{ attempt.elapsedMs }}ms
+        </li>
+      </ul>
+    </details>
     <p v-if="localError" class="player-error" data-testid="player-error">{{ localError }}</p>
   </section>
 </template>

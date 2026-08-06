@@ -1,3 +1,5 @@
+import type { ParseUiState } from "./parse-chain.js";
+
 export type PlaybackStatus =
   | "idle"
   | "resolving"
@@ -16,6 +18,7 @@ export interface PlaybackSource {
 
 export interface PlaybackValidationOptions {
   allowHeaders?: boolean;
+  allowedParse?: readonly number[];
 }
 
 export interface PlaybackError {
@@ -32,6 +35,7 @@ export interface PlaybackState {
   muted: boolean;
   fullscreen: boolean;
   error: PlaybackError | null;
+  parse?: ParseUiState;
 }
 
 export interface PlaybackMediaSync {
@@ -202,7 +206,7 @@ export function validatePlaybackSource(
   source: PlaybackSource,
   options: PlaybackValidationOptions = {},
 ): PlaybackError | null {
-  if (source.parse !== 0) {
+  if (source.parse !== 0 && !options.allowedParse?.includes(source.parse)) {
     return {
       code: "PLAYBACK_PARSE_UNSUPPORTED",
       message: "当前播放器只支持 parse=0 的直接媒体地址。",

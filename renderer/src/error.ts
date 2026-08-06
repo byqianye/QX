@@ -17,6 +17,13 @@ const TITLES: Record<string, string> = {
   PLAYBACK_PROXY_REQUIRED: "播放需要受控代理",
   PLAYBACK_FORMAT_INVALID: "播放信息格式无效",
   PLAYBACK_PROXY_TIMEOUT: "播放代理超时",
+  PARSE_UNAVAILABLE: "解析器不可用",
+  PARSE_TIMEOUT: "解析器超时",
+  PARSE_CANCELLED: "解析已取消",
+  PARSE_CYCLE_DETECTED: "解析链检测到循环",
+  PARSE_RESPONSE_TOO_LARGE: "解析响应过大",
+  PARSE_ORIGIN_BLOCKED: "解析地址被拦截",
+  PARSE_PROTOCOL_BLOCKED: "解析协议不受支持",
   HLS_ERROR: "HLS 播放失败",
   HTML_VIDEO_ERROR: "媒体播放失败",
   HTML_VIDEO_PLAY_ERROR: "媒体播放失败",
@@ -75,6 +82,7 @@ export function sourceForCode(code: string): AppErrorSource {
   if (code.startsWith("ELECTRON_") || code.startsWith("UI_") || code.startsWith("APP_") || code.startsWith("E2E_")) return "electron";
   if (code.startsWith("CLEANUP_") || code.startsWith("RESOURCE_CLEANUP")) return "cleanup";
   if (code.startsWith("PLAYBACK_PROXY_")) return "proxy";
+  if (code.startsWith("PARSE_")) return "player";
   if (code.startsWith("PLAYBACK_") || code.startsWith("MEDIA_") || code.startsWith("VIDEO_") || code.startsWith("HLS_")) return "player";
   if (code.startsWith("SPIDER_") || code.startsWith("JVM_SPIDER_") || code.includes("RPC")) return "spider";
   return "renderer";
@@ -118,6 +126,8 @@ function defaultRetryable(code: string): boolean {
     || code.startsWith("IMPORT_FETCH")
     || code.startsWith("SPIDER_")
     || code.startsWith("PLAYBACK_PROXY_TIMEOUT")
+    || code.startsWith("PARSE_TIMEOUT")
+    || code.startsWith("PARSE_ERROR")
     || code.startsWith("PLAYBACK_UPSTREAM")
     || code.startsWith("MEDIA_")
     || code.startsWith("VIDEO_")

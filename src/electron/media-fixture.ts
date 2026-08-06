@@ -25,6 +25,7 @@ export interface MediaFixtureServer {
   readonly hlsUrl: string;
   readonly protectedHlsUrl: string;
   readonly playerUrl: string;
+  readonly parserUrl: string;
   start(): Promise<void>;
   close(): Promise<void>;
 }
@@ -49,6 +50,9 @@ export function createMediaFixtureServer(host = "127.0.0.1"): MediaFixtureServer
     },
     get playerUrl() {
       return `${resource.baseUrl}/player`;
+    },
+    get parserUrl() {
+      return `${resource.baseUrl}/parser/resolve`;
     },
     async start() {
       if (server) return;
@@ -106,6 +110,20 @@ async function handleRequest(
   if (url.pathname === "/player") {
     const id = url.searchParams.get("id");
     const headered = id === "headered";
+    if (id === "parse-one") {
+      const body = Buffer.from(JSON.stringify({
+        parse: 1,
+        url: `${fixture.baseUrl}/parser/input`,
+        header: {},
+      }), "utf8");
+      response.writeHead(200, {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": body.length,
+      });
+      if (request.method === "HEAD") response.end();
+      else response.end(body);
+      return;
+    }
     const mediaUrl = id === "headered"
       ? fixture.protectedHlsUrl
       : id === "direct-hls" ? fixture.hlsUrl : fixture.mp4Url;
@@ -116,6 +134,21 @@ async function handleRequest(
         Referer: PROTECTED_REFERER,
         "User-Agent": PROTECTED_USER_AGENT,
       } : {},
+    }), "utf8");
+    response.writeHead(200, {
+      "content-type": "application/json; charset=utf-8",
+      "content-length": body.length,
+    });
+    if (request.method === "HEAD") response.end();
+    else response.end(body);
+    return;
+  }
+
+  if (url.pathname === "/parser/resolve") {
+    const body = Buffer.from(JSON.stringify({
+      parse: 0,
+      url: fixture.hlsUrl,
+      headers: {},
     }), "utf8");
     response.writeHead(200, {
       "content-type": "application/json; charset=utf-8",

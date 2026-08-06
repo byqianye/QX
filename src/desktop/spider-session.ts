@@ -274,7 +274,7 @@ export class DesktopSpiderSession implements MediaSource {
         parse: playback.parse,
         url: playback.url,
         headers: playback.headers,
-      }, { allowHeaders: true });
+      }, { allowHeaders: true, allowedParse: [0, 1] });
       if (validation) {
         this.viewState.playback = playbackUnavailableFor(validation.code, validation.message);
         const rejectedResponse: SpiderResponse = {

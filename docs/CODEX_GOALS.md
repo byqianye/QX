@@ -390,9 +390,44 @@ checkpoint: complete G29 diagnostics
 checkpoint: complete G30-G41 multi-engine foundation
 ```
 
-G42—G78（未开始）
+## G42（已完成）
 
-（略，按主路线图执行）
+### 目标
+实现 `playerContent` 返回 `parse=1` 时的受控解析链，并将最终媒体地址接入现有 LocalProxy 与内嵌播放器。
+
+### 状态
+已完成。解析候选按优先级执行，支持 JSON、redirect、显式 HTML media 字段、source-provided 和本地 fixture；超时、取消、循环、最大深度、最大响应、协议和 origin 边界均有测试。packaged E2E 首次启动与重启轮次均实际覆盖 parse=1。
+
+### 依赖
+- G21—G29 内嵌播放器、LocalProxy、Playback Session 与 AppError
+- G30—G41 多引擎来源合同与生命周期基础
+
+### 范围与验收标准
+- `ParseRequest`、`ParseResult`、`ParserCandidate` 类型化并携带脱敏尝试诊断
+- parse=0 不进入解析链；parse=1 按候选优先级回退，成功后停止后续尝试
+- 请求只允许 HTTP/HTTPS 和显式 origin；redirect 重新校验；响应大小、超时、尝试次数和递归深度受限
+- 解析失败、取消和关闭时清理请求；带 headers 的结果仍经现有 LocalProxy
+- 不实现 G44 网页嗅探，不接入未授权第三方解析源，不把解析器变成开放代理
+
+### 验证结果
+- `tests/parse-chain.test.ts`、`tests/desktop-ui.test.ts`、`tests/electron-e2e.test.ts`：通过
+- `npm run typecheck`：通过
+- `npm test`：32 files / 182 tests passed
+- `npm run electron:build`：通过
+- `npm run electron:package:win`：通过
+- `npm run electron:e2e:package`：首次和重启轮次通过；两轮 `parseChain` 均为 true
+
+### 文档
+- `docs/spike-42-parse-chain.md`
+
+### checkpoint
+```text
+checkpoint: complete G42 parse chain
+```
+
+## G43—G49（未开始）
+
+按串行 Gate 继续：Playback Rules/m3u8、隔离网页嗅探、mpv backend 合同、播放调试面板、字幕轨道、流健康与自动线路回退、综合播放增强验收。
 
 DEX-1 ~ DEX-5（实验支线）
 

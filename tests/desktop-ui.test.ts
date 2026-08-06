@@ -120,6 +120,65 @@ describe("desktop Spider UI", () => {
     await ui.close();
   });
 
+  it("resolves parse=1 through the controlled parser chain before loading the player", async () => {
+    const fixture = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
+    const ui = new DesktopSpiderUiController({
+      session: fixture,
+      parserCandidates: [{
+        id: "fixture-parser",
+        name: "Fixture parser",
+        type: "json",
+        endpoint: "https://parser.example.invalid/resolve",
+        enabled: true,
+        priority: 1,
+        timeout: 100,
+      }],
+      parserAllowedOrigins: ["https://parser.example.invalid", "https://media.example.invalid"],
+      parserFetch: async () => new Response(JSON.stringify({
+        url: "https://media.example.invalid/parsed.m3u8",
+        headers: {},
+      }), { headers: { "content-type": "application/json" } }),
+    });
+
+    fixture.confirmImport();
+    await ui.open("playable", "fixture-endpoint");
+    await ui.player("default", "parse-one");
+
+    expect(ui.state).toMatchObject({
+      error: null,
+      player: {
+        status: "loading",
+        parse: {
+          status: "succeeded",
+          parserId: "fixture-parser",
+        },
+        source: { parse: 0, url: "https://media.example.invalid/parsed.m3u8", headers: {} },
+      },
+    });
+    expect(renderDesktopSpiderUi(ui.state)).toContain('data-testid="parser-status"');
+    expect(renderDesktopSpiderUi(ui.state)).toContain('data-testid="parser-diagnostics"');
+    await ui.close();
+  });
+
+  it("surfaces parse-unavailable as a controlled player error", async () => {
+    const fixture = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
+    const ui = new DesktopSpiderUiController({ session: fixture });
+
+    fixture.confirmImport();
+    await ui.open("playable", "fixture-endpoint");
+    const failed = await ui.player("default", "parse-one");
+
+    expect(failed).toMatchObject({
+      status: "error",
+      error: { code: "PARSE_UNAVAILABLE" },
+      player: {
+        status: "error",
+        parse: { status: "failed", error: { code: "PARSE_UNAVAILABLE" } },
+      },
+    });
+    await ui.close();
+  });
+
   it("renders playback lines and passes episode selection through the same Spider session", async () => {
     const fixture = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
     const ui = new DesktopSpiderUiController({
@@ -435,6 +494,17 @@ class FixtureSession implements DesktopSpiderSessionPort {
         url: this.view.playback.url,
         header: this.view.playback.headers,
       });
+    }
+    if (id === "parse-one") {
+      this.view.playback = {
+        available: true,
+        label: "Parse fixture",
+        message: "parse=1 fixture",
+        parse: 1,
+        url: "https://parser.example.invalid/resolve-input",
+        headers: {},
+      };
+      return ok({ parse: 1, url: this.view.playback.url, header: {} });
     }
     if (id === "fail") {
       return {

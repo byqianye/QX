@@ -189,6 +189,20 @@ export interface PlayerSource {
   headers: Record<string, string>;
 }
 
+export interface PlayerParseState {
+  status: "idle" | "resolving" | "attempting" | "failed" | "succeeded" | "cancelled";
+  parserId: string | null;
+  attempts: readonly {
+    parserId: string;
+    parserType: string;
+    status: "timeout" | "error" | "succeeded";
+    elapsedMs: number;
+    code?: string;
+    message?: string;
+  }[];
+  error: RendererError | null;
+}
+
 export interface PlayerState {
   status: "idle" | "resolving" | "loading" | "playing" | "paused" | "ended" | "stopped" | "error";
   source: PlayerSource | null;
@@ -198,6 +212,7 @@ export interface PlayerState {
   muted: boolean;
   fullscreen: boolean;
   error: RendererError | null;
+  parse?: PlayerParseState;
 }
 
 export interface PlayerMediaSync {
@@ -394,6 +409,15 @@ function clonePlayerState(player: PlayerState): PlayerState {
     ...player,
     source: player.source ? { ...player.source, headers: { ...player.source.headers } } : null,
     error: toAppError(player.error),
+    ...(player.parse
+      ? {
+          parse: {
+            ...player.parse,
+            attempts: player.parse.attempts.map((attempt) => ({ ...attempt })),
+            error: cloneRendererError(player.parse.error),
+          },
+        }
+      : {}),
   };
 }
 

@@ -14,6 +14,10 @@ import {
 } from "./spider-import.js";
 import { renderEmbeddedPlayer } from "./embedded-player-ui.js";
 import { EmbeddedPlaybackController, type PlaybackState } from "./playback.js";
+import {
+  PlaybackProxyServer,
+  type PlaybackProxySession,
+} from "./playback-proxy.js";
 import type { SpiderResponse } from "../spider/rpc.js";
 
 const require = createRequire(import.meta.url);
@@ -73,6 +77,7 @@ export interface DesktopSpiderUiState {
 export interface DesktopSpiderUiOptions {
   session: DesktopSpiderSessionPort;
   createSession?: () => DesktopSpiderSessionPort;
+  playbackProxyOrigins?: readonly string[];
 }
 
 export class DesktopSpiderUiController {
@@ -85,10 +90,17 @@ export class DesktopSpiderUiController {
   private items: Record<string, unknown>[] = [];
   private detailItem: Record<string, unknown> | null = null;
   private readonly playerController = new EmbeddedPlaybackController();
+  private readonly playbackProxy: PlaybackProxyServer;
+  private proxySession: PlaybackProxySession | undefined;
 
   public constructor(options: DesktopSpiderUiOptions) {
     this.session = options.session;
     this.createSession = options.createSession;
+    this.playbackProxy = new PlaybackProxyServer(
+      options.playbackProxyOrigins
+        ? { allowedOrigins: options.playbackProxyOrigins }
+        : {},
+    );
   }
 
   public get state(): DesktopSpiderUiState {
@@ -117,7 +129,7 @@ export class DesktopSpiderUiController {
       this.session.confirmImport();
       this.localStatus = null;
     } catch (error) {
-      this.setError(error);
+      void this.setError(error);
     }
     return this.state;
   }
@@ -197,14 +209,15 @@ export class DesktopSpiderUiController {
     return this.run(
       "player",
       () => this.session.playerContent(flag, id, vipFlags, timeoutMs),
-      () => {
+      async () => {
         this.page = "detail";
         const playback = this.session.view.playback;
         if (playback.available) {
+          const source = await this.preparePlayback(playback);
           this.playerController.load({
-            parse: playback.parse,
-            url: playback.url,
-            headers: playback.headers,
+            parse: source.parse,
+            url: source.url,
+            headers: source.headers,
           });
         }
       },
@@ -214,6 +227,7 @@ export class DesktopSpiderUiController {
   public async switchSource(): Promise<DesktopSpiderUiState> {
     await this.session.destroy();
     this.playerController.stop();
+    await this.releasePlaybackProxy();
     const nextSession = this.createSession?.();
     if (!nextSession) {
       this.localStatus = "destroyed";
@@ -236,18 +250,24 @@ export class DesktopSpiderUiController {
     try {
       await this.session.destroy();
       this.playerController.stop();
+      await this.releasePlaybackProxy();
       this.localStatus = "destroyed";
       this.localError = null;
     } catch (error) {
-      this.setError(error);
+      await this.setError(error);
     }
     return this.state;
+  }
+
+  public async releaseResources(): Promise<void> {
+    this.playerController.stop();
+    await this.releasePlaybackProxy();
   }
 
   private async run(
     operation: string,
     request: () => Promise<SpiderResponse>,
-    onSuccess: (response: SpiderResponse) => void,
+    onSuccess: (response: SpiderResponse) => void | Promise<void>,
   ): Promise<DesktopSpiderUiState> {
     this.activeOperation = operation;
     this.localStatus = "loading";
@@ -255,7 +275,7 @@ export class DesktopSpiderUiController {
     try {
       const response = await request();
       if (response.ok) {
-        onSuccess(response);
+        await onSuccess(response);
         this.localStatus = null;
       } else {
         this.localStatus = "error";
@@ -264,29 +284,58 @@ export class DesktopSpiderUiController {
           message: "Desktop Spider returned an unsuccessful response",
         };
         this.localError = error;
-        if (operation === "player") this.playerController.markError(error.code, error.message);
+        if (operation === "player") {
+          await this.releasePlaybackProxy();
+          this.playerController.markError(error.code, error.message);
+        }
       }
     } catch (error) {
-      this.setError(error, operation);
+      await this.setError(error, operation);
     } finally {
       this.activeOperation = null;
     }
     return this.state;
   }
 
-  private setError(error: unknown, operation?: string): void {
+  private async setError(error: unknown, operation?: string): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     const isTimeout = error instanceof Error
       && (error.name === "JvmSidecarTimeoutError" || /timeout/i.test(message));
     const sessionError = this.session.view.error;
-    const code = sessionError?.code ?? (isTimeout ? "SPIDER_TIMEOUT" : "SPIDER_RUNTIME_ERROR");
+    const thrownCode = isRecord(error) && typeof error.code === "string" ? error.code : null;
+    const code = sessionError?.code ?? thrownCode ?? (isTimeout ? "SPIDER_TIMEOUT" : "SPIDER_RUNTIME_ERROR");
     const displayMessage = sessionError?.message ?? message;
     this.localStatus = "error";
     this.localError = {
       code,
       message: displayMessage,
     };
-    if (operation === "player") this.playerController.markError(code, displayMessage);
+    if (operation === "player") {
+      await this.releasePlaybackProxy();
+      this.playerController.markError(code, displayMessage);
+    }
+  }
+
+  private async preparePlayback(
+    playback: Extract<DesktopSpiderPlaybackState, { available: true }>,
+  ): Promise<{ parse: number; url: string; headers: Record<string, string> }> {
+    await this.releasePlaybackProxy();
+    if (Object.keys(playback.headers).length === 0) {
+      return { parse: playback.parse, url: playback.url, headers: {} };
+    }
+    this.proxySession = await this.playbackProxy.createSession({
+      parse: playback.parse,
+      url: playback.url,
+      headers: playback.headers,
+    });
+    return { parse: 0, url: this.proxySession.url, headers: {} };
+  }
+
+  private async releasePlaybackProxy(): Promise<void> {
+    const session = this.proxySession;
+    this.proxySession = undefined;
+    if (session) await session.close();
+    await this.playbackProxy.close();
   }
 }
 
@@ -297,6 +346,7 @@ export interface DesktopSpiderUiServerOptions {
   ext?: string;
   host?: string;
   port?: number;
+  playbackProxyOrigins?: readonly string[];
 }
 
 export class DesktopSpiderUiServer {
@@ -306,6 +356,7 @@ export class DesktopSpiderUiServer {
   private readonly ext: string | undefined;
   private readonly host: string;
   private readonly port: number;
+  private readonly playbackProxyOrigins: readonly string[] | undefined;
   private server: Server | undefined;
   private boundUrl: string | undefined;
   private boundSession: DesktopSpiderSessionPort | undefined;
@@ -324,6 +375,7 @@ export class DesktopSpiderUiServer {
     this.ext = options.ext;
     this.host = options.host ?? "127.0.0.1";
     this.port = options.port ?? 0;
+    this.playbackProxyOrigins = options.playbackProxyOrigins;
   }
 
   public get url(): string {
@@ -346,6 +398,7 @@ export class DesktopSpiderUiServer {
 
   public async close(): Promise<void> {
     if (this.importer) {
+      await this.importedUi?.releaseResources();
       await this.importer.close();
     } else {
       await this.directUi?.close();
@@ -454,6 +507,7 @@ export class DesktopSpiderUiServer {
           break;
         case "/api/switch":
           if (this.importer) {
+            await this.importedUi?.releaseResources();
             await this.importer.cancel();
           } else {
             await ui.switchSource();
@@ -461,6 +515,7 @@ export class DesktopSpiderUiServer {
           break;
         case "/api/close":
           if (this.importer) {
+            await this.importedUi?.releaseResources();
             await this.importer.close();
           } else {
             await ui.close();
@@ -486,7 +541,12 @@ export class DesktopSpiderUiServer {
     const session = this.importer.session;
     if (session !== this.boundSession) {
       this.boundSession = session;
-      this.importedUi = session ? new DesktopSpiderUiController({ session }) : undefined;
+      this.importedUi = session
+        ? new DesktopSpiderUiController({
+          session,
+          ...(this.playbackProxyOrigins ? { playbackProxyOrigins: this.playbackProxyOrigins } : {}),
+        })
+        : undefined;
     }
     return this.importedUi;
   }
@@ -561,8 +621,10 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
         <button data-action="close">关闭</button>
       </nav>`
     : "";
+  const playUrl = state.player.source?.url
+    ?? (state.playback.available ? state.playback.url : "");
   const playButton = state.canPlay && state.playback.available
-    ? `<button data-testid="play-button" data-action="play" data-play-url="${escapeHtml(state.playback.url)}" data-play-parse="${state.playback.parse}">播放</button>`
+    ? `<button data-testid="play-button" data-action="play" data-play-url="${escapeHtml(playUrl)}" data-play-parse="${state.playback.available ? state.playback.parse : 0}">播放</button>`
     : `<button data-testid="play-button" disabled>播放</button>`;
   const detail = state.detail
     ? `<section data-testid="detail-panel" class="detail-panel">

@@ -119,7 +119,7 @@ jvmDescribe("JVM-native playerContent vertical slice", () => {
     await sidecar.destroy();
   });
 
-  it("requires LocalProxy when the desktop session receives playback headers", async () => {
+  it("keeps headered playback available for the controlled LocalProxy", async () => {
     const source = "inline:spike-19-playable";
     const trustStore = new ImportTrustStore();
     const session = new DesktopSpiderSession({
@@ -144,12 +144,22 @@ jvmDescribe("JVM-native playerContent vertical slice", () => {
     try {
       await expect(session.open("playable", endpoint)).resolves.toMatchObject({ ok: true });
       await expect(session.playerContent("default", "movie-1", ["vip"])).resolves.toMatchObject({
-        ok: false,
-        error: { code: "PLAYBACK_PROXY_REQUIRED" },
+        ok: true,
+        result: {
+          parse: 0,
+          url: "https://media.example.invalid/fixture.m3u8",
+          header: {
+            Referer: "https://source.example.invalid/",
+          },
+        },
       });
       expect(session.view.playback).toMatchObject({
-        available: false,
-        label: "需要 LocalProxy",
+        available: true,
+        parse: 0,
+        url: "https://media.example.invalid/fixture.m3u8",
+        headers: {
+          Referer: "https://source.example.invalid/",
+        },
       });
     } finally {
       await session.destroy();

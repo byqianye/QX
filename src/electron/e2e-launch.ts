@@ -60,6 +60,7 @@ try {
     QX_E2E_RESULT_PATH: firstResult,
     QX_E2E_USER_DATA: userData,
     QX_E2E_PLAYBACK_CONFIG: playbackConfig,
+    QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,
   });
   const firstResultValue = readResult(firstResult);
   assertRun("first packaged E2E", first, firstResultValue);
@@ -73,6 +74,7 @@ try {
     QX_E2E_RESULT_PATH: secondResult,
     QX_E2E_USER_DATA: userData,
     QX_E2E_PLAYBACK_CONFIG: playbackConfig,
+    QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,
   });
   const secondResultValue = readResult(secondResult);
   assertRun("restarted packaged E2E", second, secondResultValue);

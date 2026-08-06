@@ -22,6 +22,7 @@ const SMOKE_MODE = process.env.QX_ELECTRON_SMOKE === "1";
 const E2E_MODE = process.env.QX_ELECTRON_E2E === "1";
 const REQUEST_TIMEOUT_MS = numberEnvironment("QX_ELECTRON_REQUEST_TIMEOUT_MS", 30_000);
 const STARTUP_TIMEOUT_MS = 5_000;
+const PLAYBACK_PROXY_ORIGINS = listEnvironment("QX_PLAYBACK_PROXY_ORIGINS");
 
 if (process.env.QX_E2E_USER_DATA) {
   mkdirSync(process.env.QX_E2E_USER_DATA, { recursive: true });
@@ -69,7 +70,10 @@ function createShell(): DesktopShellRuntime {
           },
         }),
       });
-      return new DesktopSpiderUiServer({ importer });
+      return new DesktopSpiderUiServer({
+        importer,
+        ...(PLAYBACK_PROXY_ORIGINS.length > 0 ? { playbackProxyOrigins: PLAYBACK_PROXY_ORIGINS } : {}),
+      });
     },
   });
 }
@@ -295,6 +299,13 @@ function writeE2eResult(result: PackagedE2eResult | Record<string, unknown>): vo
 function numberEnvironment(name: string, fallback: number): number {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function listEnvironment(name: string): string[] {
+  return (process.env[name] ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

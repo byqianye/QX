@@ -32,6 +32,7 @@ export interface PackagedE2eChecks {
   noExternalBrowser?: boolean;
   embeddedMp4Dom?: boolean;
   embeddedHlsDom?: boolean;
+  proxyHlsDom?: boolean;
 }
 
 export interface PackagedE2eResult {
@@ -122,6 +123,8 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
         flag: "default",
         id: "headered",
       });
+      const headeredHtml = await page(options.baseUrl);
+      const headeredDom = await probeWindow(options, headeredHtml);
       checks.embeddedMp4 = playbackReady
         && playbackOpened.state?.status === "ready"
         && mp4.state?.player?.status === "loading"
@@ -133,16 +136,28 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
         && hlsHtml.includes('data-testid="embedded-player"')
         && hlsHtml.includes("/assets/hls.min.js");
       checks.proxyRequired = headered.state?.error?.code === "PLAYBACK_PROXY_REQUIRED"
-        && headered.state?.player?.error?.code === "PLAYBACK_PROXY_REQUIRED";
+        ? false
+        : headered.state?.player?.status === "loading"
+          && playerSourceUrl(headered.state)?.includes("/__qx_playback/") === true
+          && playerSourceHeaders(headered.state) !== null
+          && Object.keys(playerSourceHeaders(headered.state) ?? {}).length === 0
+          && headeredHtml.includes('data-testid="embedded-player"');
       checks.noExternalBrowser = !mp4Html.includes("window.open")
         && !hlsHtml.includes("window.open")
+        && !headeredHtml.includes("window.open")
         && !mp4Html.includes("_blank")
-        && !hlsHtml.includes("_blank");
+        && !hlsHtml.includes("_blank")
+        && !headeredHtml.includes("_blank");
       if (mp4Dom && hlsDom) {
         checks.embeddedMp4Dom = mp4Dom.hasVideo
           && mp4Dom.readyState >= 1
           && mp4Dom.src.endsWith("/media/fixture.mp4");
         checks.embeddedHlsDom = hlsDom.hasVideo && hlsDom.hlsLoaded && hlsDom.readyState >= 1;
+      }
+      if (headeredDom) {
+        checks.proxyHlsDom = headeredDom.hasVideo
+          && headeredDom.hlsLoaded
+          && headeredDom.readyState >= 1;
       }
     }
 
@@ -271,7 +286,7 @@ interface UiState {
   error?: { code?: string; message?: string } | null;
   player?: {
     status?: string;
-    source?: { url?: string } | null;
+    source?: { url?: string; headers?: Record<string, unknown> } | null;
     error?: { code?: string; message?: string } | null;
   } | null;
 }
@@ -279,6 +294,13 @@ interface UiState {
 function playerSourceUrl(state: UiState | null): string | null {
   const source = state?.player?.source;
   return typeof source?.url === "string" ? source.url : null;
+}
+
+function playerSourceHeaders(state: UiState | null): Record<string, string> | null {
+  const headers = state?.player?.source?.headers;
+  return isRecord(headers)
+    ? Object.fromEntries(Object.entries(headers).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
+    : null;
 }
 
 async function probeWindow(

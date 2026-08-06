@@ -206,7 +206,7 @@ export class DesktopSpiderSession {
         parse: playback.parse,
         url: playback.url,
         headers: playback.headers,
-      });
+      }, { allowHeaders: true });
       if (validation) {
         this.viewState.playback = playbackUnavailableFor(validation.code, validation.message);
         const rejectedResponse: SpiderResponse = {

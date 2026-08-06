@@ -14,6 +14,10 @@ export interface PlaybackSource {
   headers: Record<string, string>;
 }
 
+export interface PlaybackValidationOptions {
+  allowHeaders?: boolean;
+}
+
 export interface PlaybackError {
   code: string;
   message: string;
@@ -169,7 +173,10 @@ export class EmbeddedPlaybackController {
   }
 }
 
-export function validatePlaybackSource(source: PlaybackSource): PlaybackError | null {
+export function validatePlaybackSource(
+  source: PlaybackSource,
+  options: PlaybackValidationOptions = {},
+): PlaybackError | null {
   if (source.parse !== 0) {
     return {
       code: "PLAYBACK_PARSE_UNSUPPORTED",
@@ -182,7 +189,7 @@ export function validatePlaybackSource(source: PlaybackSource): PlaybackError | 
       message: "播放地址必须使用 HTTP 或 HTTPS。",
     };
   }
-  if (Object.keys(source.headers).length > 0) {
+  if (!options.allowHeaders && Object.keys(source.headers).length > 0) {
     return {
       code: "PLAYBACK_PROXY_REQUIRED",
       message: "该地址需要 LocalProxy 才能播放。",

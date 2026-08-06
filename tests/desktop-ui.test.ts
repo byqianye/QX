@@ -82,21 +82,33 @@ describe("desktop Spider UI", () => {
     expect(renderDesktopSpiderUi(ui.state)).not.toMatch(/data-testid="play-button"[^>]*disabled/);
   });
 
-  it("shows the LocalProxy requirement instead of exposing a headered URL", async () => {
+  it("routes a headered URL through a controlled LocalProxy session", async () => {
     const fixture = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
-    const ui = new DesktopSpiderUiController({ session: fixture });
+    const ui = new DesktopSpiderUiController({
+      session: fixture,
+      playbackProxyOrigins: ["http://127.0.0.1:43123"],
+    });
 
     ui.confirmImport();
     await ui.open("playable", "fixture-endpoint");
     await ui.player("default", "headered", []);
 
     expect(ui.state).toMatchObject({
-      status: "error",
-      error: { code: "PLAYBACK_PROXY_REQUIRED" },
-      player: { status: "error", error: { code: "PLAYBACK_PROXY_REQUIRED" } },
+      status: "ready",
+      error: null,
+      player: {
+        status: "loading",
+        source: {
+          parse: 0,
+          headers: {},
+        },
+      },
     });
-    expect(renderDesktopSpiderUi(ui.state)).toContain("该地址需要 LocalProxy");
-    expect(renderDesktopSpiderUi(ui.state)).toMatch(/data-testid="play-button"[^>]*disabled/);
+    expect(ui.state.player.source?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/__qx_playback\//);
+    expect(renderDesktopSpiderUi(ui.state)).toContain("__qx_playback");
+    expect(renderDesktopSpiderUi(ui.state)).toContain("/assets/hls.min.js");
+    expect(renderDesktopSpiderUi(ui.state)).not.toMatch(/data-testid="play-button"[^>]*disabled/);
+    await ui.close();
   });
 
   it("drives home, category, search and detail, then destroys on switch and close", async () => {
@@ -277,11 +289,22 @@ class FixtureSession implements DesktopSpiderSessionPort {
       return { id: "fixture", ok: false, error: { code: "PLAYBACK_UNAVAILABLE", message: "Douban has no playback" } };
     }
     if (id === "headered") {
-      return {
-        id: "fixture",
-        ok: false,
-        error: { code: "PLAYBACK_PROXY_REQUIRED", message: "该地址需要 LocalProxy 才能播放。" },
+      this.view.playback = {
+        available: true,
+        label: "Playable fixture",
+        message: "Headered HLS URL resolved",
+        parse: 0,
+        url: "http://127.0.0.1:43123/protected/fixture.m3u8",
+        headers: {
+          Referer: "https://source.example.invalid/",
+          "User-Agent": "G22-fixture",
+        },
       };
+      return ok({
+        parse: 0,
+        url: this.view.playback.url,
+        header: this.view.playback.headers,
+      });
     }
     this.view.playback = {
       available: true,

@@ -43,7 +43,7 @@ npm run electron:e2e
 将 Spike 19 的 `playerContent` 结果交给 Electron 内嵌 MP4/HLS 播放器。
 
 ### 状态
-已完成。带 headers 的结果明确返回 `PLAYBACK_PROXY_REQUIRED`；`csp_Douban` 保持 `PLAYBACK_UNAVAILABLE`。
+已完成。播放器与 JVM 结果边界已建立；带 headers 的结果由 G22 受控 LocalProxy 接管，`csp_Douban` 保持 `PLAYBACK_UNAVAILABLE`。
 
 ### 验证
 - `npm run typecheck`
@@ -53,7 +53,36 @@ npm run electron:e2e
 ### 文档
 - `docs/spike-20-embedded-player.md`
 
-G22–G78（未开始）
+## G22（已完成）
+
+### 目标
+为需要受保护请求头的 MP4/HLS 播放源增加受控 LocalProxy，并在 Electron 内嵌播放器中完成 protected HLS 播放。
+
+### 状态
+已完成。代理仅监听 `127.0.0.1` 随机端口；会话令牌绑定 origin、请求头和生命周期；playlist 子资源全部重写；SSRF、请求头、大小、超时、并发和生命周期边界均已验证。
+
+### 依赖
+- G21 / Spike 20 内嵌 MP4/HLS 播放器
+- Spike 19 `playerContent` headers 结果
+
+### 验收标准
+- 无 headers 的 MP4/HLS 继续直连内嵌播放
+- 带 `Referer`/`User-Agent` 的 protected HLS 只能通过随机本地代理播放
+- renderer 不能通过任意 query 指定上游 URL
+- 代理拒绝不安全协议、私网地址、跨 origin redirect 和禁用请求头
+- 切换、关闭、过期和 Electron 退出会撤销代理会话、终止上游请求并释放资源
+
+### 验证命令
+```powershell
+npm run typecheck
+npm test
+npm run electron:e2e:package
+```
+
+### 文档
+- `docs/spike-21-local-proxy.md`
+
+G23–G78（未开始）
 
 （略，按主路线图执行）
 

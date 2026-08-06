@@ -16,10 +16,14 @@ const MEDIA_HLS_SEGMENT_BYTES = Buffer.from(
   "base64",
 );
 
+const PROTECTED_REFERER = "https://source.example.invalid/";
+const PROTECTED_USER_AGENT = "G22-fixture";
+
 export interface MediaFixtureServer {
   readonly baseUrl: string;
   readonly mp4Url: string;
   readonly hlsUrl: string;
+  readonly protectedHlsUrl: string;
   readonly playerUrl: string;
   start(): Promise<void>;
   close(): Promise<void>;
@@ -39,6 +43,9 @@ export function createMediaFixtureServer(host = "127.0.0.1"): MediaFixtureServer
     },
     get hlsUrl() {
       return `${resource.baseUrl}/media/fixture.m3u8`;
+    },
+    get protectedHlsUrl() {
+      return `${resource.baseUrl}/protected/fixture.m3u8`;
     },
     get playerUrl() {
       return `${resource.baseUrl}/player`;
@@ -82,38 +89,33 @@ async function handleRequest(
   }
 
   if (url.pathname === "/media/fixture.m3u8") {
-    const playlist = [
-      "#EXTM3U",
-      "#EXT-X-VERSION:7",
-      "#EXT-X-TARGETDURATION:1",
-      "#EXT-X-MEDIA-SEQUENCE:0",
-      "#EXT-X-PLAYLIST-TYPE:VOD",
-      '#EXT-X-MAP:URI="/media/fixture-init.mp4"',
-      "#EXTINF:1.0,",
-      "/media/fixture-0.m4s",
-      "#EXT-X-ENDLIST",
-      "",
-    ].join("\n");
-    const body = Buffer.from(playlist, "utf8");
-    response.writeHead(200, {
-      "content-type": "application/vnd.apple.mpegurl; charset=utf-8",
-      "content-length": body.length,
-      "cache-control": "no-store",
-      "access-control-allow-origin": "*",
-    });
-    if (request.method === "HEAD") response.end();
-    else response.end(body);
+    servePlaylist(request, response, "/media");
+    return;
+  }
+
+  if (url.pathname === "/protected/fixture.m3u8") {
+    if (!hasProtectedHeaders(request)) {
+      response.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+      response.end("protected media requires playback headers");
+      return;
+    }
+    servePlaylist(request, response, "/protected");
     return;
   }
 
   if (url.pathname === "/player") {
     const id = url.searchParams.get("id");
     const headered = id === "headered";
-    const mediaUrl = id === "direct-hls" ? fixture.hlsUrl : fixture.mp4Url;
+    const mediaUrl = id === "headered"
+      ? fixture.protectedHlsUrl
+      : id === "direct-hls" ? fixture.hlsUrl : fixture.mp4Url;
     const body = Buffer.from(JSON.stringify({
       parse: 0,
       url: mediaUrl,
-      header: headered ? { Referer: "https://source.example.invalid/" } : {},
+      header: headered ? {
+        Referer: PROTECTED_REFERER,
+        "User-Agent": PROTECTED_USER_AGENT,
+      } : {},
     }), "utf8");
     response.writeHead(200, {
       "content-type": "application/json; charset=utf-8",
@@ -139,8 +141,49 @@ async function handleRequest(
     return;
   }
 
+  if (url.pathname === "/protected/fixture-init.mp4" || url.pathname === "/protected/fixture-0.m4s") {
+    if (!hasProtectedHeaders(request)) {
+      response.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+      response.end("protected media requires playback headers");
+      return;
+    }
+    const bytes = url.pathname.endsWith(".m4s") ? MEDIA_HLS_SEGMENT_BYTES : MEDIA_HLS_INIT_BYTES;
+    const contentType = url.pathname.endsWith(".m4s") ? "video/iso.segment" : "video/mp4";
+    serveBytes(request, response, bytes, contentType);
+    return;
+  }
+
   response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
   response.end("media fixture not found");
+}
+
+function servePlaylist(request: IncomingMessage, response: ServerResponse, prefix: string): void {
+  const playlist = [
+    "#EXTM3U",
+    "#EXT-X-VERSION:7",
+    "#EXT-X-TARGETDURATION:1",
+    "#EXT-X-MEDIA-SEQUENCE:0",
+    "#EXT-X-PLAYLIST-TYPE:VOD",
+    `#EXT-X-MAP:URI=\"${prefix}/fixture-init.mp4\"`,
+    "#EXTINF:1.0,",
+    `${prefix}/fixture-0.m4s`,
+    "#EXT-X-ENDLIST",
+    "",
+  ].join("\n");
+  const body = Buffer.from(playlist, "utf8");
+  response.writeHead(200, {
+    "content-type": "application/vnd.apple.mpegurl; charset=utf-8",
+    "content-length": body.length,
+    "cache-control": "no-store",
+    "access-control-allow-origin": "*",
+  });
+  if (request.method === "HEAD") response.end();
+  else response.end(body);
+}
+
+function hasProtectedHeaders(request: IncomingMessage): boolean {
+  return request.headers.referer === PROTECTED_REFERER
+    && request.headers["user-agent"] === PROTECTED_USER_AGENT;
 }
 
 function serveBytes(

@@ -99,7 +99,10 @@ describe("packaged Electron E2E flow", () => {
       trustStore: new ImportTrustStore(),
       createSession: (_source, _config, site) => new SessionFixture(site.api ?? "csp_Douban"),
     });
-    const uiServer = new DesktopSpiderUiServer({ importer });
+    const uiServer = new DesktopSpiderUiServer({
+      importer,
+      playbackProxyOrigins: ["http://127.0.0.1:43123"],
+    });
     resources.push(uiServer);
     await uiServer.start();
 
@@ -209,11 +212,18 @@ class SessionFixture implements DesktopSpiderSessionPort {
       };
     }
     if (id === "headered") {
-      return {
-        id: "fixture",
-        ok: false,
-        error: { code: "PLAYBACK_PROXY_REQUIRED", message: "该地址需要 LocalProxy 才能播放。" },
+      this.view.playback = {
+        available: true,
+        label: "Playable source",
+        message: "Headered HLS URL resolved",
+        parse: 0,
+        url: "http://127.0.0.1:43123/protected/fixture.m3u8",
+        headers: {
+          Referer: "https://source.example.invalid/",
+          "User-Agent": "G22-fixture",
+        },
       };
+      return ok({ parse: 0, url: this.view.playback.url, header: this.view.playback.headers });
     }
     const url = id === "direct-hls"
       ? "http://127.0.0.1:43123/media/fixture.m3u8"

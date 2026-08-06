@@ -59,8 +59,25 @@ describe("local media fixture server", () => {
     await expect(hls.json()).resolves.toMatchObject({ parse: 0, url: fixture.hlsUrl, header: {} });
     await expect(headered.json()).resolves.toMatchObject({
       parse: 0,
-      url: fixture.mp4Url,
-      header: { Referer: "https://source.example.invalid/" },
+      url: fixture.protectedHlsUrl,
+      header: {
+        Referer: "https://source.example.invalid/",
+        "User-Agent": "G22-fixture",
+      },
     });
+  });
+
+  it("requires the protected HLS headers and accepts them when injected", async () => {
+    const denied = await fetch(fixture.protectedHlsUrl);
+    expect(denied.status).toBe(403);
+
+    const allowed = await fetch(fixture.protectedHlsUrl, {
+      headers: {
+        Referer: "https://source.example.invalid/",
+        "User-Agent": "G22-fixture",
+      },
+    });
+    expect(allowed.status).toBe(200);
+    expect(await allowed.text()).toContain("/protected/fixture-0.m4s");
   });
 });

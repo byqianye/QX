@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
@@ -14,7 +15,12 @@ import {
   type DesktopSpiderImportController,
 } from "./spider-import.js";
 import { renderEmbeddedPlayer } from "./embedded-player-ui.js";
-import { EmbeddedPlaybackController, type PlaybackState } from "./playback.js";
+import {
+  EmbeddedPlaybackController,
+  type PlaybackMediaSync,
+  type PlaybackStatus,
+  type PlaybackState,
+} from "./playback.js";
 import {
   PlaybackProxyServer,
   type PlaybackProxySession,
@@ -69,6 +75,24 @@ export interface DesktopSpiderSessionPort {
 
 export type DesktopSpiderUiPage = "import" | "home" | "category" | "search" | "detail" | "closed";
 
+export type PlayerHostMode = "embedded" | "detached";
+
+export interface DesktopPlaybackSession {
+  id: string;
+  host: PlayerHostMode;
+  lineIndex: number | null;
+  episodeIndex: number | null;
+  lineName: string | null;
+  episodeName: string | null;
+  media: {
+    detailId: string | null;
+    title: string | null;
+    url: string;
+  };
+}
+
+export type PlayerMediaSync = PlaybackMediaSync;
+
 export interface DesktopSpiderUiState {
   page: DesktopSpiderUiPage;
   source: string;
@@ -85,6 +109,8 @@ export interface DesktopSpiderUiState {
   detail: Record<string, unknown> | null;
   playbackCatalog: PlaybackCatalog | null;
   playbackSelection: PlaybackSelection | null;
+  playerHost: PlayerHostMode;
+  playbackSession: DesktopPlaybackSession | null;
 }
 
 export interface DesktopSpiderUiOptions {
@@ -104,6 +130,8 @@ export class DesktopSpiderUiController {
   private detailItem: Record<string, unknown> | null = null;
   private playbackCatalog: PlaybackCatalog | null = null;
   private playbackSelection: PlaybackSelection | null = null;
+  private playerHost: PlayerHostMode = "embedded";
+  private playbackSession: DesktopPlaybackSession | null = null;
   private readonly playerController = new EmbeddedPlaybackController();
   private readonly playbackProxy: PlaybackProxyServer;
   private proxySession: PlaybackProxySession | undefined;
@@ -137,6 +165,8 @@ export class DesktopSpiderUiController {
       detail: this.detailItem ? { ...this.detailItem } : null,
       playbackCatalog: clonePlaybackCatalog(this.playbackCatalog),
       playbackSelection: this.playbackSelection ? { ...this.playbackSelection } : null,
+      playerHost: this.playerHost,
+      playbackSession: clonePlaybackSession(this.playbackSession),
     };
   }
 
@@ -226,23 +256,7 @@ export class DesktopSpiderUiController {
     vipFlags: string[] = [],
     timeoutMs?: number,
   ): Promise<DesktopSpiderUiState> {
-    this.playerController.stop();
-    return this.run(
-      "player",
-      () => this.session.playerContent(flag, id, vipFlags, timeoutMs),
-      async () => {
-        this.page = "detail";
-        const playback = this.session.view.playback;
-        if (playback.available) {
-          const source = await this.preparePlayback(playback);
-          this.playerController.load({
-            parse: source.parse,
-            url: source.url,
-            headers: source.headers,
-          });
-        }
-      },
-    );
+    return this.playPlayer(flag, id, vipFlags, timeoutMs);
   }
 
   public playEpisode(
@@ -262,13 +276,94 @@ export class DesktopSpiderUiController {
       return Promise.resolve(this.state);
     }
     this.playbackSelection = { lineIndex, episodeIndex };
-    return this.player(line.name, episode.id, vipFlags, timeoutMs);
+    return this.playPlayer(line.name, episode.id, vipFlags, timeoutMs, {
+      lineIndex,
+      episodeIndex,
+      lineName: line.name,
+      episodeName: episode.name,
+    });
+  }
+
+  public detachPlayer(): DesktopSpiderUiState {
+    if (!this.playbackSession || !this.playerController.state.source) {
+      this.localError = {
+        code: "PLAYBACK_NOT_LOADED",
+        message: "当前没有可拆分的播放会话。",
+      };
+      return this.state;
+    }
+    this.playerHost = "detached";
+    this.playbackSession.host = "detached";
+    return this.state;
+  }
+
+  public attachPlayer(): DesktopSpiderUiState {
+    this.playerHost = "embedded";
+    if (this.playbackSession) this.playbackSession.host = "embedded";
+    return this.state;
+  }
+
+  public syncPlayerState(patch: PlayerMediaSync): DesktopSpiderUiState {
+    this.playerController.syncMedia(patch);
+    return this.state;
+  }
+
+  public async stopPlayer(): Promise<DesktopSpiderUiState> {
+    this.playerController.stop();
+    await this.releasePlaybackProxy();
+    this.playerHost = "embedded";
+    this.playbackSession = null;
+    return this.state;
+  }
+
+  private playPlayer(
+    flag: string,
+    id: string,
+    vipFlags: string[] = [],
+    timeoutMs?: number,
+    metadata?: Pick<DesktopPlaybackSession, "lineIndex" | "episodeIndex" | "lineName" | "episodeName">,
+  ): Promise<DesktopSpiderUiState> {
+    this.playerController.stop();
+    this.playbackSession = null;
+    this.playerHost = "embedded";
+    return this.run(
+      "player",
+      () => this.session.playerContent(flag, id, vipFlags, timeoutMs),
+      async () => {
+        this.page = "detail";
+        const playback = this.session.view.playback;
+        if (playback.available) {
+          const source = await this.preparePlayback(playback);
+          this.playerController.load({
+            parse: source.parse,
+            url: source.url,
+            headers: source.headers,
+          });
+          const sourceState = this.playerController.state.source;
+          if (!sourceState) throw new Error("Playback source was not loaded");
+          this.playbackSession = {
+            id: randomUUID(),
+            host: "embedded",
+            lineIndex: metadata?.lineIndex ?? null,
+            episodeIndex: metadata?.episodeIndex ?? null,
+            lineName: metadata?.lineName ?? null,
+            episodeName: metadata?.episodeName ?? null,
+            media: {
+              detailId: optionalString(this.detailItem?.vod_id),
+              title: optionalString(this.detailItem?.vod_name),
+              url: sourceState.url,
+            },
+          };
+        }
+      },
+    );
   }
 
   public async switchSource(): Promise<DesktopSpiderUiState> {
     await this.session.destroy();
     this.playerController.stop();
     await this.releasePlaybackProxy();
+    this.clearPlaybackSession();
     const nextSession = this.createSession?.();
     if (!nextSession) {
       this.localStatus = "destroyed";
@@ -293,6 +388,7 @@ export class DesktopSpiderUiController {
       await this.session.destroy();
       this.playerController.stop();
       await this.releasePlaybackProxy();
+      this.clearPlaybackSession();
       this.localStatus = "destroyed";
       this.localError = null;
     } catch (error) {
@@ -304,6 +400,7 @@ export class DesktopSpiderUiController {
   public async releaseResources(): Promise<void> {
     this.playerController.stop();
     await this.releasePlaybackProxy();
+    this.clearPlaybackSession();
   }
 
   private async run(
@@ -328,6 +425,7 @@ export class DesktopSpiderUiController {
         this.localError = error;
         if (operation === "player") {
           await this.releasePlaybackProxy();
+          this.clearPlaybackSession();
           this.playerController.markError(error.code, error.message);
         }
       }
@@ -354,6 +452,7 @@ export class DesktopSpiderUiController {
     };
     if (operation === "player") {
       await this.releasePlaybackProxy();
+      this.clearPlaybackSession();
       this.playerController.markError(code, displayMessage);
     }
   }
@@ -384,12 +483,20 @@ export class DesktopSpiderUiController {
     this.playbackCatalog = null;
     this.playbackSelection = null;
   }
+
+  private clearPlaybackSession(): void {
+    this.playerHost = "embedded";
+    this.playbackSession = null;
+  }
 }
 
 export interface DesktopSpiderUiServerOptions {
   ui?: DesktopSpiderUiController;
   importer?: DesktopSpiderImportController;
   stateStore?: DesktopStateStorePort;
+  onPlayerOpen?: () => void | Promise<void>;
+  onPlayerAttach?: () => void | Promise<void>;
+  onPlayerStop?: () => void | Promise<void>;
   rendererDirectory?: string;
   siteKey?: string;
   ext?: string;
@@ -402,6 +509,9 @@ export class DesktopSpiderUiServer {
   private readonly directUi: DesktopSpiderUiController | undefined;
   private readonly importer: DesktopSpiderImportController | undefined;
   private readonly stateStore: DesktopStateStorePort | undefined;
+  private readonly onPlayerOpen: (() => void | Promise<void>) | undefined;
+  private readonly onPlayerAttach: (() => void | Promise<void>) | undefined;
+  private readonly onPlayerStop: (() => void | Promise<void>) | undefined;
   private readonly rendererDirectory: string | undefined;
   private readonly siteKey: string | undefined;
   private readonly ext: string | undefined;
@@ -423,6 +533,9 @@ export class DesktopSpiderUiServer {
     this.directUi = options.ui;
     this.importer = options.importer;
     this.stateStore = options.stateStore;
+    this.onPlayerOpen = options.onPlayerOpen;
+    this.onPlayerAttach = options.onPlayerAttach;
+    this.onPlayerStop = options.onPlayerStop;
     this.rendererDirectory = options.rendererDirectory
       ? resolvePath(options.rendererDirectory)
       : undefined;
@@ -436,6 +549,10 @@ export class DesktopSpiderUiServer {
   public get url(): string {
     if (!this.boundUrl) throw new Error("Desktop Spider UI server is not running");
     return this.boundUrl;
+  }
+
+  public attachPlayerHost(): DesktopSpiderUiState | null {
+    return this.activeUi()?.attachPlayer() ?? null;
   }
 
   public async start(): Promise<void> {
@@ -591,6 +708,23 @@ export class DesktopSpiderUiServer {
             await ui.detail(vodId);
             this.persistPage({ navigation: "detail", recentDetailId: vodId });
           }
+          break;
+        case "/api/player/detach":
+          ui.detachPlayer();
+          break;
+        case "/api/player/open":
+          if (ui.state.playerHost === "detached") await this.onPlayerOpen?.();
+          break;
+        case "/api/player/attach":
+          ui.attachPlayer();
+          await this.onPlayerAttach?.();
+          break;
+        case "/api/player/stop":
+          await ui.stopPlayer();
+          await this.onPlayerStop?.();
+          break;
+        case "/api/player/sync":
+          ui.syncPlayerState(playerMediaSyncFromRequest(body));
           break;
         case "/api/player":
           if (Object.prototype.hasOwnProperty.call(body, "lineIndex")
@@ -842,6 +976,14 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
       state.status === "error" && state.error?.code.startsWith("PLAYBACK_") === true,
     )
     : "";
+  const playerMarkup = state.playerHost === "detached"
+    ? `<section data-testid="detached-player-panel" class="embedded-player-panel">
+        <strong>独立播放窗口</strong>
+        <p data-testid="detached-player-status">播放已转移到独立窗口，主窗口不会后台播放。</p>
+        <button data-action="player-attach">返回主窗口</button>
+        <button data-action="player-stop">停止播放</button>
+      </section>`
+    : renderEmbeddedPlayer(state.player);
   const detail = state.detail
     ? `<section data-testid="detail-panel" class="detail-panel">
         <h2>${escapeHtml(stringValue(state.detail.vod_name, "详情"))}</h2>
@@ -896,7 +1038,7 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
       </form>
       ${detail}
       ${playbackCatalog}
-      ${renderEmbeddedPlayer(state.player)}
+      ${playerMarkup}
       <section class="vod-list" data-testid="vod-list">${items}</section>
     </main>
     <script>
@@ -914,6 +1056,8 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
         document.querySelectorAll('[data-action="detail"]').forEach((button) => button.addEventListener('click', () => send('/api/detail', { vodId: button.dataset.vodId })));
         document.querySelectorAll('[data-action="switch"]').forEach((button) => button.addEventListener('click', () => send('/api/switch')));
         document.querySelectorAll('[data-action="close"]').forEach((button) => button.addEventListener('click', () => send('/api/close')));
+        document.querySelectorAll('[data-action="player-attach"]').forEach((button) => button.addEventListener('click', () => send('/api/player/attach')));
+        document.querySelectorAll('[data-action="player-stop"]').forEach((button) => button.addEventListener('click', () => send('/api/player/stop')));
         const lineButtons = [...document.querySelectorAll('[data-action="playback-line"]')];
         const linePanels = [...document.querySelectorAll('[data-playback-line]')];
         const activateLine = (lineIndex) => {
@@ -1034,6 +1178,10 @@ function stringValue(value: unknown, fallback: string): string {
   return typeof value === "string" ? value : fallback;
 }
 
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
 function displaySource(value: string): string {
   const text = value.trim();
   if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) return text.length <= 64 ? text : `${text.slice(0, 36)}…${text.slice(-12)}`;
@@ -1066,6 +1214,14 @@ function clonePlaybackCatalog(catalog: PlaybackCatalog | null): PlaybackCatalog 
   };
 }
 
+function clonePlaybackSession(session: DesktopPlaybackSession | null): DesktopPlaybackSession | null {
+  if (!session) return null;
+  return {
+    ...session,
+    media: { ...session.media },
+  };
+}
+
 function recordOfStrings(value: unknown): Record<string, string> {
   if (!isRecord(value)) return {};
   return Object.fromEntries(
@@ -1075,6 +1231,27 @@ function recordOfStrings(value: unknown): Record<string, string> {
 
 function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function playerMediaSyncFromRequest(body: Record<string, unknown>): PlayerMediaSync {
+  const patch: PlayerMediaSync = {};
+  if (isPlaybackStatus(body.status)) patch.status = body.status;
+  if (typeof body.currentTime === "number") patch.currentTime = body.currentTime;
+  if (typeof body.duration === "number") patch.duration = body.duration;
+  if (typeof body.volume === "number") patch.volume = body.volume;
+  if (typeof body.muted === "boolean") patch.muted = body.muted;
+  return patch;
+}
+
+function isPlaybackStatus(value: unknown): value is PlaybackStatus {
+  return value === "idle"
+    || value === "resolving"
+    || value === "loading"
+    || value === "playing"
+    || value === "paused"
+    || value === "ended"
+    || value === "stopped"
+    || value === "error";
 }
 
 function statePatchFromRequest(body: Record<string, unknown>): DesktopStatePatch {

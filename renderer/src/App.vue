@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 
 import { RendererApi } from "./api.js";
 import ConfigImportView from "./ConfigImportView.vue";
+import PlayerWindow from "./PlayerWindow.vue";
 import SpiderView from "./SpiderView.vue";
 import {
   applyRendererEnvelope,
@@ -10,6 +11,7 @@ import {
   type RendererPersistenceState,
   type RendererEnvelope,
   type RendererState,
+  type PlayerMediaSync,
   type RendererViewStatePatch,
 } from "./state.js";
 
@@ -21,19 +23,27 @@ const order = ref<"forward" | "reverse">("forward");
 const persistence = ref<RendererPersistenceState | null>(null);
 const restoreCandidate = ref<RendererPersistenceState | null>(null);
 const restored = ref(false);
+const isPlayerWindow = new URL(window.location.href).searchParams.get("player-window") === "1";
 let scrollTimer: ReturnType<typeof setTimeout> | undefined;
+let playerSyncTimer: ReturnType<typeof setTimeout> | undefined;
+let latestPlayerSync: PlayerMediaSync | null = null;
 
 const showImport = computed(() => state.value.import.status !== "ready" || !state.value.import.sessionReady);
 
 onMounted(() => {
+  if (isPlayerWindow) return;
   window.addEventListener("scroll", handleScroll, { passive: true });
+  window.addEventListener("qx-player-attached", refreshAfterPlayerWindow);
   void request("state", () => api.getState());
 });
 
 onBeforeUnmount(() => {
+  if (isPlayerWindow) return;
   window.removeEventListener("scroll", handleScroll);
+  window.removeEventListener("qx-player-attached", refreshAfterPlayerWindow);
   if (scrollTimer !== undefined) clearTimeout(scrollTimer);
   persistView({ scrollTop: window.scrollY });
+  void flushPlayerSync();
 });
 
 async function request(operation: string, call: () => Promise<RendererEnvelope>): Promise<void> {
@@ -69,6 +79,47 @@ function persistView(patch: RendererViewStatePatch): void {
   void api.post("/api/view-state", patch).then((envelope) => {
     if (envelope.persistence) persistence.value = clonePersistence(envelope.persistence);
   }).catch(() => undefined);
+}
+
+function syncPlayer(value: PlayerMediaSync): void {
+  latestPlayerSync = value;
+  if (playerSyncTimer !== undefined) clearTimeout(playerSyncTimer);
+  playerSyncTimer = setTimeout(() => {
+    playerSyncTimer = undefined;
+    void flushPlayerSync();
+  }, 150);
+}
+
+async function flushPlayerSync(): Promise<void> {
+  const value = latestPlayerSync;
+  latestPlayerSync = null;
+  if (!value) return;
+  try {
+    const envelope = await api.post("/api/player/sync", value);
+    if (envelope.state) state.value = applyRendererEnvelope(state.value, envelope);
+  } catch {
+    // Playback cleanup remains local if the host is closing.
+  }
+}
+
+async function detachPlayer(): Promise<void> {
+  await flushPlayerSync();
+  await request("detach-player", () => api.post("/api/player/detach"));
+  await nextTick();
+  await flushPlayerSync();
+  await request("open-player", () => api.post("/api/player/open"));
+}
+
+function attachPlayer(): void {
+  post("attach-player", "/api/player/attach");
+}
+
+function stopPlayer(): void {
+  post("stop-player", "/api/player/stop");
+}
+
+function refreshAfterPlayerWindow(): void {
+  void request("player-window", () => api.getState());
 }
 
 function handleScroll(): void {
@@ -129,7 +180,9 @@ function play(line: number, episode: number): void {
 </script>
 
 <template>
+  <PlayerWindow v-if="isPlayerWindow" />
   <div
+    v-else
     id="vue-renderer"
     data-testid="vue-renderer"
     :data-ready="String(state.ready)"
@@ -167,6 +220,10 @@ function play(line: number, episode: number): void {
       @switch="post('switch', '/api/switch')"
       @close="post('close', '/api/close')"
       @view-state="persistView"
+      @player-detach="detachPlayer"
+      @player-attach="attachPlayer"
+      @player-stop="stopPlayer"
+      @player-sync="syncPlayer"
     />
   </div>
 </template>

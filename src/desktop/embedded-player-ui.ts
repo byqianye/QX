@@ -32,6 +32,7 @@ export function renderEmbeddedPlayer(state: PlaybackState): string {
         <label>音量 <input data-action="player-volume" type="range" min="0" max="1" step="0.01" value="${state.volume}"></label>
         <button data-action="player-mute">${state.muted ? "取消静音" : "静音"}</button>
         <button data-action="player-fullscreen">全屏</button>
+        <button data-action="player-detach">独立窗口</button>
       </div>
       <p data-testid="player-status">${escapeHtml(statusLabel(state))}</p>
       ${error}
@@ -57,6 +58,18 @@ export function renderEmbeddedPlayer(state: PlaybackState): string {
         const setStatus = (value) => {
           if (panel) panel.dataset.playerStatus = value;
           if (status) status.textContent = value;
+        };
+        const request = async (path) => {
+          await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+        };
+        const detach = async () => {
+          await request('/api/player/detach');
+          destroyHls();
+          video.pause();
+          video.removeAttribute('src');
+          video.load();
+          await request('/api/player/open');
+          window.location.reload();
         };
         const destroyHls = () => {
           if (hlsInstance) {
@@ -102,6 +115,7 @@ export function renderEmbeddedPlayer(state: PlaybackState): string {
         document.querySelectorAll('[data-action="player-volume"]').forEach((input) => on(input, 'input', () => { video.volume = Number(input.value); }));
         document.querySelectorAll('[data-action="player-mute"]').forEach((button) => on(button, 'click', () => { video.muted = !video.muted; button.textContent = video.muted ? '取消静音' : '静音'; }));
         document.querySelectorAll('[data-action="player-fullscreen"]').forEach((button) => on(button, 'click', () => { void video.requestFullscreen?.(); }));
+        document.querySelectorAll('[data-action="player-detach"]').forEach((button) => on(button, 'click', () => { void detach(); }));
         on(video, 'loadstart', () => setStatus('loading'));
         on(video, 'playing', () => setStatus('playing'));
         on(video, 'pause', () => { if (!video.ended) setStatus('paused'); });

@@ -17,6 +17,22 @@ export type SpiderStatus =
 
 export type RendererThemeMode = "system" | "light" | "dark";
 export type RendererNavigation = "home" | "category" | "search" | "detail" | "settings";
+export type PlayerHostMode = "embedded" | "detached";
+export const PLAYBACK_RESTORE_MAX_DRIFT_SECONDS = 2;
+
+export interface RendererPlaybackSession {
+  id: string;
+  host: PlayerHostMode;
+  lineIndex: number | null;
+  episodeIndex: number | null;
+  lineName: string | null;
+  episodeName: string | null;
+  media: {
+    detailId: string | null;
+    title: string | null;
+    url: string;
+  };
+}
 
 export interface RendererPersistenceState {
   theme: RendererThemeMode;
@@ -145,6 +161,14 @@ export interface PlayerState {
   error: RendererError | null;
 }
 
+export interface PlayerMediaSync {
+  status?: PlayerState["status"];
+  currentTime?: number;
+  duration?: number;
+  volume?: number;
+  muted?: boolean;
+}
+
 export interface DetailState {
   detail: Record<string, unknown> | null;
   playbackCatalog: PlaybackCatalog | null;
@@ -155,6 +179,7 @@ export interface DetailState {
 export interface PlaybackState {
   playback: SpiderPlayback;
   player: PlayerState;
+  session: RendererPlaybackSession | null;
 }
 
 export interface ErrorState {
@@ -187,6 +212,8 @@ export interface ApiSpiderState {
   detail: Record<string, unknown> | null;
   playbackCatalog: PlaybackCatalog | null;
   playbackSelection: PlaybackSelection | null;
+  playerHost?: PlayerHostMode;
+  playbackSession?: RendererPlaybackSession | null;
 }
 
 export interface RendererEnvelope {
@@ -236,6 +263,7 @@ export function createRendererState(): RendererState {
         message: "选择条目后解析播放地址。",
       },
       player: emptyPlayerState(),
+      session: null,
     },
     error: { error: null },
   };
@@ -287,6 +315,7 @@ export function applyRendererEnvelope(
     playback: {
       playback: cloneSpiderPlayback(state.playback),
       player: clonePlayerState(state.player),
+      session: clonePlaybackSession(state.playbackSession ?? null),
     },
     error: { error: stateError ? { ...stateError } : null },
   };
@@ -326,6 +355,11 @@ function clonePlayerState(player: PlayerState): PlayerState {
     source: player.source ? { ...player.source, headers: { ...player.source.headers } } : null,
     error: player.error ? { ...player.error } : null,
   };
+}
+
+function clonePlaybackSession(session: RendererPlaybackSession | null): RendererPlaybackSession | null {
+  if (!session) return null;
+  return { ...session, media: { ...session.media } };
 }
 
 function emptyPlayerState(): PlayerState {

@@ -3,12 +3,17 @@ import Hls from "hls.js";
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import PlayerControls from "./PlayerControls.vue";
-import type { PlayerState } from "./state.js";
+import { PLAYBACK_RESTORE_MAX_DRIFT_SECONDS, type PlayerMediaSync, type PlayerState } from "./state.js";
 
 const windowWithHls = window as Window & { Hls?: typeof Hls };
 windowWithHls.Hls ??= Hls;
 
-const props = defineProps<{ state: PlayerState }>();
+const props = defineProps<{ state: PlayerState; detachable?: boolean }>();
+const emit = defineEmits<{
+  sync: [value: PlayerMediaSync];
+  detach: [];
+  stop: [];
+}>();
 
 const video = ref<HTMLVideoElement | null>(null);
 const localStatus = ref(props.state.status);
@@ -18,6 +23,8 @@ const duration = ref(props.state.duration);
 const muted = ref(props.state.muted);
 let hls: Hls | null = null;
 const cleanups: Array<() => void> = [];
+let positionRestored = false;
+let resumeRequested = false;
 
 watch(() => props.state.source?.url, () => {
   loadSource();
@@ -45,6 +52,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  emitSync(localStatus.value);
   cleanups.splice(0).forEach((cleanup) => cleanup());
   destroyHls();
   if (video.value) {
@@ -59,6 +67,8 @@ function loadSource(): void {
   if (!element) return;
   cleanups.splice(0).forEach((cleanup) => cleanup());
   destroyHls();
+  positionRestored = false;
+  resumeRequested = false;
   element.pause();
   element.removeAttribute("src");
   element.load();
@@ -68,6 +78,8 @@ function loadSource(): void {
     localStatus.value = props.state.status;
     return;
   }
+  element.volume = props.state.volume;
+  element.muted = props.state.muted;
   localStatus.value = "loading";
   if (isHls(source.url)
     && element.canPlayType("application/vnd.apple.mpegurl") === ""
@@ -80,23 +92,51 @@ function loadSource(): void {
     element.load();
   }
   listen(element, "loadstart", () => { localStatus.value = "loading"; });
-  listen(element, "playing", () => { localStatus.value = "playing"; });
-  listen(element, "pause", () => { if (!element.ended) localStatus.value = "paused"; });
-  listen(element, "ended", () => { localStatus.value = "ended"; });
-  listen(element, "durationchange", () => {
+  const restorePosition = () => {
     duration.value = Number.isFinite(element.duration) ? element.duration : 0;
-  });
+    const target = props.state.currentTime;
+    if (!positionRestored && target > 0 && Number.isFinite(target)) {
+      const boundedTarget = Math.min(target, duration.value || target);
+      element.currentTime = boundedTarget;
+      currentTime.value = element.currentTime;
+      positionRestored = Math.abs(element.currentTime - boundedTarget) <= PLAYBACK_RESTORE_MAX_DRIFT_SECONDS;
+    }
+    emitSync();
+  };
+  listen(element, "loadedmetadata", restorePosition);
+  listen(element, "durationchange", restorePosition);
+  listen(element, "canplay", resumeIfNeeded);
   listen(element, "timeupdate", () => {
     currentTime.value = element.currentTime;
+    duration.value = Number.isFinite(element.duration) ? element.duration : duration.value;
+    emitSync();
   });
+  listen(element, "playing", () => { localStatus.value = "playing"; emitSync("playing"); });
+  listen(element, "pause", () => { if (!element.ended) { localStatus.value = "paused"; emitSync("paused"); } });
+  listen(element, "ended", () => { localStatus.value = "ended"; emitSync("ended"); });
   listen(element, "error", () => {
     localStatus.value = "error";
     localError.value = "播放失败";
+    emitSync("error");
+  });
+  resumeIfNeeded();
+}
+
+function resumeIfNeeded(): void {
+  const element = video.value;
+  if (!element || resumeRequested || props.state.status !== "playing") return;
+  resumeRequested = true;
+  void element.play().catch((error: unknown) => {
+    resumeRequested = false;
+    localStatus.value = "error";
+    localError.value = error instanceof Error ? error.message : "播放恢复失败";
+    emitSync("error");
   });
 }
 
 function setVolume(value: number): void {
   if (video.value) video.value.volume = value;
+  emitSync();
 }
 
 function setSeek(value: number): void {
@@ -104,11 +144,13 @@ function setSeek(value: number): void {
     video.value.currentTime = value;
     currentTime.value = video.value.currentTime;
   }
+  emitSync();
 }
 
 function toggleMute(): void {
   muted.value = !muted.value;
   if (video.value) video.value.muted = muted.value;
+  emitSync();
 }
 
 function stopPlayback(): void {
@@ -120,6 +162,19 @@ function stopPlayback(): void {
   }
   localStatus.value = "stopped";
   localError.value = null;
+  emit("stop");
+  emitSync("stopped");
+}
+
+function emitSync(status = localStatus.value): void {
+  const element = video.value;
+  emit("sync", {
+    status: status as PlayerState["status"],
+    currentTime: element?.currentTime ?? currentTime.value,
+    duration: element && Number.isFinite(element.duration) ? element.duration : duration.value,
+    volume: element?.volume ?? props.state.volume,
+    muted: element?.muted ?? muted.value,
+  });
 }
 
 function formatTime(value: number): string {
@@ -182,10 +237,12 @@ function statusLabel(state: PlayerState, status: string, error: string | null): 
         :duration="duration"
         :volume="props.state.volume"
         :muted="muted"
+        :detachable="props.detachable !== false"
         @play="play"
         @pause="pause"
         @resume="play"
         @stop="stopPlayback"
+        @detach="emit('detach')"
         @reload="loadSource"
         @seek="setSeek"
         @volume="setVolume"

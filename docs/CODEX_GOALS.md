@@ -267,7 +267,47 @@ npm run electron:e2e:package
 checkpoint: complete G27 desktop state persistence
 ```
 
-G28–G78（未开始）
+## G28（已完成）
+
+### 目标
+在同一个 Playback Session 内实现内嵌播放器与独立播放窗口的切换，始终只保留一个播放宿主、一个媒体源和一个 LocalProxy 会话。
+
+### 状态
+已完成。采用“销毁旧宿主、恢复同一逻辑 Session”的方案；主窗口先卸载 `<video>`，再创建子窗口，返回主窗口时先等待子窗口 `closed` 再恢复内嵌播放器。
+
+### 依赖
+- G27 / 页面与窗口状态持久化
+- G26 / Open Design Token 与播放器控制规范
+
+### 范围
+- `DesktopPlaybackSession`、主窗口/子窗口宿主状态和 `/api/player/detach`、`/api/player/open`、`/api/player/attach`、`/api/player/sync`、`/api/player/stop`
+- Electron 子窗口生命周期、主窗口关闭时的播放器/Proxy/sidecar 清理
+- 播放进度、音量、静音、暂停状态、线路/选集和媒体源恢复；时间恢复误差目标不超过 2 秒
+- 不做 PiP、系统媒体控制、第二播放器或无关窗口重构
+
+### 验收标准
+- 内嵌→独立→内嵌保持 Playback Session ID、媒体 URL、线路、选集和播放状态
+- 切换不重复调用 `playerContent`，不产生第二个 Proxy token，不保留后台音频
+- 子窗口支持播放、暂停、进度、音量、静音、全屏、当前线路/选集、返回主窗口和停止
+- 子窗口关闭、停止播放和主窗口退出均释放对应资源
+- 专项测试、完整测试、typecheck、Windows 打包和 packaged E2E 通过
+
+### 验证结果
+- `npx vitest run tests/detachable-player.test.ts tests/electron-e2e.test.ts tests/vue-renderer.test.ts tests/desktop-ui.test.ts tests/playback.test.ts`：5 files / 30 tests passed
+- `npm run typecheck`：通过
+- `npm test`：20 files / 112 tests passed
+- `npm run electron:package:win`：通过
+- `npm run electron:e2e:package`：first/restarted 两轮通过，播放器与资源清理检查全部通过
+
+### 文档
+- `docs/spike-27-detachable-player.md`
+
+### checkpoint
+```text
+checkpoint: complete G28 detachable player
+```
+
+G29–G78（未开始）
 
 （略，按主路线图执行）
 

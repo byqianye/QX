@@ -235,6 +235,12 @@ p { margin-bottom: 12px; }
 .playback-stage { display: grid; gap: 16px; margin-top: 32px; }
 .playback-stage-empty { padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
 .playback-selector, .embedded-player-panel, .panel { padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.detached-player-panel { display: grid; gap: 8px; }
+.player-window-shell { display: grid; min-height: 100vh; gap: 16px; padding: 24px; background: var(--bg); }
+.player-window-header h1 { margin-bottom: 4px; }
+.player-window-stage { display: grid; gap: 16px; }
+.player-window-meta { display: flex; flex-wrap: wrap; gap: 16px; color: var(--muted); }
+.player-window-actions { justify-content: flex-end; }
 .playback-selector strong { display: block; margin-bottom: 12px; }
 .playback-lines button[aria-pressed="true"], .playback-order button[aria-pressed="true"] { color: var(--accent); background: color-mix(in oklab, var(--accent), transparent 90%); border-color: color-mix(in oklab, var(--accent), transparent 55%); }
 .playback-lines, .episode-grid { display: flex; flex-wrap: wrap; gap: 8px; }

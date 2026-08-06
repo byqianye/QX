@@ -36,6 +36,9 @@ if (process.env.QX_E2E_USER_DATA) {
 
 let shell: DesktopShellRuntime | undefined;
 let mainWindow: BrowserWindow | undefined;
+let playerWindow: BrowserWindow | undefined;
+let playerWindowUrl: string | undefined;
+let uiServer: DesktopSpiderUiServer | undefined;
 let cleanupPromise: Promise<void> | undefined;
 let quitting = false;
 let lastClient: DesktopSpiderClient | undefined;
@@ -83,12 +86,17 @@ function createShell(): DesktopShellRuntime {
           },
         }),
       });
-      return new DesktopSpiderUiServer({
+      const server = new DesktopSpiderUiServer({
         importer,
         rendererDirectory: join(app.getAppPath(), "dist", "renderer"),
         stateStore,
+        onPlayerOpen: openPlayerWindow,
+        onPlayerAttach: closePlayerWindow,
+        onPlayerStop: closePlayerWindow,
         ...(PLAYBACK_PROXY_ORIGINS.length > 0 ? { playbackProxyOrigins: PLAYBACK_PROXY_ORIGINS } : {}),
       });
+      uiServer = server;
+      return server;
     },
   });
 }
@@ -110,9 +118,73 @@ function forceBundledJreDisabled(): boolean {
 
 async function closeShell(): Promise<void> {
   if (!cleanupPromise) {
-    cleanupPromise = shell?.close() ?? Promise.resolve();
+    cleanupPromise = (async () => {
+      await closePlayerWindow();
+      await shell?.close();
+    })();
   }
   await cleanupPromise;
+}
+
+async function openPlayerWindow(): Promise<void> {
+  if (!playerWindowUrl) throw new Error("Player window is unavailable before the main window starts");
+  if (playerWindow && !playerWindow.isDestroyed()) {
+    playerWindow.focus();
+    return;
+  }
+
+  const child = new BrowserWindow({
+    width: 1120,
+    height: 760,
+    minWidth: 960,
+    minHeight: 640,
+    show: !SMOKE_MODE && !E2E_MODE,
+    title: `${APP_NAME} · 播放`,
+    ...(mainWindow ? { parent: mainWindow } : {}),
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  playerWindow = child;
+  child.on("closed", () => {
+    if (playerWindow === child) playerWindow = undefined;
+    uiServer?.attachPlayerHost();
+    notifyMainPlayerAttached();
+  });
+
+  try {
+    await child.loadURL(new URL("?player-window=1", playerWindowUrl).toString());
+  } catch (error) {
+    if (!child.isDestroyed()) child.destroy();
+    throw error;
+  }
+}
+
+async function closePlayerWindow(): Promise<void> {
+  const child = playerWindow;
+  if (!child || child.isDestroyed()) {
+    playerWindow = undefined;
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    child.once("closed", finish);
+    child.close();
+    if (child.isDestroyed()) finish();
+  });
+}
+
+function notifyMainPlayerAttached(): void {
+  if (quitting || !mainWindow || mainWindow.isDestroyed()) return;
+  void mainWindow.webContents.executeJavaScript(
+    "window.dispatchEvent(new Event('qx-player-attached'))",
+  ).catch(() => undefined);
 }
 
 async function createMainWindow(): Promise<void> {
@@ -141,6 +213,7 @@ async function createMainWindow(): Promise<void> {
     return;
   }
   const uiUrl = started.url;
+  playerWindowUrl = uiUrl;
   const persisted = getDesktopStateStore().state;
   const displays = screen.getAllDisplays().map((display) => display.workArea);
   const restoredBounds = restoreWindowBounds(persisted.window, displays, screen.getPrimaryDisplay().workArea);

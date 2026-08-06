@@ -35,6 +35,9 @@ export interface PackagedE2eChecks {
   embeddedHlsDom?: boolean;
   proxyHlsDom?: boolean;
   vodPlaybackFlow?: boolean;
+  detachablePlayer?: boolean;
+  singlePlaybackSession?: boolean;
+  noBackgroundPlayer?: boolean;
 }
 
 export interface PackagedE2eResult {
@@ -130,6 +133,11 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       });
       const headeredHtml = await readPage(options);
       const headeredDom = await probeWindow(options, headeredHtml);
+      const detached = await post(options.baseUrl, "/api/player/detach");
+      const detachedHtml = await readPage(options);
+      const opened = await post(options.baseUrl, "/api/player/open");
+      const attached = await post(options.baseUrl, "/api/player/attach");
+      const attachedHtml = await readPage(options);
       checks.embeddedMp4 = playbackReady
         && playbackOpened.state?.status === "ready"
         && mp4.state?.player?.status === "loading"
@@ -163,6 +171,21 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
           && playerSourceHeaders(headered.state) !== null
           && Object.keys(playerSourceHeaders(headered.state) ?? {}).length === 0
           && headeredHtml.includes('data-testid="embedded-player"');
+      const sessionId = headered.state?.playbackSession?.id;
+      checks.singlePlaybackSession = typeof sessionId === "string"
+        && detached.state?.playbackSession?.id === sessionId
+        && attached.state?.playbackSession?.id === sessionId
+        && playerSourceUrl(detached.state) === playerSourceUrl(headered.state)
+        && playerSourceUrl(attached.state) === playerSourceUrl(headered.state);
+      checks.noBackgroundPlayer = detached.state?.playerHost === "detached"
+        && (!options.readWindowHtml
+          || (detachedHtml.includes('data-testid="detached-player-panel"')
+            && !detachedHtml.includes('data-testid="embedded-player"')));
+      checks.detachablePlayer = checks.singlePlaybackSession
+        && checks.noBackgroundPlayer
+        && opened.state?.playerHost === "detached"
+        && attached.state?.playerHost === "embedded"
+        && (!options.readWindowHtml || attachedHtml.includes('data-testid="embedded-player"'));
       checks.noExternalBrowser = !mp4Html.includes("window.open")
         && !hlsHtml.includes("window.open")
         && !headeredHtml.includes("window.open")
@@ -315,6 +338,8 @@ interface UiState {
     error?: { code?: string; message?: string } | null;
   } | null;
   playbackSelection?: { lineIndex?: number; episodeIndex?: number } | null;
+  playerHost?: "embedded" | "detached";
+  playbackSession?: { id?: string; host?: "embedded" | "detached" } | null;
 }
 
 function playerSourceUrl(state: UiState | null): string | null {

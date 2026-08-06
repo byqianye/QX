@@ -18,6 +18,7 @@ import type {
   RendererNavigation,
   RendererState,
   RendererThemeMode,
+  PlayerMediaSync,
   RendererViewStatePatch,
 } from "./state.js";
 
@@ -45,6 +46,10 @@ const emit = defineEmits<{
   switch: [];
   close: [];
   viewState: [patch: RendererViewStatePatch];
+  playerDetach: [];
+  playerAttach: [];
+  playerStop: [];
+  playerSync: [value: PlayerMediaSync];
 }>();
 
 const view = ref<"browse" | "settings">(props.initialNavigation === "settings" ? "settings" : "browse");
@@ -91,6 +96,7 @@ const canStart = computed(() => props.state.spider.status === "idle"
 const activePage = computed(() => view.value === "settings" ? "settings" : props.state.browse.page);
 const retryable = computed(() => props.state.error.error?.code.startsWith("PLAYBACK_") === true);
 const hasPlayback = computed(() => props.state.detail.playbackCatalog !== null || props.state.playback.player.source !== null);
+const playerDetached = computed(() => props.state.playback.session?.host === "detached");
 
 watch(theme, () => {
   emit("viewState", {
@@ -266,7 +272,25 @@ function navigationFromPage(page: string): RendererNavigation {
               @episode="emit('play', $event[0], $event[1])"
               @retry="emit('retry')"
             />
-            <EmbeddedPlayer :state="props.state.playback.player" />
+            <template v-if="playerDetached">
+              <section class="panel detached-player-panel" data-testid="detached-player-panel">
+                <span class="section-kicker">独立播放窗口</span>
+                <h3>{{ props.state.playback.session?.media.title ?? "当前媒体" }}</h3>
+                <p class="meta">{{ props.state.playback.session?.lineName ?? "当前线路" }} · {{ props.state.playback.session?.episodeName ?? "当前选集" }}</p>
+                <p data-testid="detached-player-status">播放已转移到独立窗口，主窗口不会后台播放。</p>
+                <div class="button-row">
+                  <button type="button" class="button-primary" data-action="player-attach" @click="emit('playerAttach')">返回主窗口</button>
+                  <button type="button" class="button-secondary" data-action="player-stop" @click="emit('playerStop')">停止播放</button>
+                </div>
+              </section>
+            </template>
+            <EmbeddedPlayer
+              v-else
+              :state="props.state.playback.player"
+              @detach="emit('playerDetach')"
+              @stop="emit('playerStop')"
+              @sync="emit('playerSync', $event)"
+            />
             <DiagnosticPanel :source="props.state.spider.source" :player-status="props.state.playback.player.status" :code="props.state.error.error?.code" />
           </section>
           <section v-else class="playback-stage playback-stage-empty" data-testid="playback-panel">

@@ -1,5 +1,11 @@
 <script setup lang="ts">
-defineProps<{ currentTime: number; duration: number; volume: number; muted: boolean }>();
+const props = defineProps<{
+  currentTime: number;
+  duration: number;
+  volume: number;
+  muted: boolean;
+  detachable?: boolean;
+}>();
 const emit = defineEmits<{
   play: [];
   pause: [];
@@ -10,6 +16,7 @@ const emit = defineEmits<{
   volume: [value: number];
   mute: [];
   fullscreen: [];
+  detach: [];
 }>();
 
 function numberValue(event: Event): number | null {
@@ -44,13 +51,14 @@ function formatTime(value: number): string {
     <button data-action="player-stop" type="button" @click="emit('stop')">停止</button>
     <button data-action="player-reload" type="button" @click="emit('reload')">重新加载</button>
     <label>进度
-      <input data-action="player-seek" data-testid="player-seek" type="range" min="0" :max="duration" step="0.1" :value="currentTime" @input="seek">
+      <input data-action="player-seek" data-testid="player-seek" type="range" min="0" :max="props.duration" step="0.1" :value="props.currentTime" @input="seek">
     </label>
-    <span data-testid="player-time">{{ formatTime(currentTime) }} / {{ formatTime(duration) }}</span>
+    <span data-testid="player-time">{{ formatTime(props.currentTime) }} / {{ formatTime(props.duration) }}</span>
     <label>音量
-      <input data-action="player-volume" type="range" min="0" max="1" step="0.01" :value="volume" @input="volume">
+      <input data-action="player-volume" type="range" min="0" max="1" step="0.01" :value="props.volume" @input="volume">
     </label>
-    <button data-action="player-mute" type="button" @click="emit('mute')">{{ muted ? "取消静音" : "静音" }}</button>
+    <button data-action="player-mute" type="button" @click="emit('mute')">{{ props.muted ? "取消静音" : "静音" }}</button>
     <button data-action="player-fullscreen" type="button" @click="emit('fullscreen')">全屏</button>
+    <button v-if="props.detachable !== false" data-action="player-detach" type="button" @click="emit('detach')">独立窗口</button>
   </div>
 </template>

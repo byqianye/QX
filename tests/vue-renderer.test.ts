@@ -22,6 +22,7 @@ import CategoryTabs from "../renderer/src/CategoryTabs.vue";
 import EmbeddedPlayer from "../renderer/src/EmbeddedPlayer.vue";
 import MediaCard from "../renderer/src/MediaCard.vue";
 import PlaybackSelector from "../renderer/src/PlaybackSelector.vue";
+import PlayerWindow from "../renderer/src/PlayerWindow.vue";
 import SpiderView from "../renderer/src/SpiderView.vue";
 import { displaySource } from "../renderer/src/safe-display.js";
 
@@ -315,6 +316,62 @@ describe("Vue renderer", () => {
     expect(player.get('[data-action="player-mute"]').text()).toContain("取消静音");
     player.unmount();
     selector.unmount();
+  });
+
+  it("moves the single player host without leaving an embedded video behind", async () => {
+    const envelope = formalDesignEnvelope();
+    envelope.state = {
+      ...envelope.state!,
+      player: {
+        status: "paused",
+        source: { parse: 0, url: "http://127.0.0.1/video.mp4", headers: {} },
+        currentTime: 42,
+        duration: 90,
+        volume: 0.35,
+        muted: true,
+        fullscreen: false,
+        error: null,
+      },
+      playerHost: "detached",
+      playbackSession: {
+        id: "session-1",
+        host: "detached",
+        lineIndex: 0,
+        episodeIndex: 0,
+        lineName: "主线路",
+        episodeName: "正片",
+        media: { detailId: "fixture:movie-1", title: "星际航线", url: "http://127.0.0.1/video.mp4" },
+      },
+    };
+    const state = applyRendererEnvelope(createRendererState(), envelope);
+    const main = mount(SpiderView, { props: { state, pending: null, lineIndex: 0, order: "forward" } });
+
+    expect(main.get('[data-testid="detached-player-panel"]')).toBeTruthy();
+    expect(main.find('[data-testid="embedded-player"]').exists()).toBe(false);
+    expect(main.get('[data-testid="detached-player-status"]').text()).toContain("不会后台播放");
+    await main.get('[data-action="player-attach"]').trigger("click");
+    expect(main.emitted("playerAttach")).toHaveLength(1);
+    main.unmount();
+
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "canPlayType").mockReturnValue("");
+    const responses = [envelope, { ...envelope, state: { ...envelope.state!, playerHost: "embedded", playbackSession: { ...envelope.state!.playbackSession!, host: "embedded" } } }];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => ({
+      ok: true,
+      json: async () => String(input) === "/api/player/attach" ? responses[1] : responses[0],
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const child = mount(PlayerWindow);
+    await flushPromises();
+    expect(child.get('[data-testid="player-window"]')).toBeTruthy();
+    expect(child.get('[data-testid="player-window-line"]').text()).toContain("主线路");
+    expect(child.get('[data-testid="embedded-player"]')).toBeTruthy();
+    expect(child.get('[data-action="player-fullscreen"]')).toBeTruthy();
+    await child.get('[data-action="player-attach"]').trigger("click");
+    await flushPromises();
+    expect(fetchMock).toHaveBeenCalledWith("/api/player/attach", expect.objectContaining({ method: "POST" }));
+    child.unmount();
   });
 
   it("keeps long titles, many episodes and keyboard focus reachable", async () => {

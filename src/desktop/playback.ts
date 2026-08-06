@@ -34,6 +34,14 @@ export interface PlaybackState {
   error: PlaybackError | null;
 }
 
+export interface PlaybackMediaSync {
+  status?: PlaybackStatus;
+  currentTime?: number;
+  duration?: number;
+  volume?: number;
+  muted?: boolean;
+}
+
 const INITIAL_STATE: PlaybackState = {
   status: "idle",
   source: null,
@@ -137,6 +145,18 @@ export class EmbeddedPlaybackController {
 
   public setFullscreen(fullscreen: boolean): PlaybackState {
     this.stateValue.fullscreen = fullscreen;
+    return this.state;
+  }
+
+  public syncMedia(patch: PlaybackMediaSync): PlaybackState {
+    if (!this.stateValue.source) return this.state;
+    if (patch.duration !== undefined) this.setDuration(patch.duration);
+    if (patch.currentTime !== undefined) this.seek(patch.currentTime);
+    if (patch.volume !== undefined) this.setVolume(patch.volume);
+    if (patch.muted !== undefined) this.setMuted(patch.muted);
+    if (patch.status !== undefined && patch.status !== "idle" && patch.status !== "resolving") {
+      this.stateValue.status = patch.status;
+    }
     return this.state;
   }
 

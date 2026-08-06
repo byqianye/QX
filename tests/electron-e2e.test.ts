@@ -128,6 +128,9 @@ describe("packaged Electron E2E flow", () => {
         vodPlaybackFlow: true,
         proxyRequired: true,
         noExternalBrowser: true,
+        detachablePlayer: true,
+        singlePlaybackSession: true,
+        noBackgroundPlayer: true,
       },
     });
   });

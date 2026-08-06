@@ -140,6 +140,18 @@ function stopPlayer(): void {
   post("stop-player", "/api/player/stop");
 }
 
+function cancelFallback(): void {
+  post("cancel-fallback", "/api/player/fallback/cancel");
+}
+
+function approveFallback(): void {
+  post("approve-fallback", "/api/player/fallback/approve");
+}
+
+function setFallbackMode(mode: "off" | "prompt" | "auto"): void {
+  post("fallback-mode", "/api/player/fallback/mode", { mode });
+}
+
 function refreshAfterPlayerWindow(): void {
   void request("player-window", () => api.getState(), false);
 }
@@ -254,6 +266,9 @@ function play(line: number, episode: number): void {
       @player-attach="attachPlayer"
       @player-stop="stopPlayer"
       @player-sync="syncPlayer"
+      @fallback-cancel="cancelFallback"
+      @fallback-approve="approveFallback"
+      @fallback-mode="setFallbackMode"
     />
   </div>
 </template>

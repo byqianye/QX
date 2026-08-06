@@ -16,6 +16,7 @@ export interface PackagedE2eOptions {
   verifyPlaybackRules?: boolean;
   verifyPlaybackDebug?: boolean;
   verifySubtitleTracks?: boolean;
+  verifyPlaybackHealth?: boolean;
   verifySniffer?: boolean;
   sniff?: () => Promise<SniffedMedia>;
   playback?: {
@@ -41,6 +42,7 @@ export interface PackagedE2eChecks {
   playbackRules?: boolean;
   playbackDebug?: boolean;
   subtitleTracks?: boolean;
+  playbackHealth?: boolean;
   proxyRequired?: boolean;
   noExternalBrowser?: boolean;
   errorSurface?: boolean;
@@ -265,6 +267,24 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
             && (!track.headers || Object.keys(track.headers).length === 0))
           && subtitlePanel;
       }
+      if (options.verifyPlaybackHealth) {
+        const healthStart = await post(options.baseUrl, "/api/player/sync", {
+          status: "playing",
+          currentTime: 1,
+          event: { type: "buffer-start" },
+        });
+        const healthEnd = await post(options.baseUrl, "/api/player/sync", {
+          status: "playing",
+          currentTime: 2,
+          event: { type: "buffer-end" },
+        });
+        const healthHtml = await readPage(options);
+        checks.playbackHealth = healthStart.state?.playbackHealth !== undefined
+          && healthEnd.state?.playbackHealth?.bufferingCount?.value === 1
+          && healthHtml.includes('data-testid="playback-health-panel"')
+          && healthHtml.includes('data-action="playback-fallback-mode"')
+          && healthHtml.includes('data-action="playback-fallback-debug"');
+      }
     }
 
     const repeated = await load(options.baseUrl, options.configJson);
@@ -407,6 +427,9 @@ interface UiState {
   playbackSelection?: { lineIndex?: number; episodeIndex?: number } | null;
   playerHost?: "embedded" | "detached";
   playbackSession?: { id?: string; host?: "embedded" | "detached" } | null;
+  playbackHealth?: {
+    bufferingCount?: { value?: number | null; samples?: number };
+  };
 }
 
 function playerSourceUrl(state: UiState | null): string | null {

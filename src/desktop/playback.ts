@@ -28,6 +28,26 @@ export interface PlaybackError {
   message: string;
 }
 
+export type PlaybackMediaEventType =
+  | "first-frame"
+  | "startup-timeout"
+  | "buffer-start"
+  | "buffer-end"
+  | "fatal-error"
+  | "segment-failure"
+  | "http-status"
+  | "completion"
+  | "user-pause"
+  | "seek";
+
+export interface PlaybackMediaEvent {
+  type: PlaybackMediaEventType;
+  at?: number;
+  code?: string;
+  reason?: string;
+  status?: number;
+}
+
 export interface PlaybackState {
   status: PlaybackStatus;
   source: PlaybackSource | null;
@@ -47,6 +67,7 @@ export interface PlaybackMediaSync {
   volume?: number;
   muted?: boolean;
   error?: PlaybackError;
+  event?: PlaybackMediaEvent;
 }
 
 const INITIAL_STATE: PlaybackState = {

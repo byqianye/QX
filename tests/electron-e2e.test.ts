@@ -134,6 +134,7 @@ describe("packaged Electron E2E flow", () => {
       getSidecarPid: () => 4321,
       waitForSidecarExit: async () => true,
       verifySubtitleTracks: true,
+      verifyPlaybackHealth: true,
     });
 
     expect(result).toMatchObject({
@@ -151,6 +152,7 @@ describe("packaged Electron E2E flow", () => {
         singlePlaybackSession: true,
         noBackgroundPlayer: true,
         subtitleTracks: true,
+        playbackHealth: true,
       },
     });
   });

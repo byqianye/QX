@@ -16,6 +16,7 @@ import {
   type PersistedWindowState,
 } from "../desktop/state-persistence.js";
 import type { DesktopSpiderClientPort } from "../desktop/spider-client-port.js";
+import type { PlaybackFallbackMode } from "../health/playback-health.js";
 import { EngineRouter } from "../engine/engine-router.js";
 import { readJellyfinEnvironment } from "../jellyfin/jellyfin-adapter.js";
 import { resolveJavaExecutable } from "../spikes/java-probe.js";
@@ -45,6 +46,9 @@ const PLAYBACK_PROXY_ORIGINS = listEnvironment("QX_PLAYBACK_PROXY_ORIGINS");
 const PARSER_ALLOWED_ORIGINS = listEnvironment("QX_PARSE_ALLOWED_ORIGINS");
 const PARSER_CANDIDATES = parserCandidatesEnvironment("QX_PARSE_CANDIDATES_JSON");
 const PLAYBACK_RULES = playbackRulesEnvironment("QX_PLAYBACK_RULES_JSON");
+const PLAYBACK_FALLBACK_MODE = playbackFallbackModeEnvironment("QX_PLAYBACK_FALLBACK_MODE");
+const PLAYBACK_FALLBACK_MAX_ATTEMPTS = numberEnvironment("QX_PLAYBACK_FALLBACK_MAX_ATTEMPTS", 4);
+const PLAYBACK_FALLBACK_TIMEOUT_MS = numberEnvironment("QX_PLAYBACK_FALLBACK_TIMEOUT_MS", 30_000);
 const ISOLATED_SNIFFER_ENABLED = process.env.QX_SNIFF_ENABLED === "1";
 
 if (process.env.QX_E2E_USER_DATA) {
@@ -135,6 +139,9 @@ function createShell(): DesktopShellRuntime {
         ...(PARSER_ALLOWED_ORIGINS.length > 0 ? { parserAllowedOrigins: PARSER_ALLOWED_ORIGINS } : {}),
         ...(PLAYBACK_RULES.length > 0 ? { playbackRules: PLAYBACK_RULES } : {}),
         ...(sniffer ? { sniffer } : {}),
+        playbackFallbackMode: PLAYBACK_FALLBACK_MODE,
+        playbackFallbackMaxAttempts: PLAYBACK_FALLBACK_MAX_ATTEMPTS,
+        playbackFallbackTimeoutMs: PLAYBACK_FALLBACK_TIMEOUT_MS,
       });
       uiServer = server;
       return server;
@@ -601,6 +608,7 @@ async function runE2e(baseUrl: string): Promise<void> {
       verifyPlaybackRules: PLAYBACK_RULES.length > 0,
       verifyPlaybackDebug: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifySubtitleTracks: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
+      verifyPlaybackHealth: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifySniffer: ISOLATED_SNIFFER_ENABLED,
       ...(ISOLATED_SNIFFER_ENABLED
         ? {
@@ -722,6 +730,11 @@ function listEnvironment(name: string): string[] {
     .split(",")
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
+}
+
+function playbackFallbackModeEnvironment(name: string): PlaybackFallbackMode {
+  const value = process.env[name];
+  return value === "off" || value === "auto" || value === "prompt" ? value : "prompt";
 }
 
 function parserCandidatesEnvironment(name: string): ParserCandidate[] {

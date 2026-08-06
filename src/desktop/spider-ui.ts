@@ -17,6 +17,7 @@ import {
 import { renderEmbeddedPlayer } from "./embedded-player-ui.js";
 import {
   EmbeddedPlaybackController,
+  type PlaybackMediaEvent,
   type PlaybackMediaSync,
   type PlaybackStatus,
   type PlaybackState,
@@ -49,6 +50,15 @@ import {
 import type { PlaybackRule } from "./playback-rules.js";
 import type { IsolatedSniffer } from "../electron/isolated-sniffer.js";
 import { isRemoteSubtitleTrack, type SubtitleTrack } from "../subtitles.js";
+import {
+  PlaybackFallbackCoordinator,
+  PlaybackHealthRegistry,
+  type FallbackCandidate,
+  type PlaybackFallbackMode,
+  type PlaybackFallbackState,
+  type PlaybackFallbackTrigger,
+  type PlaybackHealthSnapshot,
+} from "../health/playback-health.js";
 
 const require = createRequire(import.meta.url);
 
@@ -116,6 +126,19 @@ export interface DesktopPlaybackSession {
   };
 }
 
+interface PlaybackRequest {
+  flag: string;
+  id: string;
+  vipFlags: string[];
+  timeoutMs?: number;
+  metadata?: Pick<DesktopPlaybackSession, "lineIndex" | "episodeIndex" | "lineName" | "episodeName">;
+}
+
+interface PlaybackFailure {
+  error: unknown;
+  response?: SpiderResponse;
+}
+
 export type PlayerMediaSync = PlaybackMediaSync;
 
 export interface DesktopSpiderUiState {
@@ -139,6 +162,8 @@ export interface DesktopSpiderUiState {
   playbackSession: DesktopPlaybackSession | null;
   scrollTop: number;
   aggregateSearch: AggregateSearchSnapshot | null;
+  playbackHealth: PlaybackHealthSnapshot;
+  fallback: PlaybackFallbackState;
 }
 
 export interface DesktopSpiderUiOptions {
@@ -150,6 +175,9 @@ export interface DesktopSpiderUiOptions {
   parserFetch?: typeof fetch;
   playbackRules?: readonly PlaybackRule[];
   sniffer?: IsolatedSniffer;
+  playbackFallbackMode?: PlaybackFallbackMode;
+  playbackFallbackMaxAttempts?: number;
+  playbackFallbackTimeoutMs?: number;
 }
 
 export class DesktopSpiderUiController {
@@ -172,10 +200,16 @@ export class DesktopSpiderUiController {
   private readonly parserCandidates: readonly ParserCandidate[];
   private readonly parseResolver: ParseChainResolver;
   private readonly sniffer: IsolatedSniffer | undefined;
+  private readonly playbackHealthRegistry: PlaybackHealthRegistry;
+  private readonly fallbackCoordinator: PlaybackFallbackCoordinator;
   private readonly parserAllowedOrigins: readonly string[];
   private parseState: ParseUiState = initialParseState();
   private proxySession: PlaybackProxySession | undefined;
   private subtitleProxySessions: PlaybackProxySession[] = [];
+  private currentPlaybackRequest: PlaybackRequest | null = null;
+  private currentHealthKey = "playback:idle";
+  private readonly fallbackRequests = new Map<string, PlaybackRequest>();
+  private pendingFallback: Promise<void> | null = null;
 
   public constructor(options: DesktopSpiderUiOptions) {
     this.session = options.session;
@@ -183,6 +217,12 @@ export class DesktopSpiderUiController {
     this.parserCandidates = options.parserCandidates?.map(cloneParserCandidate) ?? [];
     this.sniffer = options.sniffer;
     this.parserAllowedOrigins = options.parserAllowedOrigins ?? [];
+    this.playbackHealthRegistry = new PlaybackHealthRegistry();
+    this.fallbackCoordinator = new PlaybackFallbackCoordinator({
+      ...(options.playbackFallbackMode ? { mode: options.playbackFallbackMode } : {}),
+      ...(options.playbackFallbackMaxAttempts ? { maxAttempts: options.playbackFallbackMaxAttempts } : {}),
+      ...(options.playbackFallbackTimeoutMs ? { totalTimeoutMs: options.playbackFallbackTimeoutMs } : {}),
+    });
     this.parseResolver = new ParseChainResolver({
       ...(options.parserAllowedOrigins ? { allowedOrigins: options.parserAllowedOrigins } : {}),
       ...(options.parserFetch ? { fetchImpl: options.parserFetch } : {}),
@@ -223,6 +263,8 @@ export class DesktopSpiderUiController {
       playbackSession: clonePlaybackSession(this.playbackSession),
       scrollTop: this.scrollTop,
       aggregateSearch: this.aggregateSearchValue,
+      playbackHealth: this.publicPlaybackHealth(),
+      fallback: this.fallbackCoordinator.state,
     };
   }
 
@@ -389,7 +431,37 @@ export class DesktopSpiderUiController {
 
   public syncPlayerState(patch: PlayerMediaSync): DesktopSpiderUiState {
     this.playerController.syncMedia(patch);
+    this.recordMediaEvent(patch);
     if (patch.error) this.localError = { ...patch.error };
+    return this.state;
+  }
+
+  public async syncPlayerStateAsync(patch: PlayerMediaSync): Promise<DesktopSpiderUiState> {
+    this.syncPlayerState(patch);
+    const pending = this.pendingFallback;
+    if (pending) await pending;
+    return this.state;
+  }
+
+  public setFallbackMode(mode: PlaybackFallbackMode): DesktopSpiderUiState {
+    this.fallbackCoordinator.setMode(mode);
+    return this.state;
+  }
+
+  public cancelFallback(reason = "用户取消"): DesktopSpiderUiState {
+    this.fallbackCoordinator.cancel(reason);
+    return this.state;
+  }
+
+  public async approveFallback(): Promise<DesktopSpiderUiState> {
+    const decision = this.fallbackCoordinator.approveNext();
+    if (decision.kind !== "attempt") return this.state;
+    const request = this.fallbackRequests.get(decision.candidate.id);
+    if (!request) {
+      this.fallbackCoordinator.stop("回退线路不存在");
+      return this.state;
+    }
+    await this.runPlayerAttempt(request, true);
     return this.state;
   }
 
@@ -399,6 +471,7 @@ export class DesktopSpiderUiController {
   }
 
   public async stopPlayer(): Promise<DesktopSpiderUiState> {
+    this.fallbackCoordinator.cancel("用户停止播放");
     this.playerController.stop();
     this.sniffer?.cancelAll();
     await this.releasePlaybackProxy();
@@ -415,32 +488,66 @@ export class DesktopSpiderUiController {
     timeoutMs?: number,
     metadata?: Pick<DesktopPlaybackSession, "lineIndex" | "episodeIndex" | "lineName" | "episodeName">,
   ): Promise<DesktopSpiderUiState> {
+    const request: PlaybackRequest = {
+      flag,
+      id,
+      vipFlags: [...vipFlags],
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      ...(metadata ? { metadata: { ...metadata } } : {}),
+    };
+    this.currentPlaybackRequest = request;
+    this.currentHealthKey = healthKeyFor(request);
+    this.fallbackRequests.clear();
+    const candidates = this.buildFallbackCandidates(request);
+    for (const candidate of candidates) {
+      const candidateRequest = this.requestForCandidate(candidate, request);
+      if (candidateRequest) this.fallbackRequests.set(candidate.id, candidateRequest);
+    }
+    this.fallbackCoordinator.begin(candidates);
+    return this.runPlayerAttempt(request, true);
+  }
+
+  private async runPlayerAttempt(
+    request: PlaybackRequest,
+    allowFallback: boolean,
+  ): Promise<DesktopSpiderUiState> {
+    this.currentPlaybackRequest = request;
+    this.currentHealthKey = healthKeyFor(request);
+    if (request.metadata?.lineIndex !== null && request.metadata?.lineIndex !== undefined
+      && request.metadata.episodeIndex !== null && request.metadata.episodeIndex !== undefined) {
+      this.playbackSelection = {
+        lineIndex: request.metadata.lineIndex,
+        episodeIndex: request.metadata.episodeIndex,
+      };
+    }
+    this.playbackHealthRegistry.tracker(this.currentHealthKey).beginAttempt();
     this.playerController.stop();
     this.parseState = initialParseState();
     this.playbackSession = null;
     this.playerHost = "embedded";
-    return this.run(
+    const state = await this.run(
       "player",
       async () => {
         await this.session.stopPlayback?.();
-        return this.session.playerContent(flag, id, vipFlags, timeoutMs);
+        return this.session.playerContent(request.flag, request.id, request.vipFlags, request.timeoutMs);
       },
       async () => {
         this.page = "detail";
         const playback = this.session.view.playback;
         if (playback.available) {
           const playbackSessionId = randomUUID();
-          const source = await this.preparePlayback(playback, playbackSessionId, flag);
+          const source = await this.preparePlayback(playback, playbackSessionId, request.flag);
           this.playerController.load(source);
           const sourceState = this.playerController.state.source;
           if (!sourceState) throw new Error("Playback source was not loaded");
+          this.playbackHealthRegistry.tracker(this.currentHealthKey).recordResolve(true);
           this.playbackSession = {
             id: playbackSessionId,
             host: "embedded",
-            lineIndex: metadata?.lineIndex ?? null,
-            episodeIndex: metadata?.episodeIndex ?? null,
-            lineName: metadata?.lineName ?? null,
-            episodeName: metadata?.episodeName ?? null,
+            lineIndex: request.metadata?.lineIndex ?? null,
+            episodeIndex: request.metadata?.episodeIndex ?? null,
+            lineName: request.metadata?.lineName ?? null,
+            episodeName: request.metadata?.episodeName ?? null,
             media: {
               detailId: optionalString(this.detailItem?.vod_id),
               title: optionalString(this.detailItem?.vod_name),
@@ -449,7 +556,12 @@ export class DesktopSpiderUiController {
           };
         }
       },
+      allowFallback ? (failure) => this.handlePlaybackFailure(request, failure) : undefined,
     );
+    if (state.player.status !== "error" && this.fallbackCoordinator.state.status === "trying") {
+      this.fallbackCoordinator.finishAttempt(true);
+    }
+    return state;
   }
 
   public async switchSource(): Promise<DesktopSpiderUiState> {
@@ -505,6 +617,7 @@ export class DesktopSpiderUiController {
     operation: string,
     request: () => Promise<SpiderResponse>,
     onSuccess: (response: SpiderResponse) => void | Promise<void>,
+    onFailure?: (failure: PlaybackFailure) => Promise<boolean>,
   ): Promise<DesktopSpiderUiState> {
     this.activeOperation = operation;
     this.localStatus = "loading";
@@ -515,11 +628,12 @@ export class DesktopSpiderUiController {
         await onSuccess(response);
         this.localStatus = null;
       } else {
-        this.localStatus = "error";
         const error = response.error ?? {
           code: "SPIDER_RPC_ERROR",
           message: "Desktop Spider returned an unsuccessful response",
         };
+        if (onFailure && await onFailure({ response, error })) return this.state;
+        this.localStatus = "error";
         this.localError = error;
         if (operation === "player") {
           await this.releasePlaybackProxy();
@@ -528,11 +642,171 @@ export class DesktopSpiderUiController {
         }
       }
     } catch (error) {
+      if (onFailure && await onFailure({ error })) return this.state;
       await this.setError(error, operation);
     } finally {
       this.activeOperation = null;
     }
     return this.state;
+  }
+
+  private async handlePlaybackFailure(request: PlaybackRequest, failure: PlaybackFailure): Promise<boolean> {
+    const trigger = playbackFallbackTrigger(failure.error, failure.response?.error?.code);
+    const tracker = this.playbackHealthRegistry.tracker(healthKeyFor(request));
+    const code = playbackErrorCode(failure.error) ?? failure.response?.error?.code ?? "PLAYBACK_FAILURE";
+    const reason = playbackErrorMessage(failure.error, failure.response?.error?.message ?? "播放失败");
+    if (trigger === "player-content-failure" || trigger === "parse-failure") {
+      tracker.recordResolve(false);
+    } else if (trigger === "proxy-fatal" || trigger === "player-fatal") {
+      tracker.recordFatalError(code);
+    }
+    const decision = this.fallbackCoordinator.trigger(trigger, reason);
+    if (decision.kind !== "attempt") return false;
+    const nextRequest = this.fallbackRequests.get(decision.candidate.id);
+    if (!nextRequest) {
+      this.fallbackCoordinator.stop("回退线路不存在");
+      return false;
+    }
+    const nextState = await this.runPlayerAttempt(nextRequest, true);
+    return nextState.player.source !== null && nextState.player.status !== "error";
+  }
+
+  private recordMediaEvent(patch: PlaybackMediaSync): void {
+    const tracker = this.playbackHealthRegistry.tracker(this.currentHealthKey);
+    if (patch.currentTime !== undefined && Number.isFinite(patch.currentTime)) {
+      tracker.recordPlaybackDuration(Math.max(0, patch.currentTime));
+    }
+    const event = patch.event;
+    if (!event) {
+      if (patch.status === "playing") tracker.recordFirstFrame();
+      if (patch.error) {
+        void this.triggerMediaFailure(playbackFallbackTrigger(patch.error, patch.error.code), patch.error.message);
+      }
+      return;
+    }
+    switch (event.type) {
+      case "first-frame":
+        tracker.recordFirstFrame(event.at);
+        break;
+      case "startup-timeout":
+        tracker.recordStartupFailure(event.reason, event.at);
+        void this.triggerMediaFailure("startup-timeout", event.reason ?? "起播超时");
+        break;
+      case "buffer-start":
+        tracker.recordBufferStart(event.at);
+        break;
+      case "buffer-end":
+        tracker.recordBufferEnd(event.at);
+        break;
+      case "fatal-error":
+        tracker.recordFatalError(event.code, event.at);
+        void this.triggerMediaFailure("player-fatal", event.code ?? "播放器致命错误");
+        break;
+      case "segment-failure":
+        tracker.recordSegmentFailure(event.reason, event.at);
+        if (tracker.shouldTriggerSegmentFailure()) {
+          void this.triggerMediaFailure("segment-errors", event.reason ?? "连续分片错误");
+        }
+        break;
+      case "http-status":
+        tracker.recordHttpStatus(event.status ?? 0, event.at);
+        if ((event.status ?? 0) >= 500) {
+          void this.triggerMediaFailure("proxy-fatal", `HTTP ${event.status}`);
+        }
+        break;
+      case "completion":
+        tracker.recordCompletion(event.at);
+        break;
+      case "user-pause":
+        tracker.recordUserPause(event.at);
+        break;
+      case "seek":
+        tracker.recordSeek(event.at);
+        break;
+    }
+  }
+
+  private async triggerMediaFailure(trigger: PlaybackFallbackTrigger, reason: string): Promise<void> {
+    const request = this.currentPlaybackRequest;
+    if (!request) return;
+    const decision = this.fallbackCoordinator.trigger(trigger, reason);
+    if (decision.kind !== "attempt") return;
+    const nextRequest = this.fallbackRequests.get(decision.candidate.id);
+    if (!nextRequest) {
+      this.fallbackCoordinator.stop("回退线路不存在");
+      return;
+    }
+    const task = this.runPlayerAttempt(nextRequest, true).then(() => undefined);
+    this.pendingFallback = task;
+    try {
+      await task;
+    } finally {
+      if (this.pendingFallback === task) this.pendingFallback = null;
+    }
+  }
+
+  private buildFallbackCandidates(request: PlaybackRequest): FallbackCandidate[] {
+    const candidates: FallbackCandidate[] = [
+      { id: "current-retry", label: "当前线路重试", kind: "retry-current" },
+      { id: "current-reparse", label: "当前线路重新解析", kind: "reparse-current" },
+    ];
+    const currentLine = request.metadata?.lineIndex ?? null;
+    const currentEpisode = request.metadata?.episodeIndex ?? null;
+    const currentScore = this.playbackHealthRegistry.score(healthKeyFor(request));
+    for (const line of this.playbackCatalog?.lines ?? []) {
+      for (const episode of line.episodes) {
+        if (line.index === currentLine && episode.index === currentEpisode) continue;
+        const alternateRequest: PlaybackRequest = {
+          ...request,
+          flag: line.name,
+          id: episode.id,
+          metadata: {
+            lineIndex: line.index,
+            episodeIndex: episode.index,
+            lineName: line.name,
+            episodeName: episode.name,
+          },
+        };
+        const score = this.playbackHealthRegistry.score(healthKeyFor(alternateRequest));
+        candidates.push({
+          id: `line:${line.index}:episode:${episode.index}`,
+          label: `${line.name} · ${episode.name}`,
+          kind: score !== null && (currentScore === null || score > currentScore) ? "healthier" : "same-content",
+          healthScore: score,
+        });
+      }
+    }
+    return candidates;
+  }
+
+  private requestForCandidate(candidate: FallbackCandidate, current: PlaybackRequest): PlaybackRequest | null {
+    if (candidate.kind === "retry-current" || candidate.kind === "reparse-current") {
+      return { ...current, vipFlags: [...current.vipFlags], ...(current.metadata ? { metadata: { ...current.metadata } } : {}) };
+    }
+    const match = /^line:(\d+):episode:(\d+)$/.exec(candidate.id);
+    if (!match) return null;
+    const line = this.playbackCatalog?.lines.find((item) => item.index === Number(match[1]));
+    const episode = line?.episodes.find((item) => item.index === Number(match[2]));
+    if (!line || !episode) return null;
+    return {
+      ...current,
+      flag: line.name,
+      id: episode.id,
+      vipFlags: [...current.vipFlags],
+      metadata: {
+        lineIndex: line.index,
+        episodeIndex: episode.index,
+        lineName: line.name,
+        episodeName: episode.name,
+      },
+    };
+  }
+
+  private publicPlaybackHealth(): PlaybackHealthSnapshot {
+    return {
+      ...this.playbackHealthRegistry.snapshot(this.currentHealthKey),
+      sourceId: "当前播放线路",
+    };
   }
 
   private async setError(error: unknown, operation?: string): Promise<void> {
@@ -749,6 +1023,9 @@ export interface DesktopSpiderUiServerOptions {
   parserFetch?: typeof fetch;
   playbackRules?: readonly PlaybackRule[];
   sniffer?: IsolatedSniffer;
+  playbackFallbackMode?: PlaybackFallbackMode;
+  playbackFallbackMaxAttempts?: number;
+  playbackFallbackTimeoutMs?: number;
 }
 
 export class DesktopSpiderUiServer {
@@ -769,6 +1046,9 @@ export class DesktopSpiderUiServer {
   private readonly parserFetch: typeof fetch | undefined;
   private readonly playbackRules: readonly PlaybackRule[] | undefined;
   private readonly sniffer: IsolatedSniffer | undefined;
+  private readonly playbackFallbackMode: PlaybackFallbackMode | undefined;
+  private readonly playbackFallbackMaxAttempts: number | undefined;
+  private readonly playbackFallbackTimeoutMs: number | undefined;
   private server: Server | undefined;
   private boundUrl: string | undefined;
   private boundSession: DesktopSpiderSessionPort | undefined;
@@ -801,6 +1081,9 @@ export class DesktopSpiderUiServer {
     this.parserFetch = options.parserFetch;
     this.playbackRules = options.playbackRules;
     this.sniffer = options.sniffer;
+    this.playbackFallbackMode = options.playbackFallbackMode;
+    this.playbackFallbackMaxAttempts = options.playbackFallbackMaxAttempts;
+    this.playbackFallbackTimeoutMs = options.playbackFallbackTimeoutMs;
   }
 
   public get url(): string {
@@ -1025,8 +1308,21 @@ export class DesktopSpiderUiServer {
           await (this.playbackUi() ?? ui).stopPlayer();
           await this.onPlayerStop?.();
           break;
+        case "/api/player/fallback/cancel":
+          (this.playbackUi() ?? ui).cancelFallback();
+          break;
+        case "/api/player/fallback/mode":
+          {
+            const mode = body.mode;
+            if (!isPlaybackFallbackMode(mode)) throw new Error("PLAYBACK_FALLBACK_MODE_INVALID");
+            (this.playbackUi() ?? ui).setFallbackMode(mode);
+          }
+          break;
+        case "/api/player/fallback/approve":
+          await (this.playbackUi() ?? ui).approveFallback();
+          break;
         case "/api/player/sync":
-          (this.playbackUi() ?? ui).syncPlayerState(playerMediaSyncFromRequest(body));
+          await (this.playbackUi() ?? ui).syncPlayerStateAsync(playerMediaSyncFromRequest(body));
           break;
         case "/api/player":
           if (this.playbackUi() && this.playbackUi() !== ui) {
@@ -1100,6 +1396,9 @@ export class DesktopSpiderUiServer {
         ...(this.parserFetch ? { parserFetch: this.parserFetch } : {}),
         ...(this.playbackRules ? { playbackRules: this.playbackRules } : {}),
         ...(this.sniffer ? { sniffer: this.sniffer } : {}),
+        ...(this.playbackFallbackMode ? { playbackFallbackMode: this.playbackFallbackMode } : {}),
+        ...(this.playbackFallbackMaxAttempts ? { playbackFallbackMaxAttempts: this.playbackFallbackMaxAttempts } : {}),
+        ...(this.playbackFallbackTimeoutMs ? { playbackFallbackTimeoutMs: this.playbackFallbackTimeoutMs } : {}),
       });
       this.importedUiBySession.set(session, this.importedUi);
     }
@@ -1349,6 +1648,7 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
         <button data-action="player-stop">停止播放</button>
       </section>`
     : renderEmbeddedPlayer(state.player);
+  const healthMarkup = renderPlaybackHealth(state);
   const detail = state.detail
     ? `<section data-testid="detail-panel" class="detail-panel">
         <h2>${escapeHtml(stringValue(state.detail.vod_name, "详情"))}</h2>
@@ -1405,6 +1705,7 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
       ${detail}
       ${playbackCatalog}
       ${playerMarkup}
+      ${healthMarkup}
       <section class="vod-list" data-testid="vod-list">${items}</section>
     </main>
     <script>
@@ -1424,6 +1725,9 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
         document.querySelectorAll('[data-action="close"]').forEach((button) => button.addEventListener('click', () => send('/api/close')));
         document.querySelectorAll('[data-action="player-attach"]').forEach((button) => button.addEventListener('click', () => send('/api/player/attach')));
         document.querySelectorAll('[data-action="player-stop"]').forEach((button) => button.addEventListener('click', () => send('/api/player/stop')));
+        document.querySelectorAll('[data-action="playback-fallback-cancel"]').forEach((button) => button.addEventListener('click', () => send('/api/player/fallback/cancel')));
+        document.querySelectorAll('[data-action="playback-fallback-approve"]').forEach((button) => button.addEventListener('click', () => send('/api/player/fallback/approve')));
+        document.querySelectorAll('[data-action="playback-fallback-mode"]').forEach((select) => select.addEventListener('change', () => send('/api/player/fallback/mode', { mode: select.value })));
         const lineButtons = [...document.querySelectorAll('[data-action="playback-line"]')];
         const linePanels = [...document.querySelectorAll('[data-playback-line]')];
         const activateLine = (lineIndex) => {
@@ -1535,6 +1839,31 @@ function renderPlaybackCatalog(
   </section>`;
 }
 
+function renderPlaybackHealth(state: DesktopSpiderUiState): string {
+  const health = state.playbackHealth;
+  const fallback = state.fallback;
+  const metric = (value: { value: unknown; samples: number }, unit = ""): string => (
+    value.samples === 0 || value.value === null ? "unknown" : `${String(value.value)}${unit}`
+  );
+  const fallbackStatus = fallback.status === "idle" || fallback.status === "disabled"
+    ? ""
+    : `<div data-testid="playback-fallback-status"><strong>当前失败：${escapeHtml(fallback.trigger ?? "播放异常")}</strong>
+        <span>${escapeHtml(fallback.reason ?? "")}</span>
+        <span>${fallback.next ? `即将尝试线路：${escapeHtml(fallback.next.label)}` : ""}</span>
+      </div>`;
+  return `<section data-testid="playback-health-panel" class="playback-health-panel">
+    <strong>流健康与自动线路回退</strong>
+    <label>回退模式 <select data-action="playback-fallback-mode"><option value="off" ${fallback.mode === "off" ? "selected" : ""}>关闭</option><option value="prompt" ${fallback.mode === "prompt" ? "selected" : ""}>仅提示</option><option value="auto" ${fallback.mode === "auto" ? "selected" : ""}>自动</option></select></label>
+    <p data-testid="playback-health-metrics">解析 ${metric(health.resolveSuccess)} · 首帧 ${metric(health.firstFrameMs, "ms")} · 缓冲 ${metric(health.bufferingCount, "次")} · 分片失败 ${metric(health.segmentFailure, "次")} · 评分 ${health.score.value === null ? "unknown" : health.score.value}</p>
+    ${fallbackStatus}
+    <div class="player-controls">
+      ${fallback.status === "prompt" ? '<button data-action="playback-fallback-approve">尝试下一条</button>' : ""}
+      ${fallback.status === "prompt" || fallback.status === "trying" ? '<button data-action="playback-fallback-cancel">取消</button>' : ""}
+      <button data-action="playback-fallback-debug">查看调试</button>
+    </div>
+  </section>`;
+}
+
 function listFrom(response: SpiderResponse): Record<string, unknown>[] {
   if (!isRecord(response.result) || !Array.isArray(response.result.list)) return [];
   return response.result.list.filter(isRecord).map((item) => ({ ...item }));
@@ -1634,7 +1963,33 @@ function playerMediaSyncFromRequest(body: Record<string, unknown>): PlayerMediaS
     && typeof body.error.message === "string") {
     patch.error = { code: body.error.code, message: body.error.message };
   }
+  const event = playbackMediaEventFromRequest(body.event);
+  if (event) patch.event = event;
   return patch;
+}
+
+function playbackMediaEventFromRequest(value: unknown): PlaybackMediaEvent | undefined {
+  if (!isRecord(value) || !isPlaybackMediaEventType(value.type)) return undefined;
+  return {
+    type: value.type,
+    ...(typeof value.at === "number" && Number.isFinite(value.at) ? { at: value.at } : {}),
+    ...(typeof value.code === "string" ? { code: value.code.slice(0, 80) } : {}),
+    ...(typeof value.reason === "string" ? { reason: value.reason.slice(0, 120) } : {}),
+    ...(typeof value.status === "number" && Number.isInteger(value.status) ? { status: value.status } : {}),
+  };
+}
+
+function isPlaybackMediaEventType(value: unknown): value is PlaybackMediaEvent["type"] {
+  return value === "first-frame"
+    || value === "startup-timeout"
+    || value === "buffer-start"
+    || value === "buffer-end"
+    || value === "fatal-error"
+    || value === "segment-failure"
+    || value === "http-status"
+    || value === "completion"
+    || value === "user-pause"
+    || value === "seek";
 }
 
 function isPlaybackStatus(value: unknown): value is PlaybackStatus {
@@ -1646,6 +2001,36 @@ function isPlaybackStatus(value: unknown): value is PlaybackStatus {
     || value === "ended"
     || value === "stopped"
     || value === "error";
+}
+
+function healthKeyFor(request: PlaybackRequest): string {
+  const line = request.metadata?.lineIndex ?? "current";
+  const episode = request.metadata?.episodeIndex ?? "current";
+  return `playback:${line}:${episode}`;
+}
+
+function playbackFallbackTrigger(error: unknown, codeHint?: string): PlaybackFallbackTrigger {
+  const code = (playbackErrorCode(error) ?? codeHint ?? "").toUpperCase();
+  if (code.startsWith("PARSE_")) return "parse-failure";
+  if (code.startsWith("PLAYBACK_PROXY_") || code.includes("PROXY")) return "proxy-fatal";
+  if (code.startsWith("HLS_") || code.startsWith("HTML_VIDEO_") || code.startsWith("MPV_") || code.includes("FATAL")) {
+    return "player-fatal";
+  }
+  return "player-content-failure";
+}
+
+function playbackErrorCode(error: unknown): string | null {
+  return isRecord(error) && typeof error.code === "string" ? error.code : null;
+}
+
+function playbackErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error) return error.message;
+  if (isRecord(error) && typeof error.message === "string") return error.message;
+  return fallback;
+}
+
+function isPlaybackFallbackMode(value: unknown): value is PlaybackFallbackMode {
+  return value === "off" || value === "prompt" || value === "auto";
 }
 
 function statePatchFromRequest(body: Record<string, unknown>): DesktopStatePatch {

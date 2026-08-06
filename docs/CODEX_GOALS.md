@@ -589,9 +589,37 @@ checkpoint: complete G46 playback debug panel
 checkpoint: complete G47 subtitle tracks
 ```
 
-## G48—G49（未开始）
+## G48（已完成）
+### 目标
+记录流健康指标，提供可解释评分和关闭/仅提示/自动三种线路回退模式。
+### 状态
+已完成。内存健康 registry 记录 resolve、首帧、起播失败、缓冲、致命错误、HTTP、分片、播放时长、完成、最近成功和连续失败；回退协调器执行重试、重新解析、同内容线路和更健康候选，并限制最大次数、尝试集合、总超时和用户取消。暂停、seek、单次短缓冲和短暂波动不会立即切线。
+### 依赖
+- G47 字幕轨道
+- G46 播放调试时间线
+- G43 LocalProxy、G42 解析链
+### 范围
+- `src/health/playback-health.ts`：指标、unknown、评分、候选排序、回退状态机和内存 registry
+- `src/desktop/playback.ts`、`src/desktop/spider-ui.ts`：媒体事件、playerContent/parse/Proxy/播放器错误接入，回退 API 与生命周期
+- `renderer/src/PlaybackHealthPanel.vue`、`renderer/src/EmbeddedPlayer.vue`、`renderer/src/playback-debug.ts`：健康 UI、事件采集、调试时间线
+- `src/electron/e2e-runner.ts`、`src/electron/main.ts`：健康状态和 packaged E2E
+### 验证结果
+- `npm test`：42 个测试文件、233 个测试通过
+- `npm run typecheck`：通过
+- `npm run renderer:build`：通过
+- `npm run electron:build`：通过（使用既有 development-fallback JDK）
+- `npm run electron:e2e:package`：首次/重启均通过，`playbackHealth=true`
+- E2E 后项目进程清理：`PROJECT_PROCESSES_PRESENT=false`
+### 文档
+- `docs/spike-48-stream-health-fallback.md`
+### checkpoint
+```text
+checkpoint: complete G48 stream health fallback
+```
 
-按串行 Gate 继续：流健康与自动线路回退、综合播放增强验收。
+## G49（未开始）
+
+播放增强综合验收。
 
 DEX-1 ~ DEX-5（实验支线）
 

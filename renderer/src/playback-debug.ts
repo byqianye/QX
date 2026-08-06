@@ -73,6 +73,9 @@ interface DebugSignature {
   rulesApplied: boolean;
   sniffUsed: boolean;
   attemptCount: number;
+  healthEventSequence: number;
+  fallbackStatus: string;
+  fallbackAttempts: number;
 }
 
 const DEFAULT_MAX_EVENTS = 200;
@@ -228,6 +231,34 @@ export class PlaybackDebugTimeline {
       this.fallbackUsed = true;
       this.record({ sessionId, phase: "fallback", type: "fallback.parser", source: "fallback" });
     }
+    const healthEvents = state.playback.health.events.filter((event) => event.sequence > (previous?.healthEventSequence ?? 0));
+    for (const event of healthEvents) {
+      this.record({
+        sessionId,
+        phase: "health",
+        type: `health.${event.type}`,
+        source: "health",
+        safeDetails: event.safeDetails,
+      });
+    }
+    if (current.fallbackStatus !== "idle" && current.fallbackStatus !== "disabled") this.fallbackUsed = true;
+    if (current.fallbackStatus !== "idle"
+      && current.fallbackStatus !== "disabled"
+      && (!previous
+        || current.fallbackStatus !== previous.fallbackStatus
+        || current.fallbackAttempts !== previous.fallbackAttempts)) {
+      this.fallbackUsed = true;
+      this.record({
+        sessionId,
+        phase: "fallback",
+        type: `fallback.${current.fallbackStatus}`,
+        source: "fallback",
+        safeDetails: {
+          attempts: current.fallbackAttempts,
+          next: state.playback.fallback.next?.label ?? "无",
+        },
+      });
+    }
     if (current.errorCode && current.errorCode !== previous?.errorCode) {
       this.errorValue = safeError(state);
       this.record({ sessionId, phase: "error", type: `error.${current.errorCode}`, source: "error" });
@@ -327,6 +358,9 @@ function signatureFor(state: RendererState, pending: string | null): DebugSignat
     rulesApplied: source?.parse === 0,
     sniffUsed: parse?.parserId === "isolated-sniffer",
     attemptCount: parse?.attempts.length ?? 0,
+    healthEventSequence: state.playback.health.events.at(-1)?.sequence ?? 0,
+    fallbackStatus: state.playback.fallback.status,
+    fallbackAttempts: state.playback.fallback.attempts,
   };
 }
 

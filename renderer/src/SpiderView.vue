@@ -10,6 +10,7 @@ import ErrorState from "./ErrorState.vue";
 import FilterPanel from "./FilterPanel.vue";
 import MediaGrid from "./MediaGrid.vue";
 import PlaybackSelector from "./PlaybackSelector.vue";
+import PlaybackHealthPanel from "./PlaybackHealthPanel.vue";
 import SettingsSection from "./SettingsSection.vue";
 import SourceSwitcher from "./SourceSwitcher.vue";
 import TopSearchBar from "./TopSearchBar.vue";
@@ -52,6 +53,9 @@ const emit = defineEmits<{
   playerAttach: [];
   playerStop: [];
   playerSync: [value: PlayerMediaSync];
+  fallbackCancel: [];
+  fallbackApprove: [];
+  fallbackMode: [value: "off" | "prompt" | "auto"];
 }>();
 
 const view = ref<"browse" | "settings">(props.initialNavigation === "settings" ? "settings" : "browse");
@@ -344,6 +348,15 @@ function navigationFromPage(page: string): RendererNavigation {
               :error="props.state.error.error ?? undefined"
               :show-debug="true"
               @open-debug="openDebug"
+            />
+            <PlaybackHealthPanel
+              :health="props.state.playback.health"
+              :fallback="props.state.playback.fallback"
+              @cancel="emit('fallbackCancel')"
+              @approve="emit('fallbackApprove')"
+              @mode="emit('fallbackMode', $event)"
+              @back="navigate('home')"
+              @debug="openDebug"
             />
           </section>
           <section v-else class="playback-stage playback-stage-empty" data-testid="playback-panel">

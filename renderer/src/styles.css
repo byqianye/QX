@@ -279,6 +279,16 @@ p { margin-bottom: 12px; }
 .embedded-player-panel[data-subtitle-background="box"] video::cue { background: rgba(0, 0, 0, 0.72); }
 .embedded-player-panel[data-subtitle-background="shadow"] video::cue { text-shadow: 0 1px 2px #000, 0 -1px 2px #000, 1px 0 2px #000, -1px 0 2px #000; }
 .embedded-player-panel video::cue { font-size: calc(var(--subtitle-font-size, 24) * 1px); }
+.playback-health-panel { display: grid; gap: 14px; border-left: 3px solid var(--accent); }
+.playback-health-heading { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.playback-health-heading h3 { margin-bottom: 0; }
+.playback-health-mode { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
+.playback-health-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+.playback-health-metric { display: grid; gap: 4px; min-width: 0; padding: 10px 12px; background: var(--surface); }
+.playback-health-metric span { color: var(--muted); font-size: 11px; }
+.playback-health-metric strong { overflow-wrap: anywhere; font-family: var(--font-mono); font-size: 13px; }
+.playback-fallback-status { display: grid; gap: 4px; padding: 12px; background: var(--surface-subtle); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); }
+@media (max-width: 760px) { .playback-health-heading { flex-direction: column; } .playback-health-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .player-error { color: var(--danger); }
 
 .state-card { padding: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }

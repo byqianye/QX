@@ -1,5 +1,7 @@
 import { toAppError } from "./error.js";
 import type { SubtitleTrack } from "../../src/subtitles.js";
+import type { PlaybackFallbackState, PlaybackHealthSnapshot } from "../../src/health/playback-health.js";
+import type { PlaybackMediaEvent } from "../../src/desktop/playback.js";
 
 export type ImportStatus =
   | "empty"
@@ -225,6 +227,7 @@ export interface PlayerMediaSync {
   volume?: number;
   muted?: boolean;
   error?: RendererError;
+  event?: PlaybackMediaEvent;
 }
 
 export interface DetailState {
@@ -238,6 +241,8 @@ export interface PlaybackState {
   playback: SpiderPlayback;
   player: PlayerState;
   session: RendererPlaybackSession | null;
+  health: PlaybackHealthSnapshot;
+  fallback: PlaybackFallbackState;
 }
 
 export interface ErrorState {
@@ -272,6 +277,8 @@ export interface ApiSpiderState {
   playbackSelection: PlaybackSelection | null;
   playerHost?: PlayerHostMode;
   playbackSession?: RendererPlaybackSession | null;
+  playbackHealth?: PlaybackHealthSnapshot;
+  fallback?: PlaybackFallbackState;
 }
 
 export interface RendererEnvelope {
@@ -322,6 +329,8 @@ export function createRendererState(): RendererState {
       },
       player: emptyPlayerState(),
       session: null,
+      health: emptyPlaybackHealth(),
+      fallback: emptyPlaybackFallback(),
     },
     error: { error: null },
   };
@@ -374,6 +383,8 @@ export function applyRendererEnvelope(
       playback: cloneSpiderPlayback(state.playback),
       player: clonePlayerState(state.player),
       session: clonePlaybackSession(state.playbackSession ?? null),
+      health: clonePlaybackHealth(state.playbackHealth ?? current.playback.health),
+      fallback: clonePlaybackFallback(state.fallback ?? current.playback.fallback),
     },
     error: { error: toAppError(stateError) },
   };
@@ -450,6 +461,72 @@ function cloneRendererError(error: RendererError | null): RendererError | null {
 function clonePlaybackSession(session: RendererPlaybackSession | null): RendererPlaybackSession | null {
   if (!session) return null;
   return { ...session, media: { ...session.media } };
+}
+
+function clonePlaybackHealth(snapshot: PlaybackHealthSnapshot): PlaybackHealthSnapshot {
+  return {
+    ...snapshot,
+    resolveSuccess: { ...snapshot.resolveSuccess },
+    firstFrameMs: { ...snapshot.firstFrameMs },
+    startupFailure: { ...snapshot.startupFailure },
+    bufferingCount: { ...snapshot.bufferingCount },
+    bufferingDuration: { ...snapshot.bufferingDuration },
+    fatalError: { ...snapshot.fatalError },
+    httpStatus: { ...snapshot.httpStatus },
+    segmentFailure: { ...snapshot.segmentFailure },
+    playbackDuration: { ...snapshot.playbackDuration },
+    completion: { ...snapshot.completion },
+    lastSuccess: { ...snapshot.lastSuccess },
+    consecutiveFailures: { ...snapshot.consecutiveFailures },
+    score: { ...snapshot.score, reasons: [...snapshot.score.reasons] },
+    events: snapshot.events.map((event) => ({ ...event, safeDetails: { ...event.safeDetails } })),
+  };
+}
+
+function clonePlaybackFallback(state: PlaybackFallbackState): PlaybackFallbackState {
+  return {
+    ...state,
+    current: state.current ? { ...state.current } : null,
+    next: state.next ? { ...state.next } : null,
+    tried: [...state.tried],
+  };
+}
+
+function emptyPlaybackHealth(): PlaybackHealthSnapshot {
+  const metric = <T>(): { value: T | null; samples: number } => ({ value: null, samples: 0 });
+  return {
+    sourceId: "当前播放线路",
+    resolveSuccess: metric<boolean>(),
+    firstFrameMs: metric<number>(),
+    startupFailure: metric<number>(),
+    bufferingCount: metric<number>(),
+    bufferingDuration: metric<number>(),
+    fatalError: metric<number>(),
+    httpStatus: metric<number>(),
+    segmentFailure: metric<number>(),
+    playbackDuration: metric<number>(),
+    completion: metric<boolean>(),
+    lastSuccess: metric<number>(),
+    consecutiveFailures: metric<number>(),
+    score: { value: null, reasons: ["样本不足"] },
+    events: [],
+  };
+}
+
+function emptyPlaybackFallback(): PlaybackFallbackState {
+  return {
+    mode: "prompt",
+    status: "idle",
+    trigger: null,
+    reason: null,
+    current: null,
+    next: null,
+    attempts: 0,
+    maxAttempts: 4,
+    tried: [],
+    startedAt: null,
+    deadlineAt: null,
+  };
 }
 
 function emptyPlayerState(): PlayerState {

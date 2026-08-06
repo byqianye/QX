@@ -148,4 +148,28 @@ describe("playback debug timeline", () => {
     expect(text).not.toContain("Cookie");
     expect(text).not.toContain("token=secret");
   });
+
+  it("records stream-health and fallback events in the existing debug timeline", () => {
+    const timeline = new PlaybackDebugTimeline();
+    const state = playbackState();
+    state.playback.health.events = [{
+      sequence: 1,
+      at: 1_000,
+      type: "segment-failure",
+      safeDetails: { reason: "连续分片错误" },
+    }];
+    state.playback.fallback = {
+      ...state.playback.fallback,
+      status: "prompt",
+      trigger: "segment-errors",
+      reason: "连续分片错误",
+      next: { id: "line-1", label: "备用线路", kind: "healthier", healthScore: 88 },
+    };
+    timeline.recordState(state, null);
+
+    const snapshot = timeline.snapshot(state);
+    expect(snapshot.events.map((event) => event.type)).toContain("health.segment-failure");
+    expect(snapshot.events.map((event) => event.type)).toContain("fallback.prompt");
+    expect(JSON.stringify(snapshot)).not.toContain("line-1");
+  });
 });

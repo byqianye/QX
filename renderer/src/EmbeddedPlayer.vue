@@ -16,6 +16,9 @@ import {
   type SubtitleEncoding,
   type SubtitleTrack,
 } from "../../src/subtitles.js";
+import type { PlaybackMediaEvent } from "../../src/desktop/playback.js";
+
+const PLAYBACK_STARTUP_TIMEOUT_MS = 10_000;
 
 const windowWithHls = window as Window & { Hls?: typeof Hls };
 windowWithHls.Hls ??= Hls;
@@ -53,6 +56,8 @@ const subtitleError = ref<string | null>(null);
 const subtitleUrls = new SubtitleObjectUrlRegistry();
 let localSubtitleSequence = 0;
 let subtitleLoadGeneration = 0;
+let startupTimer: ReturnType<typeof setTimeout> | undefined;
+let firstFrameReported = false;
 
 watch(() => props.state.source?.url, () => {
   loadSource();
@@ -94,6 +99,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   emitSync(localStatus.value);
+  clearStartupTimer();
   cleanups.splice(0).forEach((cleanup) => cleanup());
   destroyHls();
   clearSubtitleResources();
@@ -109,6 +115,7 @@ function loadSource(): void {
   const element = video.value;
   if (!element) return;
   cleanups.splice(0).forEach((cleanup) => cleanup());
+  clearStartupTimer();
   destroyHls();
   clearSubtitleResources();
   positionRestored = false;
@@ -126,16 +133,31 @@ function loadSource(): void {
   element.volume = props.state.volume;
   element.muted = props.state.muted;
   localStatus.value = "loading";
+  firstFrameReported = false;
+  startupTimer = setTimeout(() => {
+    if (firstFrameReported || !video.value) return;
+    localStatus.value = "error";
+    localErrorCode = "PLAYBACK_STARTUP_TIMEOUT";
+    localError.value = "起播超时";
+    emitSync("error", { type: "startup-timeout", reason: "起播超时" });
+  }, PLAYBACK_STARTUP_TIMEOUT_MS);
   if (isHls(source.url)
     && element.canPlayType("application/vnd.apple.mpegurl") === ""
     && Hls.isSupported()) {
     hls = new Hls({ enableWorker: false });
     hls.on(Hls.Events.ERROR, (_event, data) => {
-      if (!data.fatal) return;
+      const status = typeof data.response?.code === "number" ? data.response.code : undefined;
+      if (status !== undefined) emitSync(localStatus.value, { type: "http-status", status });
+      if (!data.fatal) {
+        if (/frag|segment|level|buffer/i.test(String(data.details ?? ""))) {
+          emitSync(localStatus.value, { type: "segment-failure", reason: String(data.details ?? "分片失败") });
+        }
+        return;
+      }
       localStatus.value = "error";
       localErrorCode = "HLS_ERROR";
       localError.value = "HLS 播放失败";
-      emitSync("error");
+      emitSync("error", { type: "fatal-error", code: "HLS_ERROR" });
     });
     hls.loadSource(source.url);
     hls.attachMedia(element);
@@ -158,19 +180,33 @@ function loadSource(): void {
   listen(element, "loadedmetadata", restorePosition);
   listen(element, "durationchange", restorePosition);
   listen(element, "canplay", resumeIfNeeded);
+  listen(element, "waiting", () => emitSync(localStatus.value, { type: "buffer-start" }));
+  listen(element, "canplay", () => emitSync(localStatus.value, { type: "buffer-end" }));
   listen(element, "timeupdate", () => {
     currentTime.value = element.currentTime;
     duration.value = Number.isFinite(element.duration) ? element.duration : duration.value;
     emitSync();
   });
-  listen(element, "playing", () => { localStatus.value = "playing"; emitSync("playing"); });
-  listen(element, "pause", () => { if (!element.ended) { localStatus.value = "paused"; emitSync("paused"); } });
-  listen(element, "ended", () => { localStatus.value = "ended"; emitSync("ended"); });
+  listen(element, "playing", () => {
+    localStatus.value = "playing";
+    clearStartupTimer();
+    const event: PlaybackMediaEvent | undefined = firstFrameReported ? undefined : { type: "first-frame" };
+    firstFrameReported = true;
+    emitSync("playing", event);
+  });
+  listen(element, "pause", () => {
+    if (!element.ended) {
+      localStatus.value = "paused";
+      emitSync("paused", { type: "user-pause" });
+    }
+  });
+  listen(element, "seeking", () => emitSync(localStatus.value, { type: "seek" }));
+  listen(element, "ended", () => { localStatus.value = "ended"; emitSync("ended", { type: "completion" }); });
   listen(element, "error", () => {
     localStatus.value = "error";
     localErrorCode ??= "HTML_VIDEO_ERROR";
     localError.value = "播放失败";
-    emitSync("error");
+    emitSync("error", { type: "fatal-error", code: localErrorCode ?? "HTML_VIDEO_ERROR" });
   });
   resumeIfNeeded();
 }
@@ -184,7 +220,7 @@ function resumeIfNeeded(): void {
     localStatus.value = "error";
     localErrorCode = "HTML_VIDEO_PLAY_ERROR";
     localError.value = error instanceof Error ? error.message : "播放恢复失败";
-    emitSync("error");
+    emitSync("error", { type: "fatal-error", code: localErrorCode ?? "HTML_VIDEO_PLAY_ERROR" });
   });
 }
 
@@ -208,6 +244,7 @@ function toggleMute(): void {
 }
 
 function stopPlayback(): void {
+  clearStartupTimer();
   destroyHls();
   clearSubtitleResources();
   if (video.value) {
@@ -222,7 +259,7 @@ function stopPlayback(): void {
   emitSync("stopped");
 }
 
-function emitSync(status = localStatus.value): void {
+function emitSync(status = localStatus.value, event?: PlaybackMediaEvent): void {
   const element = video.value;
   const error = status === "error" && localError
     ? { code: localErrorCode ?? "HTML_VIDEO_ERROR", message: localError }
@@ -233,8 +270,14 @@ function emitSync(status = localStatus.value): void {
     duration: element && Number.isFinite(element.duration) ? element.duration : duration.value,
     volume: element?.volume ?? props.state.volume,
     muted: element?.muted ?? muted.value,
+    ...(event ? { event: { ...event, at: event.at ?? Date.now() } } : {}),
     ...(error ? { error } : {}),
   });
+}
+
+function clearStartupTimer(): void {
+  if (startupTimer !== undefined) clearTimeout(startupTimer);
+  startupTimer = undefined;
 }
 
 function formatTime(value: number): string {

@@ -260,7 +260,8 @@ async function runE2e(baseUrl: string): Promise<void> {
           const started = Date.now();
           const read = () => {
             const root = document.querySelector('[data-testid="vue-renderer"]');
-            if (root?.getAttribute('data-ready') === 'true') {
+            if (root?.getAttribute('data-ready') === 'true'
+              && root.getAttribute('data-pending') === '') {
               resolve(document.documentElement.outerHTML);
               return;
             }

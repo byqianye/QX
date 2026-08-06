@@ -129,7 +129,12 @@ function play(line: number, episode: number): void {
 </script>
 
 <template>
-  <div id="vue-renderer" data-testid="vue-renderer" :data-ready="String(state.ready)">
+  <div
+    id="vue-renderer"
+    data-testid="vue-renderer"
+    :data-ready="String(state.ready)"
+    :data-pending="pending ?? ''"
+  >
     <ConfigImportView
       v-if="showImport"
       :state="state.import"

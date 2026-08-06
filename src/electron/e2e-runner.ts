@@ -10,6 +10,7 @@ export interface PackagedE2eOptions {
   waitForSidecarExit?: (pid: number) => Promise<boolean>;
   reloadWindow?: () => Promise<void>;
   evaluateWindow?: (script: string) => Promise<unknown>;
+  readWindowHtml?: () => Promise<string>;
   playback?: {
     configJson: string;
   };
@@ -52,13 +53,12 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
   let sidecarPid: number | null = null;
 
   try {
-    const initial = await fetch(new URL("/", options.baseUrl));
-    const initialHtml = await initial.text();
-    checks.initialImportForm = initial.ok
-      && initialHtml.includes('data-testid="config-import-form"');
+    const initialHtml = await readPage(options);
+    checks.initialImportForm = initialHtml.includes('data-testid="config-import-form"')
+      && (!options.readWindowHtml || initialHtml.includes('data-testid="vue-renderer"'));
 
     const firstUrl = await load(options.baseUrl, options.configUrl);
-    const warningHtml = await page(options.baseUrl);
+    const warningHtml = await readPage(options);
     const firstUrlConfirmation = options.freshTrust
       ? firstUrl.import.status === "confirmation_required"
         && warningHtml.includes('data-testid="import-warning"')
@@ -110,25 +110,25 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       const playbackOpened = await post(options.baseUrl, "/api/open");
       const playbackHome = await post(options.baseUrl, "/api/home");
       const playbackDetail = await post(options.baseUrl, "/api/detail", { vodId: "fixture:movie-1" });
-      const playbackDetailHtml = await page(options.baseUrl);
+      const playbackDetailHtml = await readPage(options);
       const mp4 = await post(options.baseUrl, "/api/player", {
         lineIndex: 1,
         episodeIndex: 0,
         vipFlags: ["e2e"],
       });
-      const mp4Html = await page(options.baseUrl);
+      const mp4Html = await readPage(options);
       const mp4Dom = await probeWindow(options, mp4Html);
       const hls = await post(options.baseUrl, "/api/player", {
         lineIndex: 0,
         episodeIndex: 0,
       });
-      const hlsHtml = await page(options.baseUrl);
+      const hlsHtml = await readPage(options);
       const hlsDom = await probeWindow(options, hlsHtml);
       const headered = await post(options.baseUrl, "/api/player", {
         lineIndex: 0,
         episodeIndex: 1,
       });
-      const headeredHtml = await page(options.baseUrl);
+      const headeredHtml = await readPage(options);
       const headeredDom = await probeWindow(options, headeredHtml);
       checks.embeddedMp4 = playbackReady
         && playbackOpened.state?.status === "ready"
@@ -139,7 +139,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       checks.embeddedHls = hls.state?.player?.status === "loading"
         && playerSourceUrl(hls.state)?.endsWith("/media/fixture.m3u8") === true
         && hlsHtml.includes('data-testid="embedded-player"')
-        && hlsHtml.includes("/assets/hls.min.js");
+        && (hlsHtml.includes("/assets/hls.min.js") || hlsDom?.hlsLoaded === true);
       checks.vodPlaybackFlow = playbackReady
         && playbackOpened.state?.status === "ready"
         && playbackHome.state?.page === "home"
@@ -229,6 +229,10 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
 async function page(baseUrl: string): Promise<string> {
   const response = await fetch(new URL("/", baseUrl));
   return response.text();
+}
+
+async function readPage(options: PackagedE2eOptions): Promise<string> {
+  return options.readWindowHtml ? options.readWindowHtml() : page(options.baseUrl);
 }
 
 async function load(baseUrl: string, input: string): Promise<UiEnvelope> {

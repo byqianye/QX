@@ -1,0 +1,31 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  color: #17202a;
+  background: #f4f6f8;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 960px; background: #f4f6f8; }
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; padding: 8px 12px; }
+button:disabled { cursor: not-allowed; opacity: .55; }
+.renderer-shell { max-width: 1180px; margin: 0 auto; padding: 24px; }
+.page-header, .panel { background: #fff; border: 1px solid #dce1e6; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.page-header h1 { margin: 4px 0 8px; }
+.eyebrow, .meta { color: #5b6570; font-size: .9rem; }
+.eyebrow { margin: 0; text-transform: uppercase; letter-spacing: .08em; }
+.loading { color: #946200; }
+.warning { border-color: #e3a008; background: #fff8e1; }
+.error { border-color: #d64545; background: #fff1f1; color: #7a1b1b; }
+.button-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.search-form { display: flex; gap: 8px; align-items: center; }
+.search-form input { flex: 1; min-width: 180px; padding: 8px; }
+textarea { display: block; width: 100%; min-height: 140px; margin: 12px 0; padding: 8px; }
+select { min-width: 220px; padding: 8px; margin: 8px; }
+.vod-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.vod-card { border: 1px solid #dce1e6; border-radius: 8px; padding: 12px; background: #fff; }
+.playback-selector .episode-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.embedded-player-panel video { display: block; width: 100%; max-height: 520px; background: #101418; }
+.player-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.player-error { color: #b42318; }

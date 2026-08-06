@@ -144,7 +144,38 @@ npm run electron:e2e:package
 ### 文档
 - `docs/spike-23-jellyfin-source.md`
 
-G25–G78（未开始）
+## G25（已完成）
+
+### 目标
+将现有桌面 UI 迁移到本地打包的 Vue 3 + Vite + TypeScript renderer，同时保持既有 Spider、Session、LocalProxy、播放器 API 和错误码。
+
+### 状态
+Vue renderer 已接入 Electron 正式包；旧 server-rendered UI 保留为回退路径和回归基线。类型检查、Vue 专项测试、全量测试和两轮打包 E2E 已通过。
+
+### 依赖
+- G23 / 受控 VOD 播放闭环
+- G24 / Jellyfin source 可独立存在，真实环境验证不阻塞本 Goal
+
+### 范围与验收标准
+- 建立本地 Vue 3/Vite 工程，构建产物进入 Electron 正式包，不加载远程脚本
+- 建立类型化 `ImportState`、`SpiderState`、`BrowseState`、`DetailState`、`PlaybackState`、`ErrorState`
+- 迁移配置导入、信任确认、站点选择、首页、分类、搜索、详情、线路、选集、播放器和错误状态
+- 保持既有 `/api/*` 调用、Spider/Session/LocalProxy/播放器合同和错误码；受保护播放继续经 LocalProxy
+- 设置合理 CSP，保留旧 renderer，待 Vue E2E 通过后再考虑停用
+- 不接入直播、弹幕、下载、复杂 UI 库、视觉大改或新媒体源
+
+### 验证命令
+```powershell
+npm run typecheck
+npx vitest run tests/vue-renderer.test.ts
+npm test
+npm run electron:e2e:package
+```
+
+### 文档
+- `docs/spike-24-vue-renderer.md`
+
+G26–G78（未开始）
 
 （略，按主路线图执行）
 

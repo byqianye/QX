@@ -72,6 +72,7 @@ function createShell(): DesktopShellRuntime {
       });
       return new DesktopSpiderUiServer({
         importer,
+        rendererDirectory: join(app.getAppPath(), "dist", "renderer"),
         ...(PLAYBACK_PROXY_ORIGINS.length > 0 ? { playbackProxyOrigins: PLAYBACK_PROXY_ORIGINS } : {}),
       });
     },
@@ -197,6 +198,7 @@ void app.whenReady().then(createMainWindow).catch(async (error: unknown) => {
 });
 
 async function runE2e(baseUrl: string): Promise<void> {
+  let initialRendererRead = true;
   try {
     const result = await runPackagedE2e({
       baseUrl,
@@ -225,6 +227,27 @@ async function runE2e(baseUrl: string): Promise<void> {
       evaluateWindow: async (script) => {
         if (!mainWindow || mainWindow.isDestroyed()) throw new Error("Main window is unavailable for playback probe");
         return mainWindow.webContents.executeJavaScript(script);
+      },
+      readWindowHtml: async () => {
+        if (!mainWindow || mainWindow.isDestroyed()) throw new Error("Main window is unavailable for renderer probe");
+        if (initialRendererRead) initialRendererRead = false;
+        else await mainWindow.loadURL(baseUrl);
+        return mainWindow.webContents.executeJavaScript(`(() => new Promise((resolve, reject) => {
+          const started = Date.now();
+          const read = () => {
+            const root = document.querySelector('[data-testid="vue-renderer"]');
+            if (root?.getAttribute('data-ready') === 'true') {
+              resolve(document.documentElement.outerHTML);
+              return;
+            }
+            if (Date.now() - started > 5000) {
+              reject(new Error('Vue renderer did not become ready'));
+              return;
+            }
+            window.setTimeout(read, 25);
+          };
+          read();
+        }))()`);
       },
       ...(process.env.QX_E2E_PLAYBACK_CONFIG
         ? { playback: { configJson: process.env.QX_E2E_PLAYBACK_CONFIG } }

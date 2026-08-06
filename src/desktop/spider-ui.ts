@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import { resolve as resolvePath } from "node:path";
 
 import type {
   DesktopSpiderPlaybackState,
@@ -124,7 +125,7 @@ export class DesktopSpiderUiController {
       warning: view.warning,
       error: this.localError ?? view.error,
       sidecarRunning: view.sidecarRunning,
-      playback: { ...view.playback },
+      playback: publicPlaybackState(view.playback),
       player: this.playerController.state,
       canPlay: view.playback.available,
       items: this.items.map((item) => ({ ...item })),
@@ -386,6 +387,7 @@ export class DesktopSpiderUiController {
 export interface DesktopSpiderUiServerOptions {
   ui?: DesktopSpiderUiController;
   importer?: DesktopSpiderImportController;
+  rendererDirectory?: string;
   siteKey?: string;
   ext?: string;
   host?: string;
@@ -396,6 +398,7 @@ export interface DesktopSpiderUiServerOptions {
 export class DesktopSpiderUiServer {
   private readonly directUi: DesktopSpiderUiController | undefined;
   private readonly importer: DesktopSpiderImportController | undefined;
+  private readonly rendererDirectory: string | undefined;
   private readonly siteKey: string | undefined;
   private readonly ext: string | undefined;
   private readonly host: string;
@@ -415,6 +418,9 @@ export class DesktopSpiderUiServer {
     }
     this.directUi = options.ui;
     this.importer = options.importer;
+    this.rendererDirectory = options.rendererDirectory
+      ? resolvePath(options.rendererDirectory)
+      : undefined;
     this.siteKey = options.siteKey;
     this.ext = options.ext;
     this.host = options.host ?? "127.0.0.1";
@@ -459,6 +465,11 @@ export class DesktopSpiderUiServer {
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     try {
       const url = new URL(request.url ?? "/", this.url);
+      if (request.method === "GET"
+        && this.rendererDirectory
+        && !url.pathname.startsWith("/api/")) {
+        if (this.writeRendererAsset(response, url.pathname)) return;
+      }
       if (request.method === "GET" && url.pathname === "/") {
         const ui = this.activeUi();
         if (this.importer && (this.importer.state.status !== "ready" || !ui)) {
@@ -581,8 +592,11 @@ export class DesktopSpiderUiServer {
       this.writeCurrentState(response);
     } catch (error) {
       const ui = this.activeUi();
+      const message = error instanceof Error ? error.message : String(error);
+      const errorCode = errorCodeFromMessage(message);
       writeJson(response, {
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
+        ...(errorCode ? { errorCode } : {}),
         import: this.importer?.state ?? null,
         state: ui?.state ?? null,
       }, 400);
@@ -627,6 +641,81 @@ export class DesktopSpiderUiServer {
       writeJson(response, { error: "Bundled hls.js asset is unavailable" }, 500);
     }
   }
+
+  private writeRendererAsset(response: ServerResponse, pathname: string): boolean {
+    const directPath = this.rendererFilePath(pathname);
+    const filePath = directPath ?? (pathname.startsWith("/assets/")
+      ? null
+      : this.rendererFilePath("/"));
+    if (!filePath) return false;
+
+    try {
+      const asset = readFileSync(filePath);
+      response.writeHead(200, {
+        "content-type": rendererContentType(filePath),
+        "content-security-policy": rendererContentSecurityPolicy(),
+        "cache-control": "no-store",
+        "content-length": asset.byteLength,
+      });
+      response.end(asset);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private rendererFilePath(pathname: string): string | null {
+    if (!this.rendererDirectory) return null;
+    let relativePath: string;
+    try {
+      relativePath = decodeURIComponent(pathname === "/" ? "/index.html" : pathname);
+    } catch {
+      return null;
+    }
+    const candidate = resolvePath(this.rendererDirectory, `.${relativePath}`);
+    const root = this.rendererDirectory.endsWith("\\")
+      ? this.rendererDirectory
+      : `${this.rendererDirectory}\\`;
+    if (candidate !== this.rendererDirectory && !candidate.startsWith(root)) return null;
+    return existsSync(candidate) ? candidate : null;
+  }
+}
+
+function rendererContentType(path: string): string {
+  if (path.endsWith(".html")) return "text/html; charset=utf-8";
+  if (path.endsWith(".js")) return "application/javascript; charset=utf-8";
+  if (path.endsWith(".css")) return "text/css; charset=utf-8";
+  if (path.endsWith(".json")) return "application/json; charset=utf-8";
+  if (path.endsWith(".svg")) return "image/svg+xml";
+  if (path.endsWith(".ico")) return "image/x-icon";
+  if (path.endsWith(".woff2")) return "font/woff2";
+  return "application/octet-stream";
+}
+
+function rendererContentSecurityPolicy(): string {
+  return [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self'",
+    "img-src 'self' data: blob: http: https:",
+    "media-src 'self' blob: http: https:",
+    "connect-src 'self' http: https:",
+    "worker-src 'self' blob:",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
+  ].join("; ");
+}
+
+function errorCodeFromMessage(message: string): string | null {
+  const match = /^([A-Z][A-Z0-9_]*):/.exec(message);
+  return match?.[1] ?? null;
+}
+
+function publicPlaybackState(playback: DesktopSpiderPlaybackState): DesktopSpiderPlaybackState {
+  return playback.available
+    ? { ...playback, headers: {} }
+    : { ...playback };
 }
 
 export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {

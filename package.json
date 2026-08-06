@@ -10,8 +10,9 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "renderer:build": "vite build --config vite.config.ts",
     "electron:build-runtime": "tsx src/electron/package-runtime.ts",
-    "electron:build": "npm run electron:build-runtime && tsc -p tsconfig.electron.json",
+    "electron:build": "npm run electron:build-runtime && npm run renderer:build && tsc -p tsconfig.electron.json",
     "electron:dev": "npm run electron:build && electron .",
     "electron:smoke": "npm run electron:build && tsx src/electron/smoke-launch.ts",
     "electron:package:win": "npm run electron:build && electron-packager . QX影视 --platform=win32 --arch=x64 --out=dist/electron-package --overwrite --prune=true --extra-resource=dist/electron-runtime",
@@ -39,14 +40,19 @@
   },
   "dependencies": {
     "hls.js": "^1.6.17",
-    "quickjs-emscripten": "^0.32.0"
+    "quickjs-emscripten": "^0.32.0",
+    "vue": "^3.5.41"
   },
   "devDependencies": {
     "@electron/packager": "^20.1.1",
     "@types/node": "^22.15.0",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/test-utils": "^2.4.11",
     "electron": "^43.3.0",
+    "jsdom": "^30.0.1",
     "tsx": "^4.20.5",
     "typescript": "^5.8.3",
+    "vite": "^7.3.6",
     "vitest": "^3.2.4"
   }
 }

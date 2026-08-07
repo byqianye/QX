@@ -102,7 +102,7 @@ export interface PushRecentRecord {
 
 export interface PushUiState {
   enabled: boolean;
-  host: "127.0.0.1";
+  host: string;
   configuredPort: number;
   port: number | null;
   listening: boolean;
@@ -113,7 +113,7 @@ export interface PushUiState {
   recent: readonly PushRecentRecord[];
   activeSession: PushPlaybackSessionSnapshot | null;
   error: { code: string; message: string } | null;
-  lanControl: "requires-g68";
+  lanControl: "disabled" | "enabled";
 }
 
 export const EMPTY_PUSH_UI_STATE: PushUiState = {
@@ -129,5 +129,5 @@ export const EMPTY_PUSH_UI_STATE: PushUiState = {
   recent: [],
   activeSession: null,
   error: null,
-  lanControl: "requires-g68",
+  lanControl: "disabled",
 };

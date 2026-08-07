@@ -67,6 +67,7 @@ import type { PushRequest } from "../push/push-types.js";
 import { CastMediaBridge } from "../cast/cast-media-bridge.js";
 import { CastService, UdpSsdpTransport } from "../cast/cast-service.js";
 import { WebControlService } from "../web-control/web-control-service.js";
+import { WebSecurityManager } from "../web-control/web-security.js";
 import {
   IsolatedSniffer,
   type IsolatedSnifferPlatform,
@@ -131,6 +132,7 @@ let downloadService: DownloadService | undefined;
 let pushService: PushService | undefined;
 let castService: CastService | undefined;
 let webControlService: WebControlService | undefined;
+let webSecurity: WebSecurityManager | undefined;
 let dataStorageService: DataStorageService | undefined;
 let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -202,11 +204,13 @@ function getDataStorageService(): DataStorageService {
   return dataStorageService;
 }
 function initializeDataLayer(): void {
-  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService && livePlaybackService && smartChannelService && epgService && epgMatchingService && danmakuService && localMediaService && downloadService && pushService && castService) return;
+  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService && livePlaybackService && smartChannelService && epgService && epgMatchingService && danmakuService && localMediaService && downloadService && pushService && castService && webSecurity) return;
   const dataStorage = getDataStorageService();
   const directories = dataStorage.prepare();
   const opened = openSqliteDataLayer(directories.database);
   dataLayer = opened.layer;
+  const settingsRepository = new SettingsRepository(opened.layer);
+  webSecurity = new WebSecurityManager({ settings: settingsRepository });
   const legacy = new LegacyDataMigrator(opened.layer).migrate({
     desktopState: join(directories.dataRoot, "desktop-state.json"),
     configHistory: join(directories.dataRoot, "config-history.json"),
@@ -294,7 +298,8 @@ function initializeDataLayer(): void {
     backend: createDownloadBackend(),
   });
   pushService = new PushService({
-    settings: new SettingsRepository(opened.layer),
+    settings: settingsRepository,
+    ...(webSecurity ? { security: webSecurity } : {}),
     ...(PUSH_TRUSTED_LOCAL_ORIGINS.length > 0 ? { trustedLocalOrigins: PUSH_TRUSTED_LOCAL_ORIGINS } : {}),
     playback: {
       getActiveSession: () => uiServer?.pushPlaybackSession() ?? null,
@@ -442,6 +447,7 @@ async function ensureWebControl(): Promise<void> {
   if (!webControlService) {
     webControlService = new WebControlService({
       backend: uiServer.webControlBackend(),
+      ...(webSecurity ? { security: webSecurity } : {}),
       port: WEB_CONTROL_PORT,
     });
   } else {
@@ -711,6 +717,7 @@ async function closeDataLayer(): Promise<void> {
   pushService = undefined;
   castService = undefined;
   webControlService = undefined;
+  webSecurity = undefined;
   dataStorageService = undefined;
   const current = dataLayer;
   dataLayer = undefined;

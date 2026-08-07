@@ -1545,6 +1545,64 @@ npm run electron:e2e:package
 checkpoint: complete G67 web console
 ```
 
+## G68 (completed)
+
+### Goal
+
+Extend the G67 web console with opt-in private-LAN binding, browser PIN login,
+expiring/revocable sessions, read/control/push permissions, rate limits, and
+security headers while keeping localhost as the default.
+
+### Status
+
+Completed. LAN binding is opt-in and selects one private IPv4 interface; VPN,
+virtual, Docker, Hyper-V, tunnel-like, public, loopback, and link-local choices
+are rejected. PIN material is stored as a salted scrypt digest, session tokens
+are high-entropy and revocable, and the optional LAN Push path uses the same
+session permission plus existing URL/SSRF checks.
+
+### Dependency
+
+- G67 checkpoint `bc9518d`: `checkpoint: complete G67 web console`
+
+### Scope and acceptance
+
+- Default localhost-only mode remains unchanged; LAN mode requires an explicit
+  `Allow LAN Control` setting and clear warning.
+- PIN generation uses cryptographically secure randomness, never plaintext
+  persistence or `Math.random`; wrong PIN attempts are rate-limited per IP and
+  globally with cooldown.
+- LAN requests require a valid expiring session. `read`, `control`, and `push`
+  permissions are enforced separately; individual and all-session revocation
+  are supported without collecting device identity.
+- Exact Origin, CSRF, bounded payload, CORS, WebSocket, security-header, and
+  Push URL/SSRF boundaries remain tested. No router mapping, cloud relay, or
+  public-domain exposure is added.
+- Electron start/restart/shutdown and packaged first/restart E2E remain covered.
+
+### Verification commands
+
+```powershell
+git diff --check
+npm run typecheck
+npx vitest run tests/web-security.test.ts tests/web-control.test.ts tests/push-service.test.ts --maxWorkers=1 --minWorkers=1 --reporter=dot
+npm test -- --maxWorkers=1 --minWorkers=1 --reporter=dot
+npm run renderer:build
+npm run electron:build
+npm run electron:e2e:package
+```
+
+### Documentation
+
+- `docs/spike-68-web-security.md`
+- `docs/design/open-design/stage-5/web-console-spec.md`
+
+### Checkpoint
+
+```text
+checkpoint: complete G68 web PIN security
+```
+
 ## Stage 4 (completed)
 
 直播与 EPG 闭环已完成：授权 M3U/TXT 导入、Live 浏览与播放、XMLTV、EPG

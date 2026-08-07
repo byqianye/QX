@@ -1,4 +1,4 @@
-export type WebControlPermission = "read" | "control" | "search";
+export type WebControlPermission = "read" | "control" | "push";
 export type WebControlRateClass = "read" | "control" | "search";
 
 export interface WebControlRouteContract {
@@ -16,12 +16,12 @@ export const WEB_CONTROL_ROUTES: readonly WebControlRouteContract[] = [
   { method: "POST", path: "/api/stop", schema: "empty", permission: "control", rateClass: "control" },
   { method: "POST", path: "/api/seek", schema: "{position}", permission: "control", rateClass: "control" },
   { method: "POST", path: "/api/volume", schema: "{volume,muted?}", permission: "control", rateClass: "control" },
-  { method: "GET", path: "/api/search", schema: "?q", permission: "search", rateClass: "search" },
+  { method: "GET", path: "/api/search", schema: "?q", permission: "read", rateClass: "search" },
   { method: "GET", path: "/api/detail", schema: "?id", permission: "read", rateClass: "read" },
   { method: "POST", path: "/api/play-episode", schema: "{lineIndex,episodeIndex,vipFlags?}", permission: "control", rateClass: "control" },
   { method: "GET", path: "/api/live-channels", schema: "empty", permission: "read", rateClass: "read" },
   { method: "POST", path: "/api/live-channel", schema: "{channelId,streamId?}", permission: "control", rateClass: "control" },
-  { method: "POST", path: "/api/push", schema: "{url,title?}", permission: "control", rateClass: "control" },
+  { method: "POST", path: "/api/push", schema: "{url,title?}", permission: "push", rateClass: "control" },
   { method: "GET", path: "/api/downloads", schema: "empty", permission: "read", rateClass: "read" },
   { method: "GET", path: "/api/cast-devices", schema: "empty", permission: "read", rateClass: "read" },
   { method: "POST", path: "/api/cast", schema: "{deviceId}", permission: "control", rateClass: "control" },
@@ -151,7 +151,7 @@ export interface WebControlBackendStatus {
     downloads: boolean;
     cast: boolean;
   };
-  lanControl: "requires-g68";
+  lanControl: "disabled" | "enabled";
 }
 
 export interface WebControlSnapshot {

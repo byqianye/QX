@@ -43,7 +43,7 @@ describe("WebControlService", () => {
     expect(live.live.channels[0].id).toBe("channel-1");
     expect(downloads.downloads.tasks[0].filename).toBe("fixture.mp4");
     expect(cast.cast.devices[0]).not.toHaveProperty("location");
-    expect(safe.status).toMatchObject({ host: "127.0.0.1", listening: true, lanControl: "requires-g68" });
+    expect(safe.status).toMatchObject({ host: "127.0.0.1", listening: true, lanControl: "disabled" });
     expect(JSON.stringify({ now, search, detail, live, downloads, cast, safe })).not.toContain("C:\\private");
     expect(JSON.stringify({ now, search, detail, live, downloads, cast, safe })).not.toContain("Cookie");
     expect(calls).toEqual([]);
@@ -79,6 +79,51 @@ describe("WebControlService", () => {
     expect(badToken.status).toBe(403);
     expect(valid.response.ok).toBe(true);
     expect(calls).toContain("stop");
+  });
+
+  it("exposes PIN login/session controls without persisting or returning the PIN hash", async () => {
+    const service = await startService([]);
+    const base = service.url as string;
+    const origin = new URL(base).origin;
+    const html = await (await fetch(base)).text();
+    const csrf = csrfToken(html);
+    const initial = await (await fetch(new URL("/api/security/status", base))).json();
+    const setup = await (await fetch(new URL("/api/security/setup-pin", base))).json();
+    const login = await fetch(new URL("/auth/pin", base), {
+      method: "POST",
+      headers: { Origin: origin, "content-type": "application/json" },
+      body: JSON.stringify({ pin: setup.pin, permissions: ["read", "push"] }),
+    });
+    const loginValue = await login.json();
+    const cookies = login.headers.get("set-cookie") ?? "";
+    const sessions = await fetch(new URL("/api/security/sessions", base), { headers: { Cookie: cookies } });
+
+    expect(initial).toMatchObject({ allowLan: false, pinConfigured: true, setupPinAvailable: true });
+    expect(setup.pin).toMatch(/^\d{6}$/u);
+    expect(login.ok).toBe(true);
+    expect(loginValue).toMatchObject({ authenticated: true, session: { permissions: ["read", "push"] } });
+    expect(cookies).toContain("HttpOnly");
+    expect(cookies).toContain("SameSite=Strict");
+    expect(cookies).not.toContain("Secure");
+    expect(await sessions.json()).toMatchObject({ sessions: [{ permissions: ["read", "push"] }] });
+    expect(login.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(login.headers.get("x-frame-options")).toBe("DENY");
+
+    const logout = await fetch(new URL("/auth/logout", base), {
+      method: "POST",
+      headers: { Origin: origin, "content-type": "application/json", "x-csrf-token": csrf, Cookie: cookies },
+      body: "{}",
+    });
+    expect(logout.ok).toBe(true);
+  });
+
+  it("refuses to enable LAN when no safe interface is available", async () => {
+    const service = new WebControlService({ backend: fakeBackend([]), port: 0, lanInterfaces: () => [] });
+    services.push(service);
+    await service.start();
+    await expect(service.configureLan(true)).rejects.toMatchObject({ code: "WEB_LAN_NO_INTERFACE" });
+    expect(service.allowLan).toBe(false);
+    expect(new URL(service.url as string).hostname).toBe("127.0.0.1");
   });
 
   it("rejects invalid JSON, oversized bodies, and fields outside the endpoint schema", async () => {
@@ -226,7 +271,7 @@ function fakeBackend(calls: string[]): WebControlBackend {
     status: {
       uiReady: true,
       capabilities: { search: true, playback: true, live: true, push: true, downloads: true, cast: true },
-      lanControl: "requires-g68",
+      lanControl: "disabled",
     },
   });
   return {

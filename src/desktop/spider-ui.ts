@@ -1854,7 +1854,7 @@ export class DesktopSpiderUiServer {
         downloads: Boolean(this.downloadService),
         cast: Boolean(this.castService),
       },
-      lanControl: "requires-g68",
+      lanControl: "disabled",
     };
   }
 

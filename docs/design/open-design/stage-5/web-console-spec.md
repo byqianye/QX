@@ -33,6 +33,13 @@ Electron IPC 或桌面 UI server 的所有路由转成 HTTP。它只消费显式
 播放、直播和投屏只接收 opaque id；媒体 URL、请求头和 DLNA LOCATION 留在主
 进程适配层，不进入 Web 响应。
 
+## G68 security extension
+
+G67 remains localhost-first. G68 adds an explicit `Allow LAN Control` switch,
+private-interface binding, PIN login, expiring/revocable sessions, and separate
+`read`/`control`/`push` permissions. LAN requests require the matching session;
+loopback remains the local management boundary. See `docs/spike-68-web-security.md`.
+
 ## WebSocket
 
 `/ws` 只接受同源 WebSocket 握手。连接数量、单帧大小和空闲时间均有限制；连接

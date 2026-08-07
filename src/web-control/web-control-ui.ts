@@ -68,7 +68,26 @@ export function renderWebControlHtml(csrfToken: string): string {
     <section data-section="settings" class="panel" hidden>
       <div class="section-heading"><div><p class="eyebrow">Safety</p><h2>安全状态</h2></div><button type="button" data-action="refresh-status">刷新</button></div>
       <dl id="safe-status" class="status-grid"><dt>读取中</dt><dd>—</dd></dl>
-      <p class="muted">Web 控制台默认只监听本机。局域网控制将在后续 Goal 中单独设计。</p>
+      <div class="security-card">
+        <h3>PIN / LAN security</h3>
+        <p id="lan-warning" class="warning">LAN control is disabled by default. Enabling it allows trusted devices on the same private network to reach this console; a PIN is required.</p>
+        <dl id="web-security" class="status-grid"><dt>PIN</dt><dd>Loading</dd></dl>
+        <div class="controls">
+          <button type="button" data-action="regenerate-pin">Regenerate PIN</button>
+          <label><input id="allow-lan" type="checkbox"> Allow LAN Control</label>
+          <button type="button" data-action="save-lan">Save LAN setting</button>
+        </div>
+        <form id="pin-form" class="inline-form">
+          <input id="pin-value" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit PIN">
+          <label><input id="permission-read" type="checkbox" checked> Read</label>
+          <label><input id="permission-control" type="checkbox"> Control</label>
+          <label><input id="permission-push" type="checkbox"> Push</label>
+          <button type="submit">Log in</button>
+        </form>
+        <p id="pin-message" class="muted"></p>
+        <div id="web-sessions" class="rows"><p class="muted">No authorized sessions.</p></div>
+        <button type="button" data-action="revoke-all-sessions">Revoke all sessions</button>
+      </div>
     </section>
   </main>
   <script src="/app.js" defer></script>
@@ -111,6 +130,10 @@ input[type="range"] { min-height: 0; padding: 0; }
 .detail { margin-top: 24px; padding-top: 20px; border-top: 1px solid #e4e9ed; }
 .detail h3 { margin: 0 0 8px; }
 .episode-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.security-card { margin-top: 24px; padding-top: 20px; border-top: 1px solid #e4e9ed; }
+.security-card h3 { margin: 0 0 8px; }
+.warning { margin: 12px 0; padding: 12px; border-left: 4px solid #c98928; background: #fff7e6; color: #6a4a18; }
+.security-card .rows { margin: 18px 0; }
 .status-grid { display: grid; grid-template-columns: minmax(140px, .7fr) 1fr; gap: 0; margin: 0; }
 .status-grid dt, .status-grid dd { margin: 0; padding: 12px 0; border-bottom: 1px solid #e4e9ed; }
 .status-grid dt { color: #667582; }
@@ -180,11 +203,20 @@ export const WEB_CONTROL_APP_JS = `
     const node = document.getElementById('safe-status'); if (!node || !value) return;
     node.innerHTML = [['监听地址', value.host + ':' + value.port], ['运行中', value.listening ? '是' : '否'], ['界面就绪', value.uiReady ? '是' : '否'], ['局域网控制', value.lanControl], ['能力', Object.keys(value.capabilities || {}).filter((key) => value.capabilities[key]).join('、') || '无']].map((pair) => '<dt>' + esc(pair[0]) + '</dt><dd>' + esc(pair[1]) + '</dd>').join('');
   };
+  const renderSecurity = (value) => {
+    const node = document.getElementById('web-security'); if (!node || !value) return;
+    const toggle = document.getElementById('allow-lan'); if (toggle) toggle.checked = Boolean(value.allowLan);
+    node.innerHTML = [['PIN configured', value.pinConfigured ? 'yes' : 'no'], ['LAN control', value.allowLan ? 'enabled' : 'disabled'], ['Session', value.authenticated ? (value.session?.permissions || []).join(', ') : 'not logged in'], ['Setup PIN', value.setupPinAvailable ? 'available on this local page' : 'regenerate locally']].map((pair) => '<dt>' + esc(pair[0]) + '</dt><dd>' + esc(pair[1]) + '</dd>').join('');
+    const sessions = document.getElementById('web-sessions'); if (!sessions) return;
+    sessions.innerHTML = (value.sessions || []).map((session) => '<div class="row"><div class="row-main"><div class="row-title">' + esc(session.current ? 'Current browser' : 'Authorized browser') + '</div><div class="row-meta">' + esc((session.permissions || []).join(', ') + ' · expires ' + new Date(session.expiresAt).toLocaleString()) + '</div></div><button type="button" data-revoke-session="' + esc(session.id) + '">Revoke</button></div>').join('') || '<p class="muted">No authorized sessions.</p>';
+    sessions.querySelectorAll('[data-revoke-session]').forEach((button) => button.addEventListener('click', async () => { await api('/api/security/sessions/revoke', { method: 'POST', body: JSON.stringify({ id: button.getAttribute('data-revoke-session') }) }); await loadSecurity(); }));
+  };
   const loadNow = async () => { const value = await api('/api/now-playing'); renderNow(value.nowPlaying); };
   const loadLive = async () => { const value = await api('/api/live-channels'); renderLive(value.live); };
   const loadDownloads = async () => { const value = await api('/api/downloads'); renderDownloads(value.downloads); };
   const loadCast = async () => { const value = await api('/api/cast-devices'); renderCast(value.cast); };
   const loadStatus = async () => { const value = await api('/api/safe-status'); renderStatus(value.status); };
+  const loadSecurity = async () => { const value = await api('/api/security/status'); renderSecurity(value); try { const setup = await api('/api/security/setup-pin'); if (setup.pin) text('pin-message', 'New PIN: ' + setup.pin + ' (store it safely; it will not be shown again)'); } catch (_) {} };
   pages.forEach((node) => node.addEventListener('click', () => { const page = node.getAttribute('data-page'); if (page) setPage(page); }));
   document.getElementById('search-form')?.addEventListener('submit', async (event) => { event.preventDefault(); const query = document.getElementById('search-query')?.value || ''; try { const value = await api('/api/search?q=' + encodeURIComponent(query)); renderSearch(value.search); } catch (error) { text('search-results', error.message); } });
   document.querySelectorAll('[data-action="pause"]').forEach((node) => node.addEventListener('click', async () => { await api('/api/pause', { method: 'POST', body: '{}' }); await loadNow(); }));
@@ -196,6 +228,10 @@ export const WEB_CONTROL_APP_JS = `
   document.querySelectorAll('[data-action="refresh-downloads"]').forEach((node) => node.addEventListener('click', loadDownloads));
   document.querySelectorAll('[data-action="refresh-cast"]').forEach((node) => node.addEventListener('click', loadCast));
   document.querySelectorAll('[data-action="refresh-status"]').forEach((node) => node.addEventListener('click', loadStatus));
+  document.querySelector('[data-action="regenerate-pin"]')?.addEventListener('click', async () => { try { const value = await api('/api/security/regenerate-pin', { method: 'POST', body: '{}' }); text('pin-message', 'New PIN: ' + value.pin + ' (store it safely; it will not be shown again)'); await loadSecurity(); } catch (error) { text('pin-message', error.message); } });
+  document.querySelector('[data-action="save-lan"]')?.addEventListener('click', async () => { try { await api('/api/security/settings', { method: 'POST', body: JSON.stringify({ allowLan: Boolean(document.getElementById('allow-lan')?.checked) }) }); text('pin-message', 'LAN setting saved. The console may reconnect on its new address.'); await loadSecurity(); } catch (error) { text('pin-message', error.message); } });
+  document.getElementById('pin-form')?.addEventListener('submit', async (event) => { event.preventDefault(); try { const permissions = ['read', 'control', 'push'].filter((permission) => document.getElementById('permission-' + permission)?.checked); await api('/auth/pin', { method: 'POST', body: JSON.stringify({ pin: document.getElementById('pin-value')?.value || '', permissions }) }); text('pin-message', 'Logged in.'); await loadSecurity(); await loadNow(); } catch (error) { text('pin-message', error.message); } });
+  document.querySelector('[data-action="revoke-all-sessions"]')?.addEventListener('click', async () => { try { await api('/api/security/sessions/revoke-all', { method: 'POST', body: '{}' }); await loadSecurity(); } catch (error) { text('pin-message', error.message); } });
   const connect = () => {
     try {
       const socket = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
@@ -205,7 +241,7 @@ export const WEB_CONTROL_APP_JS = `
     } catch (_) { if (statusNode) statusNode.textContent = '连接失败'; }
   };
   setPage('now');
-  Promise.all([loadNow(), loadLive(), loadDownloads(), loadCast(), loadStatus()]).catch((error) => { if (statusNode) statusNode.textContent = error.message; });
+  Promise.all([loadNow(), loadLive(), loadDownloads(), loadCast(), loadStatus(), loadSecurity()]).catch((error) => { if (statusNode) statusNode.textContent = error.message; });
   connect();
 })();
 `;

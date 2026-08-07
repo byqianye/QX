@@ -31,6 +31,12 @@ G65 建立统一的 `PushRequest` 与 `PushService`，当前只开放本机回�
 - UI、最近记录、确认预览和错误不会回显完整 URL、凭据、请求头或本机路径。LAN 访问、PIN 和 session
   鉴权留到 G68。
 
+## G68 security extension
+
+The Push endpoint remains loopback-only by default. Its optional LAN mode is
+gated by the G68 private-interface, exact-Origin, Web-session `push` permission,
+rate, payload, URL, DNS, and redirect checks.
+
 ## 验收标准
 
 - localhost endpoint、URI parser、五类 request、非法 scheme、SSRF、redirect、header injection、

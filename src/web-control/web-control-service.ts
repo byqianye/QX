@@ -9,8 +9,19 @@ import type { AddressInfo, Socket } from "node:net";
 
 import { renderWebControlHtml, WEB_CONTROL_APP_JS, WEB_CONTROL_STYLES } from "./web-control-ui.js";
 import {
+  WebSecurityManager,
+  isLoopbackAddress,
+  isSafeLanAddress,
+  listSafeLanInterfaces,
+  selectSafeLanInterface,
+  type WebLanInterface,
+  type WebSecuritySettingsStore,
+  type WebSessionView,
+} from "./web-security.js";
+import {
   WEB_CONTROL_ROUTES,
   WebControlError,
+  type WebControlPermission,
   type WebControlBackend,
   type WebControlBackendStatus,
   type WebControlRateClass,
@@ -31,6 +42,16 @@ export interface WebControlServiceOptions {
   backend: WebControlBackend;
   host?: string;
   port?: number;
+  settings?: WebSecuritySettingsStore;
+  security?: WebSecurityManager;
+  lanEnabled?: boolean;
+  lanHost?: string;
+  lanInterfaceName?: string;
+  lanInterfaces?: () => readonly WebLanInterface[];
+  sessionTtlMs?: number;
+  pinCooldownMs?: number;
+  maxPinFailuresPerIp?: number;
+  maxPinFailuresGlobal?: number;
   maxBodyBytes?: number;
   maxConnections?: number;
   maxMessageBytes?: number;
@@ -51,7 +72,7 @@ interface RateWindow {
 
 interface PublicWebControlStatus extends WebControlBackendStatus {
   service: "web-control";
-  host: typeof LOOPBACK_HOST;
+  host: string;
   port: number | null;
   listening: boolean;
 }
@@ -64,21 +85,40 @@ export class WebControlService {
   private readonly idleTimeoutMs: number;
   private readonly heartbeatMs: number;
   private readonly now: () => number;
-  private readonly host = LOOPBACK_HOST;
+  private readonly security: WebSecurityManager;
+  private readonly lanInterfaces: () => readonly WebLanInterface[];
+  private readonly lanHost: string | undefined;
+  private readonly lanInterfaceName: string | undefined;
   private readonly configuredPort: number;
   private readonly csrfToken = randomBytes(32).toString("hex");
   private readonly clients = new Set<WebSocketClient>();
   private readonly rateWindows = new Map<string, RateWindow>();
   private server: Server | undefined;
   private boundPort: number | null = null;
+  private preferredPort: number | null = null;
+  private host: string = LOOPBACK_HOST;
+  private allowLanValue: boolean;
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   private broadcasting = false;
 
   public constructor(options: WebControlServiceOptions) {
-    if (options.host !== undefined && options.host !== LOOPBACK_HOST) {
+    if (options.host !== undefined && options.host !== LOOPBACK_HOST && !isSafeLanAddress(options.host)) {
       throw new WebControlError("WEB_BIND_FORBIDDEN", "Web 控制台只能监听 127.0.0.1", 400);
     }
     this.backend = options.backend;
+    const securityOptions = {
+      ...(options.settings ? { settings: options.settings } : {}),
+      ...(options.now ? { now: options.now } : {}),
+      ...(options.sessionTtlMs ? { sessionTtlMs: options.sessionTtlMs } : {}),
+      ...(options.pinCooldownMs ? { pinCooldownMs: options.pinCooldownMs } : {}),
+      ...(options.maxPinFailuresPerIp ? { maxPinFailuresPerIp: options.maxPinFailuresPerIp } : {}),
+      ...(options.maxPinFailuresGlobal ? { maxPinFailuresGlobal: options.maxPinFailuresGlobal } : {}),
+    };
+    this.security = options.security ?? new WebSecurityManager(securityOptions);
+    this.allowLanValue = options.lanEnabled ?? this.security.allowLan;
+    this.lanInterfaces = options.lanInterfaces ?? listSafeLanInterfaces;
+    this.lanHost = options.lanHost ?? (options.host !== undefined && options.host !== LOOPBACK_HOST ? options.host : undefined);
+    this.lanInterfaceName = options.lanInterfaceName;
     this.configuredPort = normalizePort(options.port ?? 0);
     this.maxBodyBytes = positiveInteger(options.maxBodyBytes, DEFAULT_MAX_BODY_BYTES);
     this.maxConnections = positiveInteger(options.maxConnections, DEFAULT_MAX_CONNECTIONS);
@@ -90,6 +130,14 @@ export class WebControlService {
 
   public get url(): string | null {
     return this.boundPort === null ? null : `http://${this.host}:${this.boundPort}/`;
+  }
+
+  public get allowLan(): boolean {
+    return this.allowLanValue;
+  }
+
+  public get securityManager(): WebSecurityManager {
+    return this.security;
   }
 
   public get port(): number | null {
@@ -111,6 +159,7 @@ export class WebControlService {
 
   public async start(): Promise<void> {
     if (this.server) return;
+    this.host = this.resolveHost();
     const server = createServer((request, response) => {
       void this.handleRequest(request, response);
     });
@@ -119,7 +168,7 @@ export class WebControlService {
     try {
       await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
-        server.listen(this.configuredPort, this.host, resolve);
+        server.listen(this.preferredPort ?? this.configuredPort, this.host, resolve);
       });
       const address = server.address();
       if (!address || typeof address === "string") throw new WebControlError("WEB_START_FAILED", "Web 控制台端口不可用", 503);
@@ -137,14 +186,81 @@ export class WebControlService {
   }
 
   public async close(): Promise<void> {
+    await this.closeInternal(false);
+  }
+
+  public async configureLan(allowLan: boolean): Promise<void> {
+    const nextHost = allowLan ? this.resolveLanHost() : LOOPBACK_HOST;
+    const previousAllowLan = this.allowLanValue;
+    const previousHost = this.host;
+    const previousPort = this.boundPort;
+    this.allowLanValue = allowLan;
+    this.security.setAllowLan(allowLan);
+    if (!this.server) {
+      this.host = nextHost;
+      return;
+    }
+    try {
+      await this.closeInternal(true);
+      this.host = nextHost;
+      await this.start();
+    } catch (error) {
+      this.allowLanValue = previousAllowLan;
+      this.security.setAllowLan(previousAllowLan);
+      this.host = previousHost;
+      this.preferredPort = previousPort;
+      try { await this.start(); } catch { /* preserve the original failure */ }
+      throw error;
+    }
+  }
+
+  private async closeInternal(preservePort: boolean): Promise<void> {
     if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = undefined;
     for (const client of [...this.clients]) this.closeClient(client);
     const server = this.server;
+    const previousPort = this.boundPort;
     this.server = undefined;
     this.boundPort = null;
+    this.preferredPort = preservePort ? previousPort : null;
     this.rateWindows.clear();
     if (server) await closeHttpServer(server);
+  }
+
+  private resolveHost(): string {
+    return this.allowLanValue ? this.resolveLanHost() : LOOPBACK_HOST;
+  }
+
+  private resolveLanHost(): string {
+    if (this.lanHost) {
+      if (!isSafeLanAddress(this.lanHost)) {
+        throw new WebControlError("WEB_LAN_INTERFACE_FORBIDDEN", "LAN binding must use a private IPv4 interface", 400);
+      }
+      return this.lanHost;
+    }
+    const selected = selectSafeLanInterface(this.lanInterfaces(), this.lanInterfaceName);
+    if (!selected) throw new WebControlError("WEB_LAN_NO_INTERFACE", "No safe private LAN interface is available", 503);
+    return selected.address;
+  }
+
+  private async rebindLanAfterResponse(
+    _allowLan: boolean,
+    nextHost: string,
+    previousAllowLan: boolean,
+    previousHost: string,
+  ): Promise<void> {
+    const previousPort = this.boundPort;
+    try {
+      await this.closeInternal(true);
+      this.host = nextHost;
+      await this.start();
+    } catch {
+      this.allowLanValue = previousAllowLan;
+      this.security.setAllowLan(previousAllowLan);
+      this.host = previousHost;
+      this.preferredPort = previousPort;
+      try { await this.start(); } catch { /* retain the failure without a partial listener */ }
+    }
   }
 
   private async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -179,10 +295,13 @@ export class WebControlService {
       return;
     }
 
+    if (await this.handleSecurityRoute(url, request, response)) return;
+
     const route = WEB_CONTROL_ROUTES.find((candidate) => candidate.method === request.method && candidate.path === url.pathname);
     if (!route) throw new WebControlError("WEB_ROUTE_NOT_FOUND", "Web 控制路由不存在", 404);
     this.requireOrigin(request, request.method === "POST");
     this.enforceRateLimit(request, route.rateClass);
+    this.requirePermission(request, route.permission);
 
     if (request.method === "GET") {
       await this.handleGet(route, url, request, response);
@@ -190,6 +309,100 @@ export class WebControlService {
     }
     const body = await readJson(request, this.maxBodyBytes);
     await this.handlePost(route, body, request, response);
+  }
+
+  private async handleSecurityRoute(
+    url: URL,
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<boolean> {
+    const path = url.pathname;
+    const isSecurityPath = path.startsWith("/api/security/") || path.startsWith("/auth/");
+    if (!isSecurityPath) return false;
+    this.enforceRateLimit(request, path === "/auth/pin" ? "control" : "read");
+
+    if (request.method === "GET" && path === "/api/security/status") {
+      this.requireOrigin(request, false);
+      const session = this.currentSession(request);
+      this.writeJson(response, request, this.securityStatus(session, this.isLoopbackRequest(request)));
+      return true;
+    }
+    if (request.method === "GET" && path === "/api/security/setup-pin") {
+      this.requireOrigin(request, false);
+      this.requireLoopback(request);
+      const pin = this.security.consumeSetupPin();
+      this.writeJson(response, request, { pin, available: pin !== null });
+      return true;
+    }
+    if (request.method === "GET" && path === "/api/security/sessions") {
+      this.requireOrigin(request, false);
+      const session = this.requirePermission(request, "control");
+      this.writeJson(response, request, { sessions: this.security.listSessions(session?.id) });
+      return true;
+    }
+    if (request.method !== "POST") throw new WebControlError("WEB_ROUTE_NOT_FOUND", "Security route not found", 404);
+
+    const body = await readJson(request, this.maxBodyBytes);
+    if (path === "/auth/pin") {
+      this.requireOrigin(request, true);
+      ensureKeys(body, ["pin", "permissions"]);
+      const permissions = webPermissions(body.permissions);
+      const result = this.security.login(requiredString(body.pin, "pin", 6), request.socket.remoteAddress ?? "unknown", permissions);
+      if (!result.ok) {
+        throw new WebControlError(result.code, result.code === "WEB_PIN_RATE_LIMITED" ? "PIN login is temporarily rate limited" : "PIN is invalid", result.code === "WEB_PIN_RATE_LIMITED" ? 429 : 401);
+      }
+      this.writeJson(response, request, { authenticated: true, session: result.session, sessionToken: result.token }, 200, {
+        "set-cookie": this.sessionCookie(result.token, result.session.expiresAt, request),
+      });
+      return true;
+    }
+
+    const session = this.currentSession(request);
+    this.requireOrigin(request, true);
+    this.requireCsrf(request);
+    if (path === "/auth/logout") {
+      if (session) this.security.revoke(session.id);
+      this.writeJson(response, request, { authenticated: false }, 200, { "set-cookie": this.expiredSessionCookie(request) });
+      return true;
+    }
+    if (path === "/api/security/regenerate-pin") {
+      this.requireLoopback(request);
+      const pin = this.security.regeneratePin();
+      this.writeJson(response, request, { pin, expires: "until this response is dismissed" });
+      return true;
+    }
+    if (path === "/api/security/settings") {
+      this.requireLoopback(request);
+      if (typeof body.allowLan !== "boolean") throw new WebControlError("WEB_SCHEMA_INVALID", "allowLan must be boolean", 400);
+      const nextHost = body.allowLan ? this.resolveLanHost() : LOOPBACK_HOST;
+      const previousAllowLan = this.allowLanValue;
+      const previousHost = this.host;
+      this.allowLanValue = body.allowLan;
+      this.security.setAllowLan(body.allowLan);
+      this.writeJson(response, request, this.securityStatus(this.currentSession(request), true));
+      if (this.server && (previousAllowLan !== body.allowLan || previousHost !== nextHost)) {
+        response.once("finish", () => {
+          setTimeout(() => { void this.rebindLanAfterResponse(body.allowLan as boolean, nextHost, previousAllowLan, previousHost); }, 0);
+        });
+      } else {
+        this.host = nextHost;
+      }
+      return true;
+    }
+    if (path === "/api/security/sessions/revoke") {
+      this.requirePermission(request, "control");
+      ensureKeys(body, ["id"]);
+      this.security.revoke(requiredString(body.id, "id", 128));
+      this.writeJson(response, request, { sessions: this.security.listSessions(session?.id) });
+      return true;
+    }
+    if (path === "/api/security/sessions/revoke-all") {
+      this.requirePermission(request, "control");
+      this.security.revokeAll();
+      this.writeJson(response, request, { sessions: [] }, 200, { "set-cookie": this.expiredSessionCookie(request) });
+      return true;
+    }
+    throw new WebControlError("WEB_ROUTE_NOT_FOUND", "Security route not found", 404);
   }
 
   private async handleGet(
@@ -328,8 +541,53 @@ export class WebControlService {
       listening: this.listening,
       uiReady: status.uiReady,
       capabilities: { ...status.capabilities },
-      lanControl: status.lanControl,
+      lanControl: this.allowLanValue ? "enabled" : "disabled",
     };
+  }
+
+  private securityStatus(session: WebSessionView | null, includeSessions: boolean): Record<string, unknown> {
+    return {
+      allowLan: this.allowLanValue,
+      host: this.host,
+      port: this.boundPort,
+      listening: this.listening,
+      pinConfigured: this.security.pinConfigured,
+      setupPinAvailable: includeSessions && this.security.setupPinAvailable,
+      authenticated: session !== null,
+      session,
+      ...(includeSessions ? { sessions: this.security.listSessions(session?.id) } : {}),
+    };
+  }
+
+  private currentSession(request: IncomingMessage): WebSessionView | null {
+    return this.security.authenticate(readCookie(request, "qx_web_session"));
+  }
+
+  private requirePermission(request: IncomingMessage, permission: WebControlPermission): WebSessionView | null {
+    if (this.isLoopbackRequest(request) || !this.allowLanValue) return null;
+    const session = this.currentSession(request);
+    if (!session) throw new WebControlError("WEB_AUTH_REQUIRED", "LAN control requires a valid PIN session", 401);
+    if (!this.security.hasPermission(session, permission)) {
+      throw new WebControlError("WEB_PERMISSION_FORBIDDEN", `This session does not have ${permission} permission`, 403);
+    }
+    return session;
+  }
+
+  private requireLoopback(request: IncomingMessage): void {
+    if (!this.isLoopbackRequest(request)) throw new WebControlError("WEB_LOCAL_ONLY", "This security action is local-only", 403);
+  }
+
+  private isLoopbackRequest(request: IncomingMessage): boolean {
+    return isLoopbackAddress(request.socket.remoteAddress);
+  }
+
+  private sessionCookie(token: string, expiresAt: number, request: IncomingMessage): string {
+    const maxAge = Math.max(0, Math.ceil((expiresAt - this.now()) / 1000));
+    return `qx_web_session=${encodeURIComponent(token)}; Max-Age=${maxAge}; Path=/; HttpOnly; SameSite=Strict${isHttpsRequest(request) ? "; Secure" : ""}`;
+  }
+
+  private expiredSessionCookie(request: IncomingMessage): string {
+    return `qx_web_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict${isHttpsRequest(request) ? "; Secure" : ""}`;
   }
 
   private handleOptions(request: IncomingMessage, response: ServerResponse): void {
@@ -338,6 +596,7 @@ export class WebControlService {
       allow: "GET, POST, OPTIONS",
       "access-control-allow-methods": "GET, POST, OPTIONS",
       "access-control-allow-headers": "content-type, x-csrf-token",
+      "access-control-allow-credentials": "true",
       "content-length": "0",
     });
     response.end();
@@ -374,6 +633,7 @@ export class WebControlService {
 
   private handleUpgrade(request: IncomingMessage, socket: Socket): void {
     try {
+      this.requirePermission(request, "read");
       const url = new URL(request.url ?? "/", this.baseUrl());
       if (url.pathname !== "/ws") throw new WebControlError("WEB_WS_NOT_FOUND", "WebSocket 路由不存在", 404);
       this.requireOrigin(request, true);
@@ -523,21 +783,35 @@ export class WebControlService {
     response.end(value);
   }
 
-  private writeJson(response: ServerResponse, request: IncomingMessage, value: unknown, status = 200): void {
+  private writeJson(
+    response: ServerResponse,
+    request: IncomingMessage,
+    value: unknown,
+    status = 200,
+    extraHeaders: Record<string, string | string[]> = {},
+  ): void {
     const serialized = JSON.stringify(value);
     this.writeHead(response, request, status, {
       "content-type": "application/json; charset=utf-8",
       "content-length": Buffer.byteLength(serialized, "utf8").toString(),
       "cache-control": "no-store",
+      ...extraHeaders,
     });
     response.end(serialized);
   }
 
-  private writeHead(response: ServerResponse, request: IncomingMessage, status: number, headers: Record<string, string>): void {
+  private writeHead(
+    response: ServerResponse,
+    request: IncomingMessage,
+    status: number,
+    headers: Record<string, string | string[]>,
+  ): void {
     const origin = header(request, "origin");
     response.writeHead(status, {
       ...headers,
       "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      "x-frame-options": "DENY",
       "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
       vary: "Origin",
       ...(origin === this.origin() ? { "access-control-allow-origin": origin } : {}),
@@ -565,6 +839,34 @@ function positiveInteger(value: number | undefined, fallback: number): number {
 function header(request: IncomingMessage, name: string): string | undefined {
   const value = request.headers[name];
   return Array.isArray(value) ? value[0] : value;
+}
+
+function readCookie(request: IncomingMessage, name: string): string | null {
+  const raw = header(request, "cookie");
+  if (!raw) return null;
+  for (const part of raw.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator < 0 || part.slice(0, separator).trim() !== name) continue;
+    try { return decodeURIComponent(part.slice(separator + 1).trim()); } catch { return null; }
+  }
+  return null;
+}
+
+function isHttpsRequest(request: IncomingMessage): boolean {
+  return Boolean((request.socket as Socket & { encrypted?: boolean }).encrypted);
+}
+
+function webPermissions(value: unknown): readonly WebControlPermission[] {
+  if (value === undefined) return ["read"];
+  if (!Array.isArray(value) || value.length > 3) {
+    throw new WebControlError("WEB_SCHEMA_INVALID", "permissions must be a short list", 400);
+  }
+  const allowed = new Set<WebControlPermission>(["read", "control", "push"]);
+  const result = [...new Set(value)].filter((permission): permission is WebControlPermission => typeof permission === "string" && allowed.has(permission as WebControlPermission));
+  if (result.length !== value.length || result.length === 0) {
+    throw new WebControlError("WEB_SCHEMA_INVALID", "permissions contains an unsupported value", 400);
+  }
+  return result;
 }
 
 function queryValue(value: string | null): string {

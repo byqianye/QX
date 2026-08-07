@@ -6,6 +6,14 @@ import type { AddressInfo } from "node:net";
 
 import type { SettingsRepository } from "../data/repositories.js";
 import {
+  WebSecurityManager,
+  isLoopbackAddress,
+  isSafeLanAddress,
+  listSafeLanInterfaces,
+  selectSafeLanInterface,
+  type WebLanInterface,
+} from "../web-control/web-security.js";
+import {
   EMPTY_PUSH_UI_STATE,
   PUSH_REQUEST_TYPES,
   type PushConfirmationPolicy,
@@ -29,6 +37,8 @@ const MAX_RECENT = 20;
 const MAX_PENDING = 12;
 const MAX_QUEUE = 20;
 const MAX_REDIRECTS = 5;
+const PUSH_RATE_WINDOW_MS = 60_000;
+const DEFAULT_PUSH_RATE_LIMIT = 60;
 
 const HEADER_ALLOWLIST = new Map<string, string>([
   ["accept", "Accept"],
@@ -66,6 +76,12 @@ export interface PushServiceOptions {
   settings?: SettingsRepository;
   host?: string;
   port?: number;
+  allowLan?: boolean;
+  lanHost?: string;
+  lanInterfaceName?: string;
+  lanInterfaces?: () => readonly WebLanInterface[];
+  security?: WebSecurityManager;
+  maxRequestsPerMinute?: number;
   enabled?: boolean;
   confirmationPolicy?: PushConfirmationPolicy;
   conflictMode?: PushConflictMode;
@@ -80,6 +96,7 @@ export interface PushServiceOptions {
 export interface PushConfigurePatch {
   enabled?: boolean;
   port?: number;
+  allowLan?: boolean;
   confirmationPolicy?: PushConfirmationPolicy;
   conflictMode?: PushConflictMode;
 }
@@ -118,6 +135,7 @@ interface QueuedPush {
 interface PersistedPushSettings {
   enabled: boolean;
   port: number;
+  allowLan: boolean;
   confirmationPolicy: PushConfirmationPolicy;
   conflictMode: PushConflictMode;
 }
@@ -125,6 +143,7 @@ interface PersistedPushSettings {
 const DEFAULT_SETTINGS: PersistedPushSettings = {
   enabled: true,
   port: 0,
+  allowLan: false,
   confirmationPolicy: "ask",
   conflictMode: "replace",
 };
@@ -138,9 +157,15 @@ export class PushService {
   private readonly resolveRedirectChain: ((url: string) => Promise<readonly string[]>) | undefined;
   private readonly resolveFixtureUrl: ((fixtureId: string) => string | undefined | Promise<string | undefined>) | undefined;
   private readonly now: () => number;
-  private readonly host = "127.0.0.1" as const;
+  private readonly security: WebSecurityManager | undefined;
+  private readonly lanHost: string | undefined;
+  private readonly lanInterfaceName: string | undefined;
+  private readonly lanInterfaces: () => readonly WebLanInterface[];
+  private readonly maxRequestsPerMinute: number;
+  private host = "127.0.0.1";
   private configuredPort: number;
   private enabledValue: boolean;
+  private allowLanValue: boolean;
   private confirmationPolicyValue: PushConfirmationPolicy;
   private conflictModeValue: PushConflictMode;
   private server: Server | undefined;
@@ -148,18 +173,26 @@ export class PushService {
   private errorValue: { code: string; message: string } | null = null;
   private readonly pending = new Map<string, PendingPush>();
   private readonly queue: QueuedPush[] = [];
+  private readonly requestWindows = new Map<string, { startedAt: number; count: number }>();
   private recentValue: PushRecentRecord[] = [];
   private draining = false;
   private playbackTail: Promise<void> = Promise.resolve();
   private lifecycleGeneration = 0;
 
   public constructor(options: PushServiceOptions) {
-    if (options.host !== undefined && options.host !== this.host) {
+    if (options.host !== undefined && options.host !== this.host && (!options.allowLan || !isSafeLanAddress(options.host))) {
       throw new PushServiceError("PUSH_BIND_FORBIDDEN", "Push 服务只能监听 127.0.0.1。", undefined);
     }
     this.playback = options.playback;
     this.settingsRepository = options.settings;
     const stored = readStoredSettings(options.settings?.get<unknown>(PUSH_SETTINGS_KEY));
+    this.allowLanValue = options.allowLan ?? stored.allowLan;
+    this.host = options.host ?? "127.0.0.1";
+    this.security = options.security;
+    this.lanHost = options.lanHost;
+    this.lanInterfaceName = options.lanInterfaceName;
+    this.lanInterfaces = options.lanInterfaces ?? listSafeLanInterfaces;
+    this.maxRequestsPerMinute = positiveInteger(options.maxRequestsPerMinute, DEFAULT_PUSH_RATE_LIMIT);
     this.configuredPort = normalizePort(options.port ?? stored.port);
     this.enabledValue = options.enabled ?? stored.enabled;
     this.confirmationPolicyValue = options.confirmationPolicy ?? stored.confirmationPolicy;
@@ -176,6 +209,10 @@ export class PushService {
     return this.server && this.boundPort !== null
       ? `http://${this.host}:${this.boundPort}/push`
       : null;
+  }
+
+  public get allowLan(): boolean {
+    return this.allowLanValue;
   }
 
   public get port(): number | null {
@@ -196,6 +233,7 @@ export class PushService {
     return {
       ...EMPTY_PUSH_UI_STATE,
       enabled: this.enabledValue,
+      host: this.host,
       configuredPort: this.configuredPort,
       port: this.boundPort,
       listening: this.listening,
@@ -206,11 +244,13 @@ export class PushService {
       recent: this.recentValue.map(cloneRecent),
       activeSession,
       error: this.errorValue ? { ...this.errorValue } : null,
+      lanControl: this.allowLanValue ? "enabled" : "disabled",
     };
   }
 
   public async start(): Promise<void> {
     if (!this.enabledValue || this.server) return;
+    this.host = this.resolveHost();
     const server = createServer((request, response) => {
       void this.handle(request, response);
     });
@@ -244,6 +284,8 @@ export class PushService {
     const server = this.server;
     this.server = undefined;
     this.boundPort = null;
+    this.host = "127.0.0.1";
+    this.requestWindows.clear();
     if (server) await closeServer(server);
   }
 
@@ -251,13 +293,18 @@ export class PushService {
     const next: PersistedPushSettings = {
       enabled: patch.enabled ?? this.enabledValue,
       port: patch.port === undefined ? this.configuredPort : normalizePort(patch.port),
+      allowLan: patch.allowLan ?? this.allowLanValue,
       confirmationPolicy: patch.confirmationPolicy ?? this.confirmationPolicyValue,
       conflictMode: patch.conflictMode ?? this.conflictModeValue,
     };
+    const nextHost = next.allowLan ? this.resolveLanHost() : "127.0.0.1";
     const restart = next.enabled !== this.enabledValue
-      || next.port !== this.configuredPort;
+      || next.port !== this.configuredPort
+      || next.allowLan !== this.allowLanValue;
     this.enabledValue = next.enabled;
     this.configuredPort = next.port;
+    this.allowLanValue = next.allowLan;
+    this.host = nextHost;
     this.confirmationPolicyValue = next.confirmationPolicy;
     this.conflictModeValue = next.conflictMode;
     this.settingsRepository?.set(PUSH_SETTINGS_KEY, next);
@@ -545,12 +592,29 @@ export class PushService {
     return cloneRecent(next);
   }
 
+  private resolveHost(): string {
+    return this.allowLanValue ? this.resolveLanHost() : "127.0.0.1";
+  }
+
+  private resolveLanHost(): string {
+    if (this.lanHost) {
+      if (!isSafeLanAddress(this.lanHost)) throw new PushServiceError("PUSH_LAN_INTERFACE_FORBIDDEN", "Push LAN binding must use a private IPv4 interface", undefined);
+      return this.lanHost;
+    }
+    const selected = selectSafeLanInterface(this.lanInterfaces(), this.lanInterfaceName);
+    if (!selected) throw new PushServiceError("PUSH_LAN_NO_INTERFACE", "No safe private LAN interface is available", undefined);
+    return selected.address;
+  }
+
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     try {
-      if (!isLoopbackRequest(request)) {
+      const loopback = isLoopbackAddress(request.socket.remoteAddress);
+      if (!loopback && !this.allowLanValue) {
         writeJson(response, { error: "PUSH_LOOPBACK_ONLY", errorCode: "PUSH_LOOPBACK_ONLY" }, 403);
         return;
       }
+      if (!loopback) this.requireLanAuthentication(request);
+      this.enforceRequestRate(request);
       const url = new URL(request.url ?? "/", `http://${this.host}`);
       if (request.method !== "POST") {
         writeJson(response, { error: "PUSH_METHOD_UNSUPPORTED", errorCode: "PUSH_METHOD_UNSUPPORTED" }, 405);
@@ -590,9 +654,37 @@ export class PushService {
       const mapped = mapPushError(error);
       const status = mapped.code === "PUSH_CONFLICT" ? 409
         : mapped.code === "PUSH_CONFIRMATION_NOT_FOUND" || mapped.code === "PUSH_REQUEST_NOT_FOUND" ? 404
+          : mapped.code === "PUSH_AUTH_REQUIRED" ? 401
+            : mapped.code === "PUSH_ORIGIN_FORBIDDEN" || mapped.code === "PUSH_PERMISSION_FORBIDDEN" ? 403
+              : mapped.code === "PUSH_RATE_LIMITED" ? 429
           : 400;
       writeJson(response, { error: mapped.message, errorCode: mapped.code }, status);
     }
+  }
+
+  private requireLanAuthentication(request: IncomingMessage): void {
+    const origin = typeof request.headers.origin === "string" ? normalizeOrigin(request.headers.origin) : null;
+    if (origin !== this.origin()) throw new PushServiceError("PUSH_ORIGIN_FORBIDDEN", "LAN Push requires its exact same-origin request", undefined);
+    const token = readCookie(request, "qx_web_session");
+    const session = this.security?.authenticate(token);
+    if (!session) throw new PushServiceError("PUSH_AUTH_REQUIRED", "LAN Push requires a valid Web session", undefined);
+    if (!this.security?.hasPermission(session, "push")) throw new PushServiceError("PUSH_PERMISSION_FORBIDDEN", "This Web session has no push permission", undefined);
+  }
+
+  private enforceRequestRate(request: IncomingMessage): void {
+    const key = request.socket.remoteAddress ?? "unknown";
+    const now = this.now();
+    const current = this.requestWindows.get(key);
+    if (!current || now - current.startedAt >= PUSH_RATE_WINDOW_MS) {
+      this.requestWindows.set(key, { startedAt: now, count: 1 });
+      return;
+    }
+    if (current.count >= this.maxRequestsPerMinute) throw new PushServiceError("PUSH_RATE_LIMITED", "Push request rate limit exceeded", undefined);
+    current.count += 1;
+  }
+
+  private origin(): string {
+    return this.url ? new URL(this.url).origin : `http://${this.host}:${this.configuredPort || 80}`;
   }
 
   private requesterForOrigin(request: IncomingMessage): PushRequester {
@@ -884,6 +976,7 @@ function readStoredSettings(value: unknown): PersistedPushSettings {
   return {
     enabled: typeof value.enabled === "boolean" ? value.enabled : DEFAULT_SETTINGS.enabled,
     port: safePort(value.port, DEFAULT_SETTINGS.port),
+    allowLan: value.allowLan === true,
     confirmationPolicy: value.confirmationPolicy === "allow-trusted-local" ? "allow-trusted-local" : "ask",
     conflictMode: value.conflictMode === "queue" || value.conflictMode === "reject" ? value.conflictMode : "replace",
   };
@@ -894,6 +987,10 @@ function normalizePort(value: number): number {
     throw new PushServiceError("PUSH_PORT_INVALID", "Push 端口必须是 0 到 65535 的整数。", undefined);
   }
   return value;
+}
+
+function positiveInteger(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
 function safePort(value: unknown, fallback: number): number {
@@ -1045,11 +1142,6 @@ function decodeUriPart(value: string): string {
   }
 }
 
-function isLoopbackRequest(request: IncomingMessage): boolean {
-  const remote = request.socket.remoteAddress?.toLowerCase();
-  return remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
-}
-
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -1074,9 +1166,24 @@ function writeJson(response: ServerResponse, value: unknown, status = 200): void
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+    "x-frame-options": "DENY",
+    "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
     "content-length": Buffer.byteLength(body),
   });
   response.end(body);
+}
+
+function readCookie(request: IncomingMessage, name: string): string | null {
+  const raw = request.headers.cookie;
+  if (!raw) return null;
+  for (const part of raw.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator < 0 || part.slice(0, separator).trim() !== name) continue;
+    try { return decodeURIComponent(part.slice(separator + 1).trim()); } catch { return null; }
+  }
+  return null;
 }
 
 async function closeServer(server: Server): Promise<void> {

@@ -3,7 +3,12 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import EmbeddedPlayer from "./EmbeddedPlayer.vue";
 import type { PlayerMediaSync, PlayerState } from "./state.js";
-import type { LiveSourceType, LiveUiState } from "../../src/live/live-types.js";
+import type {
+  LiveSourceType,
+  LiveUiState,
+  SmartChannelSuggestionUiState,
+  SmartChannelUiState,
+} from "../../src/live/live-types.js";
 
 const props = defineProps<{
   state: LiveUiState;
@@ -21,6 +26,16 @@ const emit = defineEmits<{
   line: [streamId: string];
   stop: [];
   sync: [value: PlayerMediaSync];
+  smartCreate: [payload: { name: string; group?: string | null; memberIds: string[] }];
+  smartUpdate: [payload: { smartChannelId: string; name?: string; group?: string | null; sortOrder?: number }];
+  smartDelete: [smartChannelId: string];
+  smartAddMember: [payload: { smartChannelId: string; liveChannelId: string; priority?: number }];
+  smartRemoveMember: [payload: { smartChannelId: string; memberId: string }];
+  smartMemberUpdate: [payload: { smartChannelId: string; memberId: string; priority?: number; enabled?: boolean }];
+  smartMemberReorder: [payload: { smartChannelId: string; memberIds: string[] }];
+  smartSelect: [payload: { smartChannelId: string; memberId: string | null }];
+  smartPlay: [payload: { smartChannelId: string; memberId?: string }];
+  smartEpg: [payload: { smartChannelId: string; epgSourceId: string | null; epgChannelId: string | null }];
 }>();
 
 const name = ref("我的直播源");
@@ -33,6 +48,11 @@ const localError = ref<string | null>(null);
 const selectedGroupId = ref("__all__");
 const focusedChannelIndex = ref(0);
 const channelWindow = ref(40);
+const viewMode = ref<"sources" | "smart">("sources");
+const smartName = ref("");
+const smartGroup = ref("");
+const selectedSmartMemberIds = ref<string[]>([]);
+const renameValues = ref<Record<string, string>>({});
 
 const filteredChannels = computed(() => {
   if (selectedGroupId.value === "__all__") return props.state.catalog.channels;
@@ -48,6 +68,98 @@ const selectedChannel = computed(() => {
   const id = props.state.session?.channelId;
   return props.state.catalog.channels.find((channel) => channel.id === id) ?? null;
 });
+
+const selectedSmartChannels = computed(() => new Set(selectedSmartMemberIds.value));
+
+function toggleSmartMember(channelId: string): void {
+  const next = new Set(selectedSmartMemberIds.value);
+  if (next.has(channelId)) next.delete(channelId);
+  else next.add(channelId);
+  selectedSmartMemberIds.value = [...next];
+}
+
+function createSmart(): void {
+  localError.value = null;
+  const trimmedName = smartName.value.trim();
+  if (!trimmedName) {
+    localError.value = "请填写 Smart Channel 名称。";
+    return;
+  }
+  if (selectedSmartMemberIds.value.length < 2) {
+    localError.value = "请至少选择两个来源频道后再合并。";
+    return;
+  }
+  emit("smartCreate", {
+    name: trimmedName,
+    group: smartGroup.value.trim() || null,
+    memberIds: [...selectedSmartMemberIds.value],
+  });
+  selectedSmartMemberIds.value = [];
+  smartName.value = "";
+}
+
+function createSuggestion(suggestion: SmartChannelSuggestionUiState): void {
+  emit("smartCreate", {
+    name: suggestion.name,
+    group: null,
+    memberIds: [...suggestion.memberIds],
+  });
+}
+
+function renameSmart(channel: SmartChannelUiState): void {
+  const name = (renameValues.value[channel.id] ?? channel.name).trim();
+  if (!name) return;
+  emit("smartUpdate", { smartChannelId: channel.id, name });
+}
+
+function renameInput(smartChannelId: string, event: Event): void {
+  renameValues.value[smartChannelId] = (event.target as HTMLInputElement).value;
+}
+
+function priorityChange(smartChannelId: string, memberId: string, event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value);
+  if (!Number.isFinite(value)) return;
+  emit("smartMemberUpdate", { smartChannelId, memberId, priority: Math.max(0, Math.floor(value)) });
+}
+
+function smartEpgOptions(channel: SmartChannelUiState): Array<{ sourceId: string; channelId: string; label: string }> {
+  const options = new Map<string, { sourceId: string; channelId: string; label: string }>();
+  for (const member of channel.members) {
+    const mapping = props.state.epg.mappings.find((candidate) => candidate.liveChannelId === member.liveChannelId);
+    if (mapping?.mapping && mapping.mappingSourceName && mapping.mappingChannelName) {
+      const key = `${mapping.mapping.epgSourceId}|${mapping.mapping.epgChannelId}`;
+      options.set(key, {
+        sourceId: mapping.mapping.epgSourceId,
+        channelId: mapping.mapping.epgChannelId,
+        label: `${mapping.mappingSourceName} · ${mapping.mappingChannelName}`,
+      });
+    }
+    for (const candidate of mapping?.candidates ?? []) {
+      const key = `${candidate.epgSourceId}|${candidate.epgChannelId}`;
+      options.set(key, {
+        sourceId: candidate.epgSourceId,
+        channelId: candidate.epgChannelId,
+        label: `${candidate.epgSourceName} · ${candidate.epgChannelName}`,
+      });
+    }
+  }
+  if (channel.epg.sourceId && channel.epg.channelId && channel.epg.sourceName && channel.epg.channelName) {
+    const key = `${channel.epg.sourceId}|${channel.epg.channelId}`;
+    options.set(key, { sourceId: channel.epg.sourceId, channelId: channel.epg.channelId, label: `${channel.epg.sourceName} · ${channel.epg.channelName}` });
+  }
+  return [...options.values()];
+}
+
+function setSmartEpg(channel: SmartChannelUiState, event: Event): void {
+  const value = (event.target as HTMLSelectElement).value;
+  if (!value) {
+    emit("smartEpg", { smartChannelId: channel.id, epgSourceId: null, epgChannelId: null });
+    return;
+  }
+  const [epgSourceId, epgChannelId] = value.split("|", 2);
+  if (!epgSourceId || !epgChannelId) return;
+  emit("smartEpg", { smartChannelId: channel.id, epgSourceId, epgChannelId });
+}
 
 function sourceLabel(type: LiveSourceType): string {
   if (type === "m3u-url") return "M3U URL";
@@ -159,6 +271,26 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleChannelKeydown
 
 <template>
   <div class="live-sources" data-testid="live-sources" data-od-id="live-source-management">
+    <div class="live-mode-tabs" data-testid="live-mode-tabs" role="tablist" aria-label="频道视图">
+      <button
+        type="button"
+        class="live-mode-tab"
+        :class="{ selected: viewMode === 'sources' }"
+        data-action="live-tab-sources"
+        :aria-selected="viewMode === 'sources'"
+        @click="viewMode = 'sources'"
+      >Sources</button>
+      <button
+        type="button"
+        class="live-mode-tab"
+        :class="{ selected: viewMode === 'smart' }"
+        data-action="live-tab-smart"
+        :aria-selected="viewMode === 'smart'"
+        @click="viewMode = 'smart'"
+      >Smart Channels <span class="meta">{{ props.state.smartChannels.length }}</span></button>
+    </div>
+
+    <template v-if="viewMode === 'sources'">
     <section class="settings-section">
       <div>
         <span class="section-kicker">导入与预览</span>
@@ -354,5 +486,87 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleChannelKeydown
         </section>
       </section>
     </section>
+    </template>
+
+    <template v-else>
+      <section class="settings-section smart-channel-create" data-testid="smart-channel-create">
+        <div>
+          <span class="section-kicker">用户控制</span>
+          <h2>创建 Smart Channel</h2>
+          <p class="meta">只合并你明确选择的来源频道；建议仅供确认，不会自动合并。</p>
+        </div>
+        <div class="smart-channel-form">
+          <label class="settings-control"><span>名称</span><input v-model="smartName" type="text" maxlength="120" autocomplete="off" data-action="smart-name" /></label>
+          <label class="settings-control"><span>分组</span><input v-model="smartGroup" type="text" maxlength="120" autocomplete="off" data-action="smart-group" /></label>
+          <div class="smart-channel-picker" data-testid="smart-channel-picker">
+            <span class="meta">选择来源频道（{{ selectedSmartMemberIds.length }}）</span>
+            <label v-for="channel in props.state.catalog.channels" :key="channel.id" class="smart-channel-option">
+              <input
+                type="checkbox"
+                :checked="selectedSmartChannels.has(channel.id)"
+                :data-channel-id="channel.id"
+                @change="toggleSmartMember(channel.id)"
+              />
+              <span>{{ channel.name }} · {{ channel.sourceName }}</span>
+            </label>
+            <p v-if="props.state.catalog.channels.length === 0" class="meta">暂无可用来源频道。</p>
+          </div>
+          <button type="button" class="button-primary" data-action="smart-channel-create" :disabled="props.pending !== null" @click="createSmart">创建</button>
+        </div>
+      </section>
+
+      <section v-if="props.state.smartSuggestions.length" class="panel smart-channel-suggestions" data-testid="smart-channel-suggestions">
+        <div class="panel-header"><div><span class="section-kicker">建议</span><h2>可合并的高置信频道</h2></div><span class="meta">请确认后创建</span></div>
+        <article v-for="suggestion in props.state.smartSuggestions" :key="suggestion.id" class="smart-suggestion-row">
+          <div><strong>{{ suggestion.name }}</strong><p class="meta">{{ suggestion.reason }} · {{ suggestion.confidence }} · {{ suggestion.memberIds.length }} 个来源</p></div>
+          <button type="button" class="button-secondary" data-action="smart-suggestion-create" :data-suggestion-id="suggestion.id" :disabled="props.pending !== null" @click="createSuggestion(suggestion)">确认创建</button>
+        </article>
+      </section>
+
+      <section class="panel smart-channel-list" data-testid="smart-channel-list">
+        <div class="panel-header"><div><span class="section-kicker">频道集合</span><h2>Smart Channels</h2></div><span class="meta">{{ props.state.smartChannels.length }} 个</span></div>
+        <p v-if="props.state.smartChannels.length === 0" class="meta">还没有 Smart Channel。可以从上方选择来源频道创建。</p>
+        <article v-for="channel in props.state.smartChannels" :key="channel.id" class="smart-channel-card" :data-smart-channel-id="channel.id">
+          <div class="smart-channel-card-header">
+            <div>
+              <h3>{{ channel.name }}</h3>
+              <p class="meta">{{ channel.group || "未分组" }} · {{ channel.available ? "有可用来源" : "频道来源不可用" }} · {{ channel.members.length }} 个成员</p>
+            </div>
+            <span class="status-chip" :data-status="channel.available ? 'ready' : 'error'">{{ channel.available ? "可播放" : "不可用" }}</span>
+          </div>
+          <div class="smart-channel-actions">
+            <input
+              :value="renameValues[channel.id] ?? channel.name"
+              type="text"
+              maxlength="120"
+              aria-label="Smart Channel 名称"
+              @input="renameInput(channel.id, $event)"
+            />
+            <button type="button" class="button-secondary" data-action="smart-channel-rename" @click="renameSmart(channel)">重命名</button>
+            <button type="button" class="text-button" data-action="smart-channel-delete" @click="emit('smartDelete', channel.id)">删除</button>
+          </div>
+          <div class="smart-channel-epg">
+            <span class="meta">EPG：{{ channel.epg.channelName ? `${channel.epg.sourceName} · ${channel.epg.channelName}` : channel.epg.mode }}</span>
+            <select :value="channel.epg.sourceId && channel.epg.channelId ? `${channel.epg.sourceId}|${channel.epg.channelId}` : ''" aria-label="Smart Channel EPG" @change="setSmartEpg(channel, $event)">
+              <option value="">不指定 EPG</option>
+              <option v-for="option in smartEpgOptions(channel)" :key="`${option.sourceId}|${option.channelId}`" :value="`${option.sourceId}|${option.channelId}`">{{ option.label }}</option>
+            </select>
+          </div>
+          <div class="smart-channel-members">
+            <div v-for="member in channel.members" :key="member.id" class="smart-channel-member" :class="{ unavailable: !member.available }">
+              <div class="smart-channel-member-copy">
+                <strong>{{ member.channelName }}</strong>
+                <span class="meta">{{ member.sourceName }} · {{ member.available ? "可用" : "不可用" }} · 健康 {{ member.healthScore ?? "unknown" }}</span>
+              </div>
+              <label class="smart-priority"><span class="meta">优先级</span><input type="number" min="0" max="1000000" :value="member.priority" @change="priorityChange(channel.id, member.id, $event)" /></label>
+              <button type="button" class="button-secondary" :disabled="props.pending !== null || !member.available" data-action="smart-channel-play" @click="emit('smartPlay', { smartChannelId: channel.id, memberId: member.id })">{{ channel.currentMemberId === member.id ? "当前来源" : "播放" }}</button>
+              <button type="button" class="button-secondary" data-action="smart-channel-member-enable" @click="emit('smartMemberUpdate', { smartChannelId: channel.id, memberId: member.id, enabled: !member.enabled })">{{ member.enabled ? "停用成员" : "启用成员" }}</button>
+              <button type="button" class="text-button" data-action="smart-channel-member-remove" @click="emit('smartRemoveMember', { smartChannelId: channel.id, memberId: member.id })">移除</button>
+            </div>
+            <p v-if="channel.members.length === 0" class="meta">暂无来源成员。添加来源频道后才能播放。</p>
+          </div>
+        </article>
+      </section>
+    </template>
   </div>
 </template>

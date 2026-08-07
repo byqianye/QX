@@ -14,6 +14,10 @@ import type {
   EpgProgrammeRecord,
   EpgSourceRecord,
 } from "../epg/epg-types.js";
+import type {
+  SmartChannelMemberRecord,
+  SmartChannelRecord,
+} from "../live/live-types.js";
 
 export interface HistoryRecord {
   identity: string;
@@ -1069,6 +1073,183 @@ export class EpgRepository {
   }
 }
 
+export class SmartChannelRepository {
+  public constructor(private readonly db: SqliteDataLayer) {}
+
+  public create(record: SmartChannelRecord, members: readonly SmartChannelMemberRecord[]): void {
+    try {
+      this.db.transaction(() => {
+        this.db.prepare(`
+          INSERT INTO smart_channels(
+            id, name, logo, group_name, sort_order, preferred_member_id,
+            epg_source_id, epg_channel_id, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          record.id,
+          record.name,
+          record.logo,
+          record.group,
+          record.sortOrder,
+          record.preferredMemberId,
+          record.epgSourceId,
+          record.epgChannelId,
+          record.createdAt,
+          record.updatedAt,
+        );
+        const insertMember = this.db.prepare(`
+          INSERT INTO smart_channel_members(
+            id, smart_channel_id, live_channel_id, priority, enabled
+          ) VALUES (?, ?, ?, ?, ?)
+        `);
+        for (const member of members) {
+          insertMember.run(
+            member.id,
+            member.smartChannelId,
+            member.liveChannelId,
+            member.priority,
+            member.enabled ? 1 : 0,
+          );
+        }
+      });
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public get(id: string): SmartChannelRecord | null {
+    const row = this.db.prepare("SELECT * FROM smart_channels WHERE id = ?").get(id);
+    return row ? smartChannelFromRow(row) : null;
+  }
+
+  public list(): readonly SmartChannelRecord[] {
+    return this.db.prepare(
+      "SELECT * FROM smart_channels ORDER BY sort_order, name COLLATE NOCASE, id",
+    ).all().map(smartChannelFromRow);
+  }
+
+  public update(record: SmartChannelRecord): void {
+    try {
+      this.db.prepare(`
+        UPDATE smart_channels SET
+          name = ?, logo = ?, group_name = ?, sort_order = ?,
+          preferred_member_id = ?, epg_source_id = ?, epg_channel_id = ?, updated_at = ?
+        WHERE id = ?
+      `).run(
+        record.name,
+        record.logo,
+        record.group,
+        record.sortOrder,
+        record.preferredMemberId,
+        record.epgSourceId,
+        record.epgChannelId,
+        record.updatedAt,
+        record.id,
+      );
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public delete(id: string): void {
+    try {
+      this.db.prepare("DELETE FROM smart_channels WHERE id = ?").run(id);
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public listMembers(smartChannelId: string): readonly SmartChannelMemberRecord[] {
+    return this.db.prepare(`
+      SELECT * FROM smart_channel_members
+      WHERE smart_channel_id = ?
+      ORDER BY priority, id
+    `).all(smartChannelId).map(smartChannelMemberFromRow);
+  }
+
+  public addMember(member: SmartChannelMemberRecord): void {
+    try {
+      this.db.prepare(`
+        INSERT INTO smart_channel_members(
+          id, smart_channel_id, live_channel_id, priority, enabled
+        ) VALUES (?, ?, ?, ?, ?)
+      `).run(
+        member.id,
+        member.smartChannelId,
+        member.liveChannelId,
+        member.priority,
+        member.enabled ? 1 : 0,
+      );
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public updateMember(member: SmartChannelMemberRecord): void {
+    try {
+      this.db.prepare(`
+        UPDATE smart_channel_members
+        SET live_channel_id = ?, priority = ?, enabled = ?
+        WHERE id = ? AND smart_channel_id = ?
+      `).run(
+        member.liveChannelId,
+        member.priority,
+        member.enabled ? 1 : 0,
+        member.id,
+        member.smartChannelId,
+      );
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public removeMember(smartChannelId: string, memberId: string): void {
+    try {
+      this.db.transaction(() => {
+        this.db.prepare(
+          "DELETE FROM smart_channel_members WHERE smart_channel_id = ? AND id = ?",
+        ).run(smartChannelId, memberId);
+        this.db.prepare(`
+          UPDATE smart_channels
+          SET preferred_member_id = NULL
+          WHERE id = ? AND preferred_member_id = ?
+        `).run(smartChannelId, memberId);
+      });
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public setPreferredMember(smartChannelId: string, memberId: string | null, updatedAt: number): void {
+    try {
+      this.db.prepare(
+        "UPDATE smart_channels SET preferred_member_id = ?, updated_at = ? WHERE id = ?",
+      ).run(memberId, updatedAt, smartChannelId);
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public reorderMembers(
+    smartChannelId: string,
+    priorities: readonly { memberId: string; priority: number }[],
+    updatedAt: number,
+  ): void {
+    try {
+      this.db.transaction(() => {
+        const update = this.db.prepare(`
+          UPDATE smart_channel_members
+          SET priority = ?
+          WHERE smart_channel_id = ? AND id = ?
+        `);
+        for (const item of priorities) update.run(item.priority, smartChannelId, item.memberId);
+        this.db.prepare("UPDATE smart_channels SET updated_at = ? WHERE id = ?").run(updatedAt, smartChannelId);
+      });
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+}
+
 export class CacheRepository {
   public constructor(private readonly db: SqliteDataLayer) {}
 
@@ -1354,6 +1535,31 @@ function epgAliasFromRow(row: Record<string, unknown>): EpgChannelAliasRecord {
     alias: stringValue(row.alias),
     normalizedAlias: stringValue(row.normalized_alias),
     updatedAt: numberValue(row.updated_at),
+  };
+}
+
+function smartChannelFromRow(row: Record<string, unknown>): SmartChannelRecord {
+  return {
+    id: stringValue(row.id),
+    name: stringValue(row.name),
+    logo: nullableString(row.logo),
+    group: nullableString(row.group_name),
+    sortOrder: numberValue(row.sort_order),
+    preferredMemberId: nullableString(row.preferred_member_id),
+    epgSourceId: nullableString(row.epg_source_id),
+    epgChannelId: nullableString(row.epg_channel_id),
+    createdAt: numberValue(row.created_at),
+    updatedAt: numberValue(row.updated_at),
+  };
+}
+
+function smartChannelMemberFromRow(row: Record<string, unknown>): SmartChannelMemberRecord {
+  return {
+    id: stringValue(row.id),
+    smartChannelId: stringValue(row.smart_channel_id),
+    liveChannelId: stringValue(row.live_channel_id),
+    priority: numberValue(row.priority),
+    enabled: booleanValue(row.enabled),
   };
 }
 

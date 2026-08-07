@@ -1,6 +1,77 @@
 import type { PlaybackState } from "../desktop/playback.js";
 import type { EpgMappingStatus, EpgProgrammeUiState, EpgUiState } from "../epg/epg-types.js";
 
+export type SmartChannelEpgMode = "explicit" | "inherited" | "conflict" | "unavailable" | "unmapped";
+
+export interface SmartChannelRecord {
+  id: string;
+  name: string;
+  logo: string | null;
+  group: string | null;
+  sortOrder: number;
+  preferredMemberId: string | null;
+  epgSourceId: string | null;
+  epgChannelId: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SmartChannelMemberRecord {
+  id: string;
+  smartChannelId: string;
+  liveChannelId: string;
+  priority: number;
+  enabled: boolean;
+}
+
+export interface SmartChannelEpgUiState {
+  mode: SmartChannelEpgMode;
+  sourceId: string | null;
+  channelId: string | null;
+  sourceName: string | null;
+  channelName: string | null;
+  currentProgramme: EpgProgrammeUiState | null;
+  nextProgramme: EpgProgrammeUiState | null;
+}
+
+export interface SmartChannelMemberUiState extends SmartChannelMemberRecord {
+  channelName: string;
+  sourceName: string;
+  available: boolean;
+  healthScore: number | null;
+}
+
+export interface SmartChannelSuggestionUiState {
+  id: string;
+  name: string;
+  memberIds: readonly string[];
+  reason: "exact-tvg-id" | "exact-name" | "shared-epg";
+  confidence: "exact" | "high";
+}
+
+export interface SmartChannelUiState {
+  id: string;
+  name: string;
+  logo: string | null;
+  group: string | null;
+  sortOrder: number;
+  preferredMemberId: string | null;
+  currentMemberId: string | null;
+  currentSourceName: string | null;
+  available: boolean;
+  members: readonly SmartChannelMemberUiState[];
+  epg: SmartChannelEpgUiState;
+}
+
+export interface SmartPlaybackUiState {
+  smartChannelId: string;
+  smartChannelName: string;
+  memberId: string;
+  liveChannelId: string;
+  sourceName: string;
+  channelName: string;
+}
+
 export const LIVE_SOURCE_TYPES = [
   "m3u-url",
   "m3u-file",
@@ -189,6 +260,9 @@ export interface LiveUiState {
   session: LivePlaybackSessionUiState | null;
   player: PlaybackState | null;
   epg: EpgUiState;
+  smartChannels: readonly SmartChannelUiState[];
+  smartSuggestions: readonly SmartChannelSuggestionUiState[];
+  activeSmartChannel: SmartPlaybackUiState | null;
 }
 
 export type LiveSourceImportInput =
@@ -241,4 +315,7 @@ export const EMPTY_LIVE_UI_STATE: LiveUiState = {
     mappings: [],
     timeline: null,
   },
+  smartChannels: [],
+  smartSuggestions: [],
+  activeSmartChannel: null,
 };

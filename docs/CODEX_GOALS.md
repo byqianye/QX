@@ -1108,6 +1108,47 @@ G59 checkpoint 已创建；未 push。
 checkpoint: complete G59 EPG matching
 ```
 
+## G60 (completed)
+
+### Goal
+
+Build user-controlled Smart Channels over the G59 live catalog and EPG mapping layer: persistent multi-source membership, suggestions, deterministic health/priority selection, manual source switching, explicit/inherited EPG, source lifecycle resilience, renderer management UI, and packaged first/restart E2E coverage.
+
+### Status
+
+Completed. Schema v8, repository/service/API/renderer integration, tests, builds, and packaged first/restart E2E passed. Runtime health scores are an explicit seam for deterministic selection; real network probing remains out of scope.
+
+### Dependency
+
+- G59 checkpoint `8bfce23`: `checkpoint: complete G59 EPG matching`
+
+### Scope and acceptance
+
+- Smart Channel rows and members persist transactionally in SQLite.
+- Suggestions require exact tvg-id, normalized name, or shared EPG evidence and require user confirmation.
+- Selection respects manual choice, preferred member, known health score, priority, and stable tie-breaks.
+- Disabled/deleted sources do not delete the Smart Channel; remaining members continue to work.
+- Explicit EPG wins; inherited EPG uses only the preferred member; conflicts are not guessed.
+- Live UI exposes Sources/Smart Channels tabs and management actions.
+- Renderer, service/API, restart, and packaged first/restart E2E checks pass.
+
+### Verification commands
+
+```powershell
+npm run typecheck
+npm test
+npm run renderer:build
+npm run electron:build
+npm run electron:e2e:package
+git diff --check
+```
+
+### Checkpoint
+
+```text
+checkpoint: complete G60 smart channels
+```
+
 DEX-1 ~ DEX-5（实验支线）
 
 - DEX-1：Android Emulator 探针

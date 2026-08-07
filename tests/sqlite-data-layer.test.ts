@@ -38,7 +38,7 @@ describe("SQLite data layer", () => {
     const opened = openSqliteDataLayer(paths.database);
     layers.push(opened.layer);
     expect(opened.diagnostic).toBeNull();
-    expect(opened.layer.schemaVersion).toBe(7);
+    expect(opened.layer.schemaVersion).toBe(8);
     const tables = opened.layer.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
     ).all().map((row) => row.name);
@@ -65,6 +65,8 @@ describe("SQLite data layer", () => {
       "epg_programmes",
       "epg_channel_mappings",
       "epg_channel_aliases",
+      "smart_channels",
+      "smart_channel_members",
       "data_migrations",
     ]));
     expect(opened.layer.prepare("PRAGMA table_info(favorites)").all().map((row) => row.name)).toEqual(expect.arrayContaining([
@@ -87,7 +89,7 @@ describe("SQLite data layer", () => {
 
     const second = openSqliteDataLayer(path);
     layers.push(second.layer);
-    expect(second.layer.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toMatchObject({ count: 7 });
+    expect(second.layer.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toMatchObject({ count: 8 });
     const settings = new SettingsRepository(second.layer);
     const injectionLikeKey = "' OR 1=1; --";
     settings.set(injectionLikeKey, { value: "safe" });
@@ -154,7 +156,7 @@ describe("SQLite data layer", () => {
 
     const opened = openSqliteDataLayer(path);
     layers.push(opened.layer);
-    expect(opened.layer.schemaVersion).toBe(7);
+    expect(opened.layer.schemaVersion).toBe(8);
     expect(opened.layer.prepare("SELECT group_id FROM favorites WHERE favorite_id = ?").get("favorite-legacy"))
       .toMatchObject({ group_id: "default" });
     expect(opened.layer.prepare("SELECT group_id FROM favorite_groups WHERE group_id = ?").get("default"))
@@ -174,7 +176,7 @@ describe("SQLite data layer", () => {
     layers.push(opened.layer);
     expect(opened).toMatchObject({ recovered: true, diagnostic: { code: "DATABASE_VERSION_TOO_NEW" } });
     expect(existsSync(path)).toBe(true);
-    expect(opened.layer.schemaVersion).toBe(7);
+    expect(opened.layer.schemaVersion).toBe(8);
   });
 
   it("rolls back a failed schema migration instead of recording a false version", () => {

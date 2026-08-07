@@ -101,6 +101,16 @@ const emit = defineEmits<{
   liveLine: [streamId: string];
   liveStop: [];
   liveSync: [value: PlayerMediaSync];
+  smartCreate: [payload: { name: string; group?: string | null; memberIds: string[] }];
+  smartUpdate: [payload: { smartChannelId: string; name?: string; group?: string | null; sortOrder?: number }];
+  smartDelete: [smartChannelId: string];
+  smartAddMember: [payload: { smartChannelId: string; liveChannelId: string; priority?: number }];
+  smartRemoveMember: [payload: { smartChannelId: string; memberId: string }];
+  smartMemberUpdate: [payload: { smartChannelId: string; memberId: string; priority?: number; enabled?: boolean }];
+  smartMemberReorder: [payload: { smartChannelId: string; memberIds: string[] }];
+  smartSelect: [payload: { smartChannelId: string; memberId: string | null }];
+  smartPlay: [payload: { smartChannelId: string; memberId?: string }];
+  smartEpg: [payload: { smartChannelId: string; epgSourceId: string | null; epgChannelId: string | null }];
   epgPreview: [input: Record<string, unknown>];
   epgApply: [previewId: string];
   epgRefresh: [sourceId: string];
@@ -393,6 +403,16 @@ function navigationFromPage(page: string): RendererNavigation {
             @line="emit('liveLine', $event)"
             @stop="emit('liveStop')"
             @sync="emit('liveSync', $event)"
+            @smart-create="emit('smartCreate', $event)"
+            @smart-update="emit('smartUpdate', $event)"
+            @smart-delete="emit('smartDelete', $event)"
+            @smart-add-member="emit('smartAddMember', $event)"
+            @smart-remove-member="emit('smartRemoveMember', $event)"
+            @smart-member-update="emit('smartMemberUpdate', $event)"
+            @smart-member-reorder="emit('smartMemberReorder', $event)"
+            @smart-select="emit('smartSelect', $event)"
+            @smart-play="emit('smartPlay', $event)"
+            @smart-epg="emit('smartEpg', $event)"
           />
         </template>
         <template v-else-if="view === 'settings'">

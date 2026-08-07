@@ -506,6 +506,20 @@ function cloneLiveUiState(value: LiveUiState): LiveUiState {
           }
         : null,
     },
+    smartChannels: value.smartChannels.map((channel) => ({
+      ...channel,
+      members: channel.members.map((member) => ({ ...member })),
+      epg: {
+        ...channel.epg,
+        currentProgramme: channel.epg.currentProgramme ? { ...channel.epg.currentProgramme } : null,
+        nextProgramme: channel.epg.nextProgramme ? { ...channel.epg.nextProgramme } : null,
+      },
+    })),
+    smartSuggestions: value.smartSuggestions.map((suggestion) => ({
+      ...suggestion,
+      memberIds: [...suggestion.memberIds],
+    })),
+    activeSmartChannel: value.activeSmartChannel ? { ...value.activeSmartChannel } : null,
   };
 }
 

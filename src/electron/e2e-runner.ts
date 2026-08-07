@@ -27,6 +27,8 @@ export interface PackagedE2eOptions {
   liveUrl?: string;
   verifyLivePlayback?: boolean;
   livePlaybackUrl?: string;
+  verifySmartChannels?: boolean;
+  smartBackupUrl?: string;
   verifyEpg?: boolean;
   epgUrl?: string;
   verifyEpgMatching?: boolean;
@@ -100,6 +102,8 @@ export interface PackagedE2eChecks {
   liveLineSwitch?: boolean;
   livePlaybackRestart?: boolean;
   liveRecent?: boolean;
+  smartChannels?: boolean;
+  smartRestart?: boolean;
   epgImport?: boolean;
   epgRestart?: boolean;
   epgRefresh?: boolean;
@@ -356,6 +360,94 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
           && timeline.liveChannelId === channelA?.id
           && timeline.items.map((item) => item.title).join("|") === "Fixture News Current|Fixture News Next"
           && timeline.toAt - timeline.fromAt === 3 * 60 * 60 * 1000;
+      }
+    }
+    if (options.verifySmartChannels) {
+      if (!options.smartBackupUrl) throw new Error("Packaged Smart Channel E2E URL is not configured");
+      const beforeSmart = await getState(options.baseUrl);
+      const existingSmart = beforeSmart.state?.live?.smartChannels?.find((channel) => channel.name === "Packaged G60 Smart Renamed");
+      if (!options.freshTrust) {
+        checks.smartRestart = existingSmart?.members.length === 1
+          && existingSmart.available === true
+          && existingSmart.epg.mode === "explicit";
+        checks.smartChannels = checks.smartRestart;
+      } else {
+        const backupPreview = await post(options.baseUrl, "/api/live/source/preview", {
+          name: "Packaged G60 Backup",
+          type: "m3u-url",
+          location: options.smartBackupUrl,
+        });
+        const backupPreviewState = backupPreview.state?.live?.preview;
+        const backupApplied = backupPreviewState
+          ? await post(options.baseUrl, "/api/live/source/apply", { previewId: backupPreviewState.id })
+          : null;
+        const backupSource = backupApplied?.state?.live?.sources.find((source) => source.name === "Packaged G60 Backup");
+        const smartCatalog = backupApplied?.state?.live?.catalog?.channels ?? [];
+        const primaryChannel = smartCatalog.find((channel) => channel.name === "Fixture Channel A" && channel.sourceName === "Packaged G57 Live");
+        const backupChannel = smartCatalog.find((channel) => channel.name === "Fixture Channel A" && channel.sourceName === "Packaged G60 Backup");
+        const suggestionState = backupApplied?.state?.live?.smartSuggestions ?? [];
+        const created = primaryChannel
+          ? await post(options.baseUrl, "/api/live/smart/create", {
+              name: "Packaged G60 Smart",
+              group: "Packaged",
+              memberIds: [primaryChannel.id],
+            })
+          : null;
+        const createdSmart = created?.state?.live?.smartChannels?.find((channel) => channel.name === "Packaged G60 Smart");
+        const smartId = createdSmart?.id;
+        const primaryMember = createdSmart?.members.find((member) => member.liveChannelId === primaryChannel?.id);
+        const added = smartId && backupChannel
+          ? await post(options.baseUrl, "/api/live/smart/member/add", {
+              smartChannelId: smartId,
+              liveChannelId: backupChannel.id,
+              priority: 1,
+            })
+          : null;
+        const addedSmart = added?.state?.live?.smartChannels?.find((channel) => channel.id === smartId);
+        if (smartId && primaryChannel && backupChannel) {
+          await post(options.baseUrl, "/api/live/smart/member/health", { liveChannelId: primaryChannel.id, score: 10 });
+          await post(options.baseUrl, "/api/live/smart/member/health", { liveChannelId: backupChannel.id, score: 95 });
+        }
+        const defaultPlay = smartId
+          ? await post(options.baseUrl, "/api/live/smart/play", { smartChannelId: smartId })
+          : null;
+        const manualPlay = smartId && primaryMember
+          ? await post(options.baseUrl, "/api/live/smart/play", { smartChannelId: smartId, memberId: primaryMember.id })
+          : null;
+        const primaryMapping = manualPlay?.state?.live?.epg?.mappings?.find((mapping) => mapping.liveChannelId === primaryChannel?.id)?.mapping;
+        const epgSet = smartId && primaryMapping
+          ? await post(options.baseUrl, "/api/live/smart/epg", {
+              smartChannelId: smartId,
+              epgSourceId: primaryMapping.epgSourceId,
+              epgChannelId: primaryMapping.epgChannelId,
+            })
+          : null;
+        const renamed = smartId
+          ? await post(options.baseUrl, "/api/live/smart/update", { smartChannelId: smartId, name: "Packaged G60 Smart Renamed" })
+          : null;
+        const disabledBackup = backupSource
+          ? await post(options.baseUrl, "/api/live/source/toggle", { sourceId: backupSource.id, enabled: false })
+          : null;
+        const fallbackPlay = smartId
+          ? await post(options.baseUrl, "/api/live/smart/play", { smartChannelId: smartId })
+          : null;
+        const removedBackup = backupSource
+          ? await post(options.baseUrl, "/api/live/source/remove", { sourceId: backupSource.id })
+          : null;
+        const finalSmart = removedBackup?.state?.live?.smartChannels?.find((channel) => channel.id === smartId);
+        checks.smartChannels = backupPreviewState?.stats.channelCount === 2
+          && suggestionState.some((suggestion) => suggestion.reason === "exact-tvg-id")
+          && createdSmart?.members.length === 1
+          && addedSmart?.members.length === 2
+          && defaultPlay?.state?.live?.activeSmartChannel?.liveChannelId === backupChannel?.id
+          && defaultPlay?.state?.live?.session?.channelId === backupChannel?.id
+          && manualPlay?.state?.live?.activeSmartChannel?.liveChannelId === primaryChannel?.id
+          && epgSet?.state?.live?.smartChannels?.find((channel) => channel.id === smartId)?.epg.mode === "explicit"
+          && renamed?.state?.live?.smartChannels?.find((channel) => channel.id === smartId)?.name === "Packaged G60 Smart Renamed"
+          && disabledBackup?.state?.live?.smartChannels?.find((channel) => channel.id === smartId)?.available === true
+          && fallbackPlay?.state?.live?.activeSmartChannel?.liveChannelId === primaryChannel?.id
+          && finalSmart?.members.length === 1
+          && finalSmart.available === true;
       }
     }
     const opened = await post(options.baseUrl, "/api/open");
@@ -1040,6 +1132,15 @@ interface UiState {
         items: readonly { title: string }[];
       } | null;
     };
+    smartChannels?: readonly {
+      id: string;
+      name: string;
+      available: boolean;
+      epg: { mode: string };
+      members: readonly { id: string; liveChannelId: string; priority: number }[];
+    }[];
+    smartSuggestions?: readonly { reason: string }[];
+    activeSmartChannel?: { smartChannelId: string; memberId: string; liveChannelId: string } | null;
   };
 }
 

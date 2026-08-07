@@ -43,6 +43,7 @@ import {
   HistoryRepository,
   LiveRepository,
   EpgRepository,
+  SmartChannelRepository,
   PlaybackProgressRepository,
   SettingsRepository,
 } from "../data/repositories.js";
@@ -52,6 +53,7 @@ import { FollowService } from "../follow/follow-service.js";
 import { CacheService } from "../cache/cache-service.js";
 import { LiveSourceService } from "../live/live-service.js";
 import { LivePlaybackService } from "../live/live-playback.js";
+import { SmartChannelService } from "../live/smart-channels.js";
 import { EpgMatchingService } from "../epg/epg-matching-service.js";
 import { EpgService } from "../epg/epg-service.js";
 import {
@@ -103,6 +105,7 @@ let followService: FollowService | undefined;
 let cacheService: CacheService | undefined;
 let liveSourceService: LiveSourceService | undefined;
 let livePlaybackService: LivePlaybackService | undefined;
+let smartChannelService: SmartChannelService | undefined;
 let epgService: EpgService | undefined;
 let epgMatchingService: EpgMatchingService | undefined;
 let dataStorageService: DataStorageService | undefined;
@@ -166,7 +169,7 @@ function getDataStorageService(): DataStorageService {
   return dataStorageService;
 }
 function initializeDataLayer(): void {
-  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService && livePlaybackService && epgService && epgMatchingService) return;
+  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService && livePlaybackService && smartChannelService && epgService && epgMatchingService) return;
   const dataStorage = getDataStorageService();
   const directories = dataStorage.prepare();
   const opened = openSqliteDataLayer(directories.database);
@@ -225,6 +228,11 @@ function initializeDataLayer(): void {
     requestTimeoutMs: REQUEST_TIMEOUT_MS,
   });
   epgMatchingService = new EpgMatchingService({
+    liveRepository,
+    epgRepository,
+  });
+  smartChannelService = new SmartChannelService({
+    repository: new SmartChannelRepository(opened.layer),
     liveRepository,
     epgRepository,
   });
@@ -293,6 +301,7 @@ function createShell(): DesktopShellRuntime {
         storage: getDataStorageService(),
         live: getLiveSourceService(),
         ...(livePlaybackService ? { livePlayback: livePlaybackService } : {}),
+        ...(smartChannelService ? { smartChannels: smartChannelService } : {}),
         ...(epgService ? { epg: epgService } : {}),
         ...(epgMatchingService ? { epgMatching: epgMatchingService } : {}),
         onStorageOpen: async () => {
@@ -564,6 +573,7 @@ async function closeDataLayer(): Promise<void> {
   cacheService = undefined;
   liveSourceService = undefined;
   livePlaybackService = undefined;
+  smartChannelService = undefined;
   epgService = undefined;
   epgMatchingService = undefined;
   dataStorageService = undefined;
@@ -875,6 +885,8 @@ async function runE2e(baseUrl: string): Promise<void> {
       ...(process.env.QX_E2E_LIVE_URL ? { liveUrl: process.env.QX_E2E_LIVE_URL } : {}),
       verifyLivePlayback: Boolean(process.env.QX_E2E_LIVE_PLAYBACK_URL),
       ...(process.env.QX_E2E_LIVE_PLAYBACK_URL ? { livePlaybackUrl: process.env.QX_E2E_LIVE_PLAYBACK_URL } : {}),
+      verifySmartChannels: Boolean(process.env.QX_E2E_LIVE_SMART_URL),
+      ...(process.env.QX_E2E_LIVE_SMART_URL ? { smartBackupUrl: process.env.QX_E2E_LIVE_SMART_URL } : {}),
       verifyEpg: Boolean(process.env.QX_E2E_EPG_URL),
       ...(process.env.QX_E2E_EPG_URL ? { epgUrl: process.env.QX_E2E_EPG_URL } : {}),
       verifyEpgMatching: Boolean(process.env.QX_E2E_EPG_URL && process.env.QX_E2E_LIVE_PLAYBACK_URL),

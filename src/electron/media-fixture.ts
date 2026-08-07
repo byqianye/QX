@@ -32,6 +32,7 @@ export interface MediaFixtureServer {
   readonly parserFailureUrl: string;
   readonly liveUrl: string;
   readonly livePlaybackUrl: string;
+  readonly liveSmartUrl: string;
   readonly epgUrl: string;
   readonly doubanEndpoint: string;
   readonly subtitleVttUrl: string;
@@ -82,6 +83,9 @@ export function createMediaFixtureServer(host = "127.0.0.1"): MediaFixtureServer
     },
     get livePlaybackUrl() {
       return `${resource.baseUrl}/live/playback.m3u`;
+    },
+    get liveSmartUrl() {
+      return `${resource.baseUrl}/live/smart-backup.m3u`;
     },
     get epgUrl() {
       return `${resource.baseUrl}/epg/guide.xml`;
@@ -179,6 +183,18 @@ async function handleRequest(
       `${fixture.baseUrl}/live/channel-d.m3u8`,
       '#EXTINF:-1 tvg-id="fixture-movie" group-title="Fixtures",Fixture Channel E',
       `${fixture.baseUrl}/live/channel-e-line1.m3u8`,
+      '#EXTINF:-1 tvg-id="fixture-movie" group-title="Fixtures",Fixture Channel E',
+      `${fixture.baseUrl}/live/channel-e-line2.m3u8`,
+      "",
+    ].join("\n"), "application/x-mpegurl; charset=utf-8");
+    return;
+  }
+
+  if (url.pathname === "/live/smart-backup.m3u") {
+    serveText(request, response, [
+      "#EXTM3U",
+      '#EXTINF:-1 tvg-id="fixture-news" group-title="Fixtures",Fixture Channel A',
+      `${fixture.baseUrl}/live/channel-a.m3u8`,
       '#EXTINF:-1 tvg-id="fixture-movie" group-title="Fixtures",Fixture Channel E',
       `${fixture.baseUrl}/live/channel-e-line2.m3u8`,
       "",

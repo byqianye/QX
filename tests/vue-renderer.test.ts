@@ -25,6 +25,8 @@ import PlaybackSelector from "../renderer/src/PlaybackSelector.vue";
 import PlayerWindow from "../renderer/src/PlayerWindow.vue";
 import SpiderView from "../renderer/src/SpiderView.vue";
 import { displaySource } from "../renderer/src/safe-display.js";
+import LiveSourcesView from "../renderer/src/LiveSourcesView.vue";
+import { EMPTY_LIVE_UI_STATE, type LiveUiState } from "../src/live/live-types.js";
 
 describe("Vue renderer", () => {
   const servers: DesktopSpiderUiServer[] = [];
@@ -537,6 +539,124 @@ describe("Vue renderer", () => {
     expect(unavailable.get('[data-testid="error-state"]').text()).toContain("当前线路暂时无法播放");
     expect(unavailable.find('[data-action="switch-line"]').exists()).toBe(true);
     unavailable.unmount();
+  });
+
+  it("renders Smart Channels and emits management intents", async () => {
+    const state: LiveUiState = {
+      ...EMPTY_LIVE_UI_STATE,
+      catalog: {
+        groups: [],
+        recent: [],
+        channels: [
+          {
+            id: "live-a",
+            sourceId: "source-a",
+            sourceName: "Source A",
+            name: "News",
+            group: null,
+            logo: null,
+            channelNumber: null,
+            streamCount: 1,
+            streams: [{ id: "stream-a", label: "Main", protocol: "HLS", status: "ready" }],
+            epgStatus: "unmapped",
+            currentProgramme: null,
+            nextProgramme: null,
+            health: null,
+          },
+          {
+            id: "live-b",
+            sourceId: "source-b",
+            sourceName: "Source B",
+            name: "News",
+            group: null,
+            logo: null,
+            channelNumber: null,
+            streamCount: 1,
+            streams: [{ id: "stream-b", label: "Main", protocol: "HLS", status: "ready" }],
+            epgStatus: "unmapped",
+            currentProgramme: null,
+            nextProgramme: null,
+            health: null,
+          },
+        ],
+      },
+      smartSuggestions: [{
+        id: "suggestion-news",
+        name: "News",
+        memberIds: ["live-a", "live-b"],
+        reason: "exact-tvg-id",
+        confidence: "exact",
+      }],
+      smartChannels: [{
+        id: "smart-news",
+        name: "News Smart",
+        logo: null,
+        group: "Favorites",
+        sortOrder: 0,
+        preferredMemberId: "member-a",
+        currentMemberId: "member-a",
+        currentSourceName: "Source A",
+        available: true,
+        members: [
+          {
+            id: "member-a",
+            smartChannelId: "smart-news",
+            liveChannelId: "live-a",
+            priority: 0,
+            enabled: true,
+            channelName: "News",
+            sourceName: "Source A",
+            available: true,
+            healthScore: 90,
+          },
+          {
+            id: "member-b",
+            smartChannelId: "smart-news",
+            liveChannelId: "live-b",
+            priority: 1,
+            enabled: true,
+            channelName: "News",
+            sourceName: "Source B",
+            available: true,
+            healthScore: null,
+          },
+        ],
+        epg: {
+          mode: "unmapped",
+          sourceId: null,
+          channelId: null,
+          sourceName: null,
+          channelName: null,
+          currentProgramme: null,
+          nextProgramme: null,
+        },
+      }],
+    };
+    const wrapper = mount(LiveSourcesView, { props: { state, pending: null } });
+
+    await wrapper.get('[data-action="live-tab-smart"]').trigger("click");
+    expect(wrapper.get('[data-testid="smart-channel-create"]')).toBeTruthy();
+    expect(wrapper.get('[data-testid="smart-channel-suggestions"]')).toBeTruthy();
+    expect(wrapper.get('[data-testid="smart-channel-list"]')).toBeTruthy();
+
+    await wrapper.get('[data-action="smart-suggestion-create"]').trigger("click");
+    expect(wrapper.emitted("smartCreate")).toEqual([[
+      { name: "News", group: null, memberIds: ["live-a", "live-b"] },
+    ]]);
+    await wrapper.get('input[type="number"]').setValue("7");
+    expect(wrapper.emitted("smartMemberUpdate")).toEqual([[
+      { smartChannelId: "smart-news", memberId: "member-a", priority: 7 },
+    ]]);
+    await wrapper.get('[data-action="smart-channel-play"]').trigger("click");
+    expect(wrapper.emitted("smartPlay")).toEqual([[
+      { smartChannelId: "smart-news", memberId: "member-a" },
+    ]]);
+    await wrapper.get('[data-action="smart-channel-member-enable"]').trigger("click");
+    expect(wrapper.emitted("smartMemberUpdate")).toEqual([
+      [{ smartChannelId: "smart-news", memberId: "member-a", priority: 7 }],
+      [{ smartChannelId: "smart-news", memberId: "member-a", enabled: false }],
+    ]);
+    wrapper.unmount();
   });
 
   it("renders the formal history page and confirms destructive actions", async () => {

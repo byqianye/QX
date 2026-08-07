@@ -104,6 +104,7 @@ import {
   LiveSourceService,
 } from "../live/live-service.js";
 import { LivePlaybackError, LivePlaybackService } from "../live/live-playback.js";
+import { SmartChannelError, SmartChannelService } from "../live/smart-channels.js";
 import { EpgMappingError, EpgMatchingService } from "../epg/epg-matching-service.js";
 import { EpgSourceError, EpgService } from "../epg/epg-service.js";
 import { isEpgSourceType, type EpgSourceImportInput } from "../epg/epg-types.js";
@@ -1362,6 +1363,7 @@ export interface DesktopSpiderUiServerOptions {
   storage?: DataStorageService;
   live?: LiveSourceService;
   livePlayback?: LivePlaybackService;
+  smartChannels?: SmartChannelService;
   epg?: EpgService;
   epgMatching?: EpgMatchingService;
   onStorageOpen?: () => void | Promise<void>;
@@ -1396,6 +1398,7 @@ export class DesktopSpiderUiServer {
   private readonly storageService: DataStorageService | undefined;
   private readonly liveService: LiveSourceService | undefined;
   private readonly livePlayback: LivePlaybackService | undefined;
+  private readonly smartChannels: SmartChannelService | undefined;
   private readonly epgService: EpgService | undefined;
   private readonly epgMatching: EpgMatchingService | undefined;
   private readonly onStorageOpen: (() => void | Promise<void>) | undefined;
@@ -1442,6 +1445,7 @@ export class DesktopSpiderUiServer {
     this.storageService = options.storage;
     this.liveService = options.live;
     this.livePlayback = options.livePlayback;
+    this.smartChannels = options.smartChannels;
     this.epgService = options.epg;
     this.epgMatching = options.epgMatching;
     this.onStorageOpen = options.onStorageOpen;
@@ -1913,6 +1917,8 @@ export class DesktopSpiderUiServer {
           ? error.code
           : error instanceof EpgMappingError
             ? error.code
+          : error instanceof SmartChannelError
+            ? error.code
           : error instanceof EpgSourceError
             ? error.code
         : errorCodeFromMessage(message);
@@ -1959,11 +1965,102 @@ export class DesktopSpiderUiServer {
       live.clearPreview();
       return;
     }
+    const smart = this.smartChannels;
+    if (pathname.startsWith("/api/live/smart/")) {
+      if (!smart) throw new SmartChannelError("SMART_CHANNEL_UNAVAILABLE", "Smart Channel 服务不可用。");
+      if (pathname === "/api/live/smart/create") {
+        smart.create({
+          name: stringValue(body.name, ""),
+          ...(body.logo === null || typeof body.logo === "string" ? { logo: body.logo as string | null } : {}),
+          ...(body.group === null || typeof body.group === "string" ? { group: body.group as string | null } : {}),
+          memberIds: stringList(body.memberIds),
+        });
+        return;
+      }
+      if (pathname === "/api/live/smart/update") {
+        const sortOrder = optionalNumber(body.sortOrder);
+        smart.update(stringValue(body.smartChannelId, ""), {
+          ...(typeof body.name === "string" ? { name: body.name } : {}),
+          ...(body.logo === null || typeof body.logo === "string" ? { logo: body.logo as string | null } : {}),
+          ...(body.group === null || typeof body.group === "string" ? { group: body.group as string | null } : {}),
+          ...(sortOrder === undefined ? {} : { sortOrder }),
+        });
+        return;
+      }
+      if (pathname === "/api/live/smart/delete") {
+        smart.delete(stringValue(body.smartChannelId, ""));
+        return;
+      }
+      if (pathname === "/api/live/smart/member/add") {
+        smart.addMember(
+          stringValue(body.smartChannelId, ""),
+          stringValue(body.liveChannelId, ""),
+          optionalNumber(body.priority),
+        );
+        return;
+      }
+      if (pathname === "/api/live/smart/member/remove") {
+        smart.removeMember(stringValue(body.smartChannelId, ""), stringValue(body.memberId, ""));
+        return;
+      }
+      if (pathname === "/api/live/smart/member/update"
+        || pathname === "/api/live/smart/member/priority"
+        || pathname === "/api/live/smart/member/enable") {
+        const priority = optionalNumber(body.priority);
+        const enabled = typeof body.enabled === "boolean" ? body.enabled : undefined;
+        smart.updateMember(
+          stringValue(body.smartChannelId, ""),
+          stringValue(body.memberId, ""),
+          {
+            ...(priority === undefined ? {} : { priority }),
+            ...(enabled === undefined ? {} : { enabled }),
+          },
+        );
+        return;
+      }
+      if (pathname === "/api/live/smart/member/reorder") {
+        smart.reorderMembers(stringValue(body.smartChannelId, ""), stringList(body.memberIds));
+        return;
+      }
+      if (pathname === "/api/live/smart/select") {
+        smart.setPreferredMember(stringValue(body.smartChannelId, ""), optionalString(body.memberId));
+        return;
+      }
+      if (pathname === "/api/live/smart/play") {
+        const playback = this.livePlayback;
+        if (!playback) throw new LivePlaybackError("LIVE_SOURCE_UNAVAILABLE", "直播播放服务不可用。");
+        const selection = smart.play(stringValue(body.smartChannelId, ""), optionalString(body.memberId) ?? undefined);
+        try {
+          await playback.selectChannel(selection.liveChannel.id, optionalString(body.streamId) ?? undefined);
+          this.epgMatching?.setTimeline(selection.liveChannel.id);
+        } catch (error) {
+          smart.stop();
+          throw error;
+        }
+        return;
+      }
+      if (pathname === "/api/live/smart/epg") {
+        const smartChannelId = stringValue(body.smartChannelId, "");
+        if (body.epgSourceId === null || body.epgChannelId === null) smart.clearEpgMapping(smartChannelId);
+        else smart.setEpgMapping(
+          smartChannelId,
+          stringValue(body.epgSourceId, ""),
+          stringValue(body.epgChannelId, ""),
+        );
+        return;
+      }
+      if (pathname === "/api/live/smart/member/health") {
+        smart.setHealthScore(stringValue(body.liveChannelId, ""), optionalNumber(body.score) ?? null);
+        return;
+      }
+      throw new SmartChannelError("SMART_CHANNEL_ROUTE_NOT_FOUND", "Smart Channel 请求不存在。");
+    }
     const playback = this.livePlayback;
     if (!playback) throw new LivePlaybackError("LIVE_SOURCE_UNAVAILABLE", "直播播放服务不可用。");
     if (pathname === "/api/live/play") {
       const channelId = stringValue(body.channelId, "");
       await playback.selectChannel(channelId, optionalString(body.streamId) ?? undefined);
+      smart?.stop();
       this.epgMatching?.setTimeline(channelId);
       return;
     }
@@ -1973,6 +2070,7 @@ export class DesktopSpiderUiServer {
     }
     if (pathname === "/api/live/stop") {
       await playback.stop();
+      smart?.stop();
       return;
     }
     if (pathname === "/api/live/sync") {
@@ -2105,9 +2203,11 @@ export class DesktopSpiderUiServer {
     const withPlayback = this.livePlayback?.uiState(base) ?? base;
     const epg = this.epgService?.uiState() ?? withPlayback.epg;
     const matched = this.epgMatching?.uiState(withPlayback.catalog, epg);
-    return matched
+    const withEpg = matched
       ? { ...withPlayback, catalog: matched.catalog, epg: matched.epg }
       : { ...withPlayback, epg };
+    const smart = this.smartChannels?.uiState(withEpg.catalog, withEpg.epg);
+    return smart ? { ...withEpg, ...smart } : withEpg;
   }
 
   private writeCurrentState(response: ServerResponse): void {

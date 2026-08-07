@@ -9,7 +9,7 @@ import {
   type DatabaseErrorCode,
 } from "./errors.js";
 
-export const SUPPORTED_SCHEMA_VERSION = 7;
+export const SUPPORTED_SCHEMA_VERSION = 8;
 
 interface Migration {
   version: number;
@@ -359,6 +359,44 @@ const migrations: readonly Migration[] = [
 
       CREATE INDEX epg_channel_aliases_live
         ON epg_channel_aliases(live_channel_id, normalized_alias);
+    `,
+  },
+  {
+    version: 8,
+    name: "smart-channels",
+    sql: `
+      CREATE TABLE smart_channels (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        logo TEXT,
+        group_name TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        preferred_member_id TEXT,
+        epg_source_id TEXT,
+        epg_channel_id TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (epg_source_id) REFERENCES epg_sources(id) ON DELETE SET NULL
+      ) STRICT;
+
+      CREATE INDEX smart_channels_sort
+        ON smart_channels(sort_order, name COLLATE NOCASE, id);
+
+      CREATE TABLE smart_channel_members (
+        id TEXT PRIMARY KEY NOT NULL,
+        smart_channel_id TEXT NOT NULL,
+        live_channel_id TEXT NOT NULL,
+        priority INTEGER NOT NULL DEFAULT 0,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        FOREIGN KEY (smart_channel_id) REFERENCES smart_channels(id) ON DELETE CASCADE,
+        FOREIGN KEY (live_channel_id) REFERENCES live_channels(id) ON DELETE CASCADE,
+        UNIQUE(smart_channel_id, live_channel_id)
+      ) STRICT;
+
+      CREATE INDEX smart_channel_members_priority
+        ON smart_channel_members(smart_channel_id, enabled, priority, id);
+      CREATE INDEX smart_channel_members_live
+        ON smart_channel_members(live_channel_id, smart_channel_id);
     `,
   },
 ];

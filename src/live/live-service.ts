@@ -99,6 +99,9 @@ export class LiveSourceService {
       session: null,
       player: null,
       epg: EMPTY_EPG_UI_STATE,
+      smartChannels: [],
+      smartSuggestions: [],
+      activeSmartChannel: null,
     };
   }
 

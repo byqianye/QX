@@ -107,6 +107,11 @@ const emit = defineEmits<{
   epgToggle: [payload: { sourceId: string; enabled: boolean }];
   epgRemove: [sourceId: string];
   epgClear: [];
+  epgMappingConfirm: [payload: { liveChannelId: string; epgSourceId: string; epgChannelId: string }];
+  epgMappingClear: [payload: { liveChannelId: string; epgSourceId?: string }];
+  epgMappingConfirmHigh: [];
+  epgAliasSet: [payload: { liveChannelId: string; alias: string }];
+  epgAliasRemove: [payload: { liveChannelId: string; alias: string }];
 }>();
 
 const view = ref<"browse" | "history" | "favorites" | "follow" | "settings" | "live">(props.initialNavigation === "settings"
@@ -449,6 +454,11 @@ function navigationFromPage(page: string): RendererNavigation {
             @toggle="emit('epgToggle', $event)"
             @remove="emit('epgRemove', $event)"
             @clear="emit('epgClear')"
+            @mapping-confirm="emit('epgMappingConfirm', $event)"
+            @mapping-clear="emit('epgMappingClear', $event)"
+            @mapping-confirm-high="emit('epgMappingConfirmHigh')"
+            @alias-set="emit('epgAliasSet', $event)"
+            @alias-remove="emit('epgAliasRemove', $event)"
           />
         </template>
 

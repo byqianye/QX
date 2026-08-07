@@ -29,6 +29,7 @@ export interface PackagedE2eOptions {
   livePlaybackUrl?: string;
   verifyEpg?: boolean;
   epgUrl?: string;
+  verifyEpgMatching?: boolean;
   expectedFavoriteId?: string;
   expectedFollowIdentity?: string;
   verifyParserFallback?: boolean;
@@ -102,6 +103,9 @@ export interface PackagedE2eChecks {
   epgImport?: boolean;
   epgRestart?: boolean;
   epgRefresh?: boolean;
+  epgMapping?: boolean;
+  epgMappingRestart?: boolean;
+  epgTimeline?: boolean;
 }
 
 export interface PackagedE2eResult {
@@ -283,6 +287,10 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
           && existingEpg.channelCount === 2
           && existingEpg.programmeCount === 3
           && existingEpg.lastError === null;
+        checks.epgMappingRestart = (beforeEpg.state?.live?.epg?.mappings ?? []).some((mapping) =>
+          (mapping.liveChannelName === "Fixture Channel A" || mapping.liveChannelName === "Fixture Channel E")
+          && mapping.mapping?.userConfirmed === true,
+        );
       }
       const epgPreview = await post(options.baseUrl, "/api/epg/source/preview", {
         name: "Packaged G58 EPG",
@@ -309,6 +317,46 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       checks.epgRefresh = refreshedEpgSource?.channelCount === 2
         && refreshedEpgSource.programmeCount === 3
         && refreshedEpgSource.lastError === null;
+      if (options.verifyEpgMatching) {
+        const epgState = epgRefreshed?.state ?? epgApplied?.state;
+        const catalogChannels = epgState?.live?.catalog?.channels ?? [];
+        const channelA = catalogChannels.find((channel) => channel.name === "Fixture Channel A");
+        const channelE = catalogChannels.find((channel) => channel.name === "Fixture Channel E");
+        const mappingA = epgState?.live?.epg?.mappings.find((mapping) => mapping.liveChannelName === "Fixture Channel A");
+        const candidateA = mappingA?.candidates.find((candidate) => candidate.method === "tvg-id");
+        const manuallyConfirmed = channelA && candidateA
+          ? await post(options.baseUrl, "/api/epg/mapping/set", {
+              liveChannelId: channelA.id,
+              epgSourceId: candidateA.epgSourceId,
+              epgChannelId: candidateA.epgChannelId,
+            })
+          : null;
+        const highConfidenceConfirmed = await post(options.baseUrl, "/api/epg/mapping/confirm-high");
+        const confirmedMappings = highConfidenceConfirmed.state?.live?.epg?.mappings
+          ?? manuallyConfirmed?.state?.live?.epg?.mappings
+          ?? [];
+        const confirmedA = confirmedMappings.find((mapping) => mapping.liveChannelName === "Fixture Channel A");
+        const confirmedE = confirmedMappings.find((mapping) => mapping.liveChannelName === "Fixture Channel E");
+        checks.epgMapping = channelA?.epgStatus === "mapped"
+          && channelE?.epgStatus === "mapped"
+          && confirmedA?.mapping?.userConfirmed === true
+          && confirmedA.mapping.method === "explicit"
+          && confirmedE?.mapping?.userConfirmed === true;
+
+        const timelineResponse = channelA
+          ? await post(options.baseUrl, "/api/epg/timeline", {
+              liveChannelId: channelA.id,
+              fromAt: Date.UTC(2026, 7, 7, 11),
+              toAt: Date.UTC(2026, 7, 7, 14),
+            })
+          : null;
+        const timeline = timelineResponse?.state?.live?.epg?.timeline;
+        checks.epgTimeline = timeline !== null
+          && timeline !== undefined
+          && timeline.liveChannelId === channelA?.id
+          && timeline.items.map((item) => item.title).join("|") === "Fixture News Current|Fixture News Next"
+          && timeline.toAt - timeline.fromAt === 3 * 60 * 60 * 1000;
+      }
     }
     const opened = await post(options.baseUrl, "/api/open");
     const search = await post(options.baseUrl, "/api/search", {
@@ -931,6 +979,9 @@ interface UiState {
         name: string;
         group: string | null;
         streamCount: number;
+        epgStatus: string;
+        currentProgramme: { title: string } | null;
+        nextProgramme: { title: string } | null;
         streams: readonly { id: string; label: string; protocol: string; status: string }[];
       }[];
       recent: readonly { channelId: string; sourceId: string; channelName: string; lastStreamId: string | null }[];
@@ -964,6 +1015,29 @@ interface UiState {
           programmeCount: number;
           invalidCount: number;
         };
+      } | null;
+      mappings: readonly {
+        liveChannelId: string;
+        liveChannelName: string;
+        status: string;
+        mapping: {
+          epgSourceId: string;
+          epgChannelId: string;
+          method: string;
+          confidence: string;
+          userConfirmed: boolean;
+        } | null;
+        candidates: readonly {
+          epgSourceId: string;
+          epgChannelId: string;
+          method: string;
+        }[];
+      }[];
+      timeline: {
+        liveChannelId: string;
+        fromAt: number;
+        toAt: number;
+        items: readonly { title: string }[];
       } | null;
     };
   };

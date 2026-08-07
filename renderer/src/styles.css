@@ -341,6 +341,12 @@ p { margin-bottom: 12px; }
 .live-recent-panel { display: grid; gap: 8px; }
 .live-recent-panel .panel-header { margin-bottom: 0; }
 .live-recent-button { width: fit-content; min-height: 36px; text-align: left; }
+.epg-mapping-list, .epg-timeline { display: grid; gap: 12px; margin-top: 16px; }
+.epg-mapping-card { display: grid; gap: 12px; padding-top: 16px; border-top: 1px solid var(--border-soft); }
+.epg-mapping-card:first-of-type { padding-top: 0; border-top: 0; }
+.epg-aliases { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.epg-aliases .text-button { min-height: 32px; padding: 2px 0; font-size: 12px; }
+.epg-timeline .settings-row { margin: 0; }
 @media (max-width: 1080px) { .live-browser { grid-template-columns: 1fr; } .live-channel-groups { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; } .live-channel-groups .panel-header { grid-column: 1 / -1; } }
 .cache-management { grid-template-columns: minmax(0, 1fr) minmax(220px, 320px); }
 .cache-summary, .cache-breakdown { display: grid; gap: 0; min-width: 0; }

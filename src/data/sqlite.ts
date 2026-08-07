@@ -9,7 +9,7 @@ import {
   type DatabaseErrorCode,
 } from "./errors.js";
 
-export const SUPPORTED_SCHEMA_VERSION = 6;
+export const SUPPORTED_SCHEMA_VERSION = 7;
 
 interface Migration {
   version: number;
@@ -321,6 +321,44 @@ const migrations: readonly Migration[] = [
         ON epg_programmes(channel_id, end_at);
       CREATE INDEX epg_programmes_channel_window
         ON epg_programmes(channel_id, start_at, end_at);
+    `,
+  },
+  {
+    version: 7,
+    name: "epg-channel-matching",
+    sql: `
+      CREATE TABLE epg_channel_mappings (
+        id TEXT PRIMARY KEY NOT NULL,
+        live_channel_id TEXT NOT NULL,
+        epg_source_id TEXT NOT NULL,
+        epg_channel_id TEXT NOT NULL,
+        method TEXT NOT NULL CHECK (method IN ('explicit', 'tvg-id', 'normalized-name', 'alias')),
+        confidence TEXT NOT NULL CHECK (confidence IN ('exact', 'high', 'medium', 'low', 'none')),
+        user_confirmed INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (live_channel_id) REFERENCES live_channels(id) ON DELETE CASCADE,
+        FOREIGN KEY (epg_source_id) REFERENCES epg_sources(id) ON DELETE CASCADE,
+        FOREIGN KEY (epg_channel_id) REFERENCES epg_channels(id) ON DELETE CASCADE,
+        UNIQUE(live_channel_id, epg_source_id)
+      ) STRICT;
+
+      CREATE INDEX epg_channel_mappings_live
+        ON epg_channel_mappings(live_channel_id, user_confirmed, updated_at);
+      CREATE INDEX epg_channel_mappings_epg
+        ON epg_channel_mappings(epg_source_id, epg_channel_id);
+
+      CREATE TABLE epg_channel_aliases (
+        id TEXT PRIMARY KEY NOT NULL,
+        live_channel_id TEXT NOT NULL,
+        alias TEXT NOT NULL,
+        normalized_alias TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (live_channel_id) REFERENCES live_channels(id) ON DELETE CASCADE,
+        UNIQUE(live_channel_id, normalized_alias)
+      ) STRICT;
+
+      CREATE INDEX epg_channel_aliases_live
+        ON epg_channel_aliases(live_channel_id, normalized_alias);
     `,
   },
 ];

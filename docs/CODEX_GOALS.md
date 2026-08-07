@@ -1069,6 +1069,45 @@ checkpoint: complete G57 live playback
 checkpoint: complete G58 XMLTV EPG
 ```
 
+## G59（已完成）
+
+### 目标
+
+在 G58 XMLTV 数据层之上建立确定性的 Live Channel → EPG Channel 匹配、
+用户确认映射、Alias/Call Sign 和有界节目时间线。
+
+### 状态
+
+实现、目标测试、完整回归、Windows 打包和 packaged first/restart E2E 均已通过。
+G59 checkpoint 已创建；未 push。
+
+### 依赖
+
+- G58 checkpoint `7628f96`：`checkpoint: complete G58 XMLTV EPG`
+
+### 范围与验收
+
+- 严格按 explicit mapping → tvg-id → normalized name → alias/call sign 匹配。
+- exact/high 可默认映射；medium 只显示建议；low、冲突和多候选不随机选择。
+- `userConfirmed=true` 映射优先且自动匹配不得覆盖；支持 SQLite 持久化、重启和有效源刷新保留。
+- Live 页面显示当前/下一节目与时间线；时间线窗口和条目数量在 service 层有界。
+- 复用 Open Design Neutral Modern token、现有 Settings/Live Channel 组件，不引入 TV Launcher 风格。
+
+### 文档与验证
+
+- `docs/spike-59-epg-matching.md`
+- `docs/design/open-design/live-tv/epg-mapping-timeline-spec.md`
+- `tests/epg-matching.test.ts`
+- `tests/epg.test.ts`
+- `tests/electron-e2e.test.ts`
+- `tests/media-fixture.test.ts`
+
+### checkpoint
+
+```text
+checkpoint: complete G59 EPG matching
+```
+
 DEX-1 ~ DEX-5（实验支线）
 
 - DEX-1：Android Emulator 探针

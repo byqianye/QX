@@ -167,7 +167,7 @@ async function handleRequest(
   if (url.pathname === "/live/playback.m3u") {
     serveText(request, response, [
       "#EXTM3U",
-      '#EXTINF:-1 group-title="Fixtures",Fixture Channel A',
+      '#EXTINF:-1 tvg-id="fixture-news" group-title="Fixtures",Fixture Channel A',
       `${fixture.baseUrl}/live/channel-a.m3u8`,
       '#EXTINF:-1 group-title="Fixtures",Fixture Channel B',
       "#EXTVLCOPT:http-referrer=https://source.example.invalid/",
@@ -177,9 +177,9 @@ async function handleRequest(
       `${fixture.baseUrl}/live/channel-c.m3u8`,
       '#EXTINF:-1 group-title="Fixtures",Fixture Channel D',
       `${fixture.baseUrl}/live/channel-d.m3u8`,
-      '#EXTINF:-1 tvg-id="fixture-e" group-title="Fixtures",Fixture Channel E',
+      '#EXTINF:-1 tvg-id="fixture-movie" group-title="Fixtures",Fixture Channel E',
       `${fixture.baseUrl}/live/channel-e-line1.m3u8`,
-      '#EXTINF:-1 tvg-id="fixture-e" group-title="Fixtures",Fixture Channel E',
+      '#EXTINF:-1 tvg-id="fixture-movie" group-title="Fixtures",Fixture Channel E',
       `${fixture.baseUrl}/live/channel-e-line2.m3u8`,
       "",
     ].join("\n"), "application/x-mpegurl; charset=utf-8");

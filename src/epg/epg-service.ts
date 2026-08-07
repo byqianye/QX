@@ -111,6 +111,8 @@ export class EpgService {
       loading: this.loadingValue,
       error: this.errorValue ? { ...this.errorValue } : null,
       retention: { ...this.retention },
+      mappings: [],
+      timeline: null,
     };
   }
 

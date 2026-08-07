@@ -292,8 +292,11 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleChannelKeydown
               </span>
               <span class="live-channel-copy">
                 <strong>{{ channel.name }}</strong>
+                <small v-if="channel.currentProgramme" data-testid="live-current-programme">节目单：{{ channel.currentProgramme.title }} · {{ Math.round((channel.currentProgramme.progress ?? 0) * 100) }}%</small>
+                <small v-else data-testid="live-current-programme">节目单：暂无 · {{ channel.epgStatus }}</small>
+                <small v-if="channel.nextProgramme">下一档：{{ channel.nextProgramme.title }}</small>
                 <small>{{ channel.sourceName }} · {{ channel.group || "未分组" }}</small>
-                <small>节目单：暂无 · 状态：{{ channel.streamCount }} 条线路</small>
+                <small>线路：{{ channel.streamCount }} 条 · EPG：{{ channel.epgStatus }}</small>
               </span>
               <span v-if="channel.streamCount > 1" class="status-chip">{{ channel.streamCount }} 线路</span>
             </button>

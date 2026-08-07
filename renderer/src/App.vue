@@ -370,6 +370,11 @@ function play(line: number, episode: number, resumeMode?: HistoryResumeMode): vo
       @epg-toggle="post('epg-toggle', '/api/epg/source/toggle', { sourceId: $event.sourceId, enabled: $event.enabled })"
       @epg-remove="post('epg-remove', '/api/epg/source/remove', { sourceId: $event })"
       @epg-clear="post('epg-clear', '/api/epg/preview/clear')"
+      @epg-mapping-confirm="post('epg-mapping-confirm', '/api/epg/mapping/confirm', $event)"
+      @epg-mapping-clear="post('epg-mapping-clear', '/api/epg/mapping/clear', $event)"
+      @epg-mapping-confirm-high="post('epg-mapping-confirm-high', '/api/epg/mapping/confirm-high')"
+      @epg-alias-set="post('epg-alias-set', '/api/epg/alias/set', $event)"
+      @epg-alias-remove="post('epg-alias-remove', '/api/epg/alias/remove', $event)"
     />
   </div>
 </template>

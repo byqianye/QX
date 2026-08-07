@@ -52,7 +52,9 @@ function toChannelUi(
     channelNumber: channel.tvgChno,
     streamCount: streams.length,
     streams,
+    epgStatus: "unmapped",
     currentProgramme: null,
+    nextProgramme: null,
     health: null,
   };
 }

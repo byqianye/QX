@@ -104,6 +104,7 @@ import {
   LiveSourceService,
 } from "../live/live-service.js";
 import { LivePlaybackError, LivePlaybackService } from "../live/live-playback.js";
+import { EpgMappingError, EpgMatchingService } from "../epg/epg-matching-service.js";
 import { EpgSourceError, EpgService } from "../epg/epg-service.js";
 import { isEpgSourceType, type EpgSourceImportInput } from "../epg/epg-types.js";
 import {
@@ -1362,6 +1363,7 @@ export interface DesktopSpiderUiServerOptions {
   live?: LiveSourceService;
   livePlayback?: LivePlaybackService;
   epg?: EpgService;
+  epgMatching?: EpgMatchingService;
   onStorageOpen?: () => void | Promise<void>;
   onStorageSwitch?: (mode: StorageMode) => void;
 }
@@ -1395,6 +1397,7 @@ export class DesktopSpiderUiServer {
   private readonly liveService: LiveSourceService | undefined;
   private readonly livePlayback: LivePlaybackService | undefined;
   private readonly epgService: EpgService | undefined;
+  private readonly epgMatching: EpgMatchingService | undefined;
   private readonly onStorageOpen: (() => void | Promise<void>) | undefined;
   private readonly onStorageSwitch: ((mode: StorageMode) => void) | undefined;
   private server: Server | undefined;
@@ -1440,6 +1443,7 @@ export class DesktopSpiderUiServer {
     this.liveService = options.live;
     this.livePlayback = options.livePlayback;
     this.epgService = options.epg;
+    this.epgMatching = options.epgMatching;
     this.onStorageOpen = options.onStorageOpen;
     this.onStorageSwitch = options.onStorageSwitch;
   }
@@ -1481,6 +1485,7 @@ export class DesktopSpiderUiServer {
   public async close(): Promise<void> {
     await this.livePlayback?.stop();
     this.epgService?.close();
+    this.epgMatching?.close();
     if (this.importer) {
       await this.releaseImportedUiResources();
       await this.importer.close();
@@ -1906,6 +1911,8 @@ export class DesktopSpiderUiServer {
         ? error.code
         : error instanceof LivePlaybackError
           ? error.code
+          : error instanceof EpgMappingError
+            ? error.code
           : error instanceof EpgSourceError
             ? error.code
         : errorCodeFromMessage(message);
@@ -1955,7 +1962,9 @@ export class DesktopSpiderUiServer {
     const playback = this.livePlayback;
     if (!playback) throw new LivePlaybackError("LIVE_SOURCE_UNAVAILABLE", "直播播放服务不可用。");
     if (pathname === "/api/live/play") {
-      await playback.selectChannel(stringValue(body.channelId, ""), optionalString(body.streamId) ?? undefined);
+      const channelId = stringValue(body.channelId, "");
+      await playback.selectChannel(channelId, optionalString(body.streamId) ?? undefined);
+      this.epgMatching?.setTimeline(channelId);
       return;
     }
     if (pathname === "/api/live/line") {
@@ -1975,6 +1984,7 @@ export class DesktopSpiderUiServer {
 
   private async handleEpgRequest(pathname: string, body: Record<string, unknown>): Promise<void> {
     const epg = this.epgService;
+    const matching = this.epgMatching;
     if (!epg) throw new EpgSourceError("EPG_SOURCE_FAILED", "EPG 服务不可用。");
     if (pathname === "/api/epg/source/preview") {
       await epg.previewSource(epgInputFromRequest(body));
@@ -1998,6 +2008,47 @@ export class DesktopSpiderUiServer {
     }
     if (pathname === "/api/epg/preview/clear") {
       epg.clearPreview();
+      return;
+    }
+    if (!matching) throw new EpgMappingError("EPG_MAPPING_UNAVAILABLE", "EPG mapping service is unavailable.");
+    if (pathname === "/api/epg/mapping/set") {
+      matching.setMapping(
+        stringValue(body.liveChannelId, ""),
+        stringValue(body.epgSourceId, ""),
+        stringValue(body.epgChannelId, ""),
+      );
+      return;
+    }
+    if (pathname === "/api/epg/mapping/confirm") {
+      matching.confirmCandidate(
+        stringValue(body.liveChannelId, ""),
+        stringValue(body.epgSourceId, ""),
+        stringValue(body.epgChannelId, ""),
+      );
+      return;
+    }
+    if (pathname === "/api/epg/mapping/clear") {
+      matching.clearMapping(stringValue(body.liveChannelId, ""), optionalString(body.epgSourceId) ?? undefined);
+      return;
+    }
+    if (pathname === "/api/epg/mapping/confirm-high") {
+      matching.confirmHighConfidence(this.liveUiState().catalog);
+      return;
+    }
+    if (pathname === "/api/epg/alias/set") {
+      matching.setAlias(stringValue(body.liveChannelId, ""), stringValue(body.alias, ""));
+      return;
+    }
+    if (pathname === "/api/epg/alias/remove") {
+      matching.removeAlias(stringValue(body.liveChannelId, ""), stringValue(body.alias, ""));
+      return;
+    }
+    if (pathname === "/api/epg/timeline") {
+      matching.setTimeline(stringValue(body.liveChannelId, ""), optionalNumber(body.fromAt), optionalNumber(body.toAt));
+      return;
+    }
+    if (pathname === "/api/epg/timeline/clear") {
+      matching.clearTimeline();
       return;
     }
     throw new EpgSourceError("EPG_SOURCE_FAILED", "EPG 请求不存在。");
@@ -2052,7 +2103,11 @@ export class DesktopSpiderUiServer {
   private liveUiState() {
     const base = this.liveService?.uiState() ?? EMPTY_LIVE_UI_STATE;
     const withPlayback = this.livePlayback?.uiState(base) ?? base;
-    return { ...withPlayback, epg: this.epgService?.uiState() ?? withPlayback.epg };
+    const epg = this.epgService?.uiState() ?? withPlayback.epg;
+    const matched = this.epgMatching?.uiState(withPlayback.catalog, epg);
+    return matched
+      ? { ...withPlayback, catalog: matched.catalog, epg: matched.epg }
+      : { ...withPlayback, epg };
   }
 
   private writeCurrentState(response: ServerResponse): void {
@@ -2612,6 +2667,10 @@ function displaySource(value: string): string {
 
 function numberValue(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function indexValue(value: unknown): number {

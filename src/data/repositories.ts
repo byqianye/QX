@@ -8,6 +8,8 @@ import type {
   LiveSourceRecord,
 } from "../live/live-types.js";
 import type {
+  EpgChannelAliasRecord,
+  EpgChannelMappingRecord,
   EpgChannelRecord,
   EpgProgrammeRecord,
   EpgSourceRecord,
@@ -793,6 +795,21 @@ export class EpgRepository {
   ): void {
     try {
       this.db.transaction(() => {
+        const preservedMappings = this.db.prepare(`
+          SELECT id, live_channel_id, epg_source_id, epg_channel_id, method,
+                 confidence, user_confirmed, updated_at
+          FROM epg_channel_mappings
+          WHERE epg_source_id = ?
+        `).all(record.id) as Array<{
+          id: string;
+          live_channel_id: string;
+          epg_source_id: string;
+          epg_channel_id: string;
+          method: string;
+          confidence: string;
+          user_confirmed: number;
+          updated_at: number;
+        }>;
         this.upsertSource(record);
         this.db.prepare("DELETE FROM epg_programmes WHERE source_id = ?").run(record.id);
         this.db.prepare("DELETE FROM epg_channels WHERE source_id = ?").run(record.id);
@@ -830,6 +847,26 @@ export class EpgRepository {
             programme.description,
             serializeJson(programme.categories),
             programme.icon,
+          );
+        }
+        const channelIds = new Set(channels.map((channel) => channel.id));
+        const mappingInsert = this.db.prepare(`
+          INSERT INTO epg_channel_mappings(
+            id, live_channel_id, epg_source_id, epg_channel_id, method,
+            confidence, user_confirmed, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const mapping of preservedMappings) {
+          if (!channelIds.has(mapping.epg_channel_id)) continue;
+          mappingInsert.run(
+            mapping.id,
+            mapping.live_channel_id,
+            mapping.epg_source_id,
+            mapping.epg_channel_id,
+            mapping.method,
+            mapping.confidence,
+            mapping.user_confirmed,
+            mapping.updated_at,
           );
         }
       });
@@ -915,6 +952,117 @@ export class EpgRepository {
   public deleteSource(id: string): void {
     try {
       this.db.prepare("DELETE FROM epg_sources WHERE id = ?").run(id);
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public upsertMapping(record: EpgChannelMappingRecord): void {
+    try {
+      this.db.prepare(`
+        INSERT INTO epg_channel_mappings(
+          id, live_channel_id, epg_source_id, epg_channel_id, method,
+          confidence, user_confirmed, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(live_channel_id, epg_source_id) DO UPDATE SET
+          id = excluded.id,
+          epg_channel_id = excluded.epg_channel_id,
+          method = excluded.method,
+          confidence = excluded.confidence,
+          user_confirmed = excluded.user_confirmed,
+          updated_at = excluded.updated_at
+      `).run(
+        record.id,
+        record.liveChannelId,
+        record.epgSourceId,
+        record.epgChannelId,
+        record.method,
+        record.confidence,
+        record.userConfirmed ? 1 : 0,
+        record.updatedAt,
+      );
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public getMapping(liveChannelId: string, epgSourceId: string): EpgChannelMappingRecord | null {
+    const row = this.db.prepare(`
+      SELECT * FROM epg_channel_mappings
+      WHERE live_channel_id = ? AND epg_source_id = ?
+    `).get(liveChannelId, epgSourceId);
+    return row ? epgMappingFromRow(row) : null;
+  }
+
+  public listMappings(liveChannelId?: string): readonly EpgChannelMappingRecord[] {
+    const rows = liveChannelId
+      ? this.db.prepare(`
+          SELECT * FROM epg_channel_mappings
+          WHERE live_channel_id = ?
+          ORDER BY user_confirmed DESC, updated_at DESC, id
+        `).all(liveChannelId)
+      : this.db.prepare(`
+          SELECT * FROM epg_channel_mappings
+          ORDER BY live_channel_id, user_confirmed DESC, updated_at DESC, id
+        `).all();
+    return rows.map(epgMappingFromRow);
+  }
+
+  public deleteMapping(liveChannelId: string, epgSourceId?: string): void {
+    try {
+      if (epgSourceId) {
+        this.db.prepare(
+          "DELETE FROM epg_channel_mappings WHERE live_channel_id = ? AND epg_source_id = ?",
+        ).run(liveChannelId, epgSourceId);
+      } else {
+        this.db.prepare(
+          "DELETE FROM epg_channel_mappings WHERE live_channel_id = ?",
+        ).run(liveChannelId);
+      }
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public upsertAlias(record: EpgChannelAliasRecord): void {
+    try {
+      this.db.prepare(`
+        INSERT INTO epg_channel_aliases(id, live_channel_id, alias, normalized_alias, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(live_channel_id, normalized_alias) DO UPDATE SET
+          id = excluded.id,
+          alias = excluded.alias,
+          updated_at = excluded.updated_at
+      `).run(record.id, record.liveChannelId, record.alias, record.normalizedAlias, record.updatedAt);
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public listAliases(liveChannelId?: string): readonly EpgChannelAliasRecord[] {
+    const rows = liveChannelId
+      ? this.db.prepare(`
+          SELECT * FROM epg_channel_aliases
+          WHERE live_channel_id = ?
+          ORDER BY normalized_alias, id
+        `).all(liveChannelId)
+      : this.db.prepare(
+          "SELECT * FROM epg_channel_aliases ORDER BY live_channel_id, normalized_alias, id",
+        ).all();
+    return rows.map(epgAliasFromRow);
+  }
+
+  public deleteAlias(liveChannelId: string, normalizedAlias?: string): void {
+    try {
+      if (normalizedAlias) {
+        this.db.prepare(
+          "DELETE FROM epg_channel_aliases WHERE live_channel_id = ? AND normalized_alias = ?",
+        ).run(liveChannelId, normalizedAlias);
+      } else {
+        this.db.prepare(
+          "DELETE FROM epg_channel_aliases WHERE live_channel_id = ?",
+        ).run(liveChannelId);
+      }
     } catch (error) {
       throw databaseError("DATABASE_WRITE_FAILED", error);
     }
@@ -1183,6 +1331,29 @@ function epgProgrammeFromRow(row: Record<string, unknown>): EpgProgrammeRecord {
     description: nullableString(row.description),
     categories: categories as string[],
     icon: nullableString(row.icon),
+  };
+}
+
+function epgMappingFromRow(row: Record<string, unknown>): EpgChannelMappingRecord {
+  return {
+    id: stringValue(row.id),
+    liveChannelId: stringValue(row.live_channel_id),
+    epgSourceId: stringValue(row.epg_source_id),
+    epgChannelId: stringValue(row.epg_channel_id),
+    method: stringValue(row.method) as EpgChannelMappingRecord["method"],
+    confidence: stringValue(row.confidence) as EpgChannelMappingRecord["confidence"],
+    userConfirmed: booleanValue(row.user_confirmed),
+    updatedAt: numberValue(row.updated_at),
+  };
+}
+
+function epgAliasFromRow(row: Record<string, unknown>): EpgChannelAliasRecord {
+  return {
+    id: stringValue(row.id),
+    liveChannelId: stringValue(row.live_channel_id),
+    alias: stringValue(row.alias),
+    normalizedAlias: stringValue(row.normalized_alias),
+    updatedAt: numberValue(row.updated_at),
   };
 }
 

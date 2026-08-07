@@ -1,5 +1,5 @@
 import type { PlaybackState } from "../desktop/playback.js";
-import type { EpgUiState } from "../epg/epg-types.js";
+import type { EpgMappingStatus, EpgProgrammeUiState, EpgUiState } from "../epg/epg-types.js";
 
 export const LIVE_SOURCE_TYPES = [
   "m3u-url",
@@ -109,7 +109,9 @@ export interface LiveChannelUiState {
   channelNumber: string | null;
   streamCount: number;
   streams: readonly LiveChannelStreamUiState[];
-  currentProgramme: null;
+  epgStatus: EpgMappingStatus;
+  currentProgramme: EpgProgrammeUiState | null;
+  nextProgramme: EpgProgrammeUiState | null;
   health: null;
 }
 
@@ -236,5 +238,7 @@ export const EMPTY_LIVE_UI_STATE: LiveUiState = {
     loading: false,
     error: null,
     retention: { pastRetentionMs: 6 * 60 * 60 * 1000, futureRetentionMs: 7 * 24 * 60 * 60 * 1000 },
+    mappings: [],
+    timeline: null,
   },
 };

@@ -15,6 +15,11 @@ const emit = defineEmits<{
   toggle: [payload: { sourceId: string; enabled: boolean }];
   remove: [sourceId: string];
   clear: [];
+  mappingConfirm: [payload: { liveChannelId: string; epgSourceId: string; epgChannelId: string }];
+  mappingClear: [payload: { liveChannelId: string; epgSourceId?: string }];
+  mappingConfirmHigh: [];
+  aliasSet: [payload: { liveChannelId: string; alias: string }];
+  aliasRemove: [payload: { liveChannelId: string; alias: string }];
 }>();
 
 const name = ref("我的 EPG");
@@ -23,6 +28,7 @@ const location = ref("");
 const fileName = ref("");
 const fileContent = ref<string | null>(null);
 const localError = ref<string | null>(null);
+const aliasDraft = ref<Record<string, string>>({});
 
 function readFile(event: Event): void {
   localError.value = null;
@@ -52,6 +58,28 @@ function sourceTypeLabel(value: EpgSourceType): string {
 
 function formatTime(value: number | null): string {
   return value ? new Date(value).toLocaleString() : "未刷新";
+}
+function mappingStatusLabel(value: string): string {
+  if (value === "mapped") return "已匹配";
+  if (value === "suggested") return "待确认建议";
+  if (value === "ambiguous") return "多候选冲突";
+  if (value === "conflict") return "显式映射冲突";
+  return "未匹配";
+}
+
+function aliasValue(liveChannelId: string): string {
+  return aliasDraft.value[liveChannelId] ?? "";
+}
+
+function setAliasValue(liveChannelId: string, value: string): void {
+  aliasDraft.value[liveChannelId] = value;
+}
+
+function saveAlias(liveChannelId: string): void {
+  const alias = aliasValue(liveChannelId).trim();
+  if (!alias) return;
+  emit("aliasSet", { liveChannelId, alias });
+  setAliasValue(liveChannelId, "");
 }
 </script>
 
@@ -86,6 +114,70 @@ function formatTime(value: number | null): string {
     <article v-for="source in props.state.sources" :key="source.id" class="live-source-card" :data-epg-source-id="source.id">
       <div><h3>{{ source.name }}</h3><p class="meta">{{ sourceTypeLabel(source.type) }} · {{ source.location }}</p><p class="meta">{{ source.channelCount }} 个频道 · {{ source.programmeCount }} 个节目 · {{ formatTime(source.lastSuccessAt) }}</p><p v-if="source.lastError" class="error-message">最近刷新失败：{{ source.lastError }}</p></div>
       <div class="button-row"><button type="button" class="button-secondary" data-action="epg-source-toggle" :disabled="props.pending !== null" @click="emit('toggle', { sourceId: source.id, enabled: !source.enabled })">{{ source.enabled ? "停用" : "启用" }}</button><button type="button" class="button-secondary" data-action="epg-source-refresh" :disabled="props.pending !== null || !source.enabled" @click="emit('refresh', source.id)">刷新</button><button type="button" class="text-button" data-action="epg-source-remove" :disabled="props.pending !== null" @click="emit('remove', source.id)">移除</button></div>
+    </article>
+  </section>
+  <section class="panel epg-mapping-list" data-testid="epg-mappings">
+    <div class="panel-header">
+      <div><span class="section-kicker">EPG Mapping</span><h2>频道匹配</h2></div>
+      <button type="button" class="button-secondary" data-action="epg-mapping-confirm-high" :disabled="props.pending !== null" @click="emit('mappingConfirmHigh')">确认高置信度</button>
+    </div>
+    <p v-if="props.state.mappings.length === 0" class="meta">启用直播源后，这里会显示频道匹配建议。</p>
+    <article v-for="mapping in props.state.mappings" :key="mapping.liveChannelId" class="epg-mapping-card" :data-live-channel-id="mapping.liveChannelId">
+      <div class="panel-header">
+        <div><h3>{{ mapping.liveChannelName }}</h3><p class="meta">{{ mapping.liveSourceName }} · {{ mappingStatusLabel(mapping.status) }}</p></div>
+        <span class="status-chip" :data-status="mapping.status">{{ mapping.status }}</span>
+      </div>
+      <p v-if="mapping.mapping" class="meta">当前：{{ mapping.mappingSourceName }} · {{ mapping.mappingChannelName }} · {{ mapping.mapping.method }} / {{ mapping.mapping.confidence }}</p>
+      <div v-if="mapping.aliases.length" class="epg-aliases">
+        <span class="meta">Alias：{{ mapping.aliases.join("、") }}</span>
+        <button
+          v-for="alias in mapping.aliases"
+          :key="alias"
+          type="button"
+          class="text-button"
+          data-action="epg-alias-remove"
+          :disabled="props.pending !== null"
+          @click="emit('aliasRemove', { liveChannelId: mapping.liveChannelId, alias })"
+        >移除 {{ alias }}</button>
+      </div>
+      <div v-if="mapping.candidates.length" class="button-row" data-testid="epg-mapping-suggestions">
+        <button
+          v-for="candidate in mapping.candidates"
+          :key="`${candidate.epgSourceId}:${candidate.epgChannelId}`"
+          type="button"
+          class="button-secondary"
+          data-action="epg-mapping-confirm"
+          :disabled="props.pending !== null"
+          @click="emit('mappingConfirm', { liveChannelId: mapping.liveChannelId, epgSourceId: candidate.epgSourceId, epgChannelId: candidate.epgChannelId })"
+        >{{ candidate.epgSourceName }} · {{ candidate.epgChannelName }} · {{ candidate.confidence }}</button>
+      </div>
+      <div class="button-row">
+        <input
+          :value="aliasValue(mapping.liveChannelId)"
+          type="text"
+          maxlength="120"
+          placeholder="添加 alias / call sign"
+          @input="setAliasValue(mapping.liveChannelId, ($event.target as HTMLInputElement).value)"
+        />
+        <button type="button" class="button-secondary" data-action="epg-alias-save" :disabled="props.pending !== null" @click="saveAlias(mapping.liveChannelId)">保存 Alias</button>
+        <button
+          v-if="mapping.status === 'conflict' || mapping.mapping?.userConfirmed"
+          type="button"
+          class="text-button"
+          data-action="epg-mapping-clear"
+          :disabled="props.pending !== null"
+          @click="emit('mappingClear', { liveChannelId: mapping.liveChannelId, ...(mapping.status === 'conflict' ? {} : { epgSourceId: mapping.mapping!.epgSourceId }) })"
+        >清除匹配</button>
+      </div>
+    </article>
+  </section>
+
+  <section v-if="props.state.timeline" class="panel epg-timeline" data-testid="epg-timeline">
+    <div class="panel-header"><div><span class="section-kicker">Programme Timeline</span><h2>节目时间线</h2></div><span class="meta">窗口 {{ formatTime(props.state.timeline.fromAt) }} — {{ formatTime(props.state.timeline.toAt) }}</span></div>
+    <p v-if="props.state.timeline.items.length === 0" class="meta">当前窗口暂无节目。</p>
+    <article v-for="item in props.state.timeline.items" :key="item.id" class="settings-row">
+      <span>{{ formatTime(item.startAt) }} — {{ formatTime(item.endAt) }}</span>
+      <strong>{{ item.title }}<small v-if="item.progress !== null"> · {{ Math.round(item.progress * 100) }}%</small></strong>
     </article>
   </section>
 </template>

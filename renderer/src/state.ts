@@ -462,6 +462,8 @@ function cloneLiveUiState(value: LiveUiState): LiveUiState {
       channels: value.catalog.channels.map((channel) => ({
         ...channel,
         streams: channel.streams.map((stream) => ({ ...stream })),
+        currentProgramme: channel.currentProgramme ? { ...channel.currentProgramme } : null,
+        nextProgramme: channel.nextProgramme ? { ...channel.nextProgramme } : null,
       })),
       recent: value.catalog.recent.map((recent) => ({ ...recent })),
     },
@@ -491,6 +493,18 @@ function cloneLiveUiState(value: LiveUiState): LiveUiState {
       loading: value.epg.loading,
       error: value.epg.error ? { ...value.epg.error } : null,
       retention: { ...value.epg.retention },
+      mappings: value.epg.mappings.map((mapping) => ({
+        ...mapping,
+        aliases: [...mapping.aliases],
+        candidates: mapping.candidates.map((candidate) => ({ ...candidate })),
+        mapping: mapping.mapping ? { ...mapping.mapping } : null,
+      })),
+      timeline: value.epg.timeline
+        ? {
+            ...value.epg.timeline,
+            items: value.epg.timeline.items.map((item) => ({ ...item })),
+          }
+        : null,
     },
   };
 }

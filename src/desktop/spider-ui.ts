@@ -122,6 +122,8 @@ import { DownloadService, DownloadServiceError } from "../downloads/download-ser
 import { EMPTY_DOWNLOAD_UI_STATE, type DownloadUiState } from "../downloads/download-types.js";
 import { PushService, PushServiceError } from "../push/push-service.js";
 import type { PushPlaybackSessionSnapshot, PushRequest, PushSourceReference, PushUrlRequest } from "../push/push-types.js";
+import { CastService, CastServiceError } from "../cast/cast-service.js";
+import type { CastMediaSource } from "../cast/cast-types.js";
 import {
   EMPTY_LIVE_UI_STATE,
   isLiveSourceType,
@@ -1547,6 +1549,7 @@ export interface DesktopSpiderUiServerOptions {
   localMedia?: LocalMediaService;
   downloads?: DownloadService;
   push?: PushService;
+  cast?: CastService;
   live?: LiveSourceService;
   livePlayback?: LivePlaybackService;
   smartChannels?: SmartChannelService;
@@ -1590,6 +1593,7 @@ export class DesktopSpiderUiServer {
   private readonly localMediaService: LocalMediaService | undefined;
   private readonly downloadService: DownloadService | undefined;
   private readonly pushService: PushService | undefined;
+  private readonly castService: CastService | undefined;
   private readonly liveService: LiveSourceService | undefined;
   private readonly livePlayback: LivePlaybackService | undefined;
   private readonly smartChannels: SmartChannelService | undefined;
@@ -1645,6 +1649,7 @@ export class DesktopSpiderUiServer {
     this.localMediaService = options.localMedia;
     this.downloadService = options.downloads;
     this.pushService = options.push;
+    this.castService = options.cast;
     this.directUi?.setPlaybackCompleteHandler(() => this.pushService?.drainQueue());
     this.liveService = options.live;
     this.livePlayback = options.livePlayback;
@@ -1700,6 +1705,7 @@ export class DesktopSpiderUiServer {
   }
 
   public async close(): Promise<void> {
+    await this.castService?.close();
     await this.pushService?.close();
     await this.livePlayback?.stop();
     this.epgService?.close();
@@ -1818,6 +1824,11 @@ export class DesktopSpiderUiServer {
       const body = await readJson(request);
       if (url.pathname.startsWith("/api/push/")) {
         await this.handlePushRequest(url.pathname, body);
+        this.writeCurrentState(response);
+        return;
+      }
+      if (url.pathname.startsWith("/api/cast/")) {
+        await this.handleCastRequest(url.pathname, body);
         this.writeCurrentState(response);
         return;
       }
@@ -2214,6 +2225,8 @@ export class DesktopSpiderUiServer {
           ? error.code
         : error instanceof PushServiceError
           ? error.code
+        : error instanceof CastServiceError
+          ? error.code
         : error instanceof LocalMediaError
           ? error.code
         : error instanceof LivePlaybackError
@@ -2232,6 +2245,7 @@ export class DesktopSpiderUiServer {
         state: ui?.state ?? null,
         ...(this.liveService || this.livePlayback ? { live: this.liveUiState() } : {}),
         ...(this.pushService ? { push: this.pushService.uiState() } : {}),
+        ...(this.castService ? { cast: this.castService.uiState() } : {}),
       }, 400);
     }
   }
@@ -2320,6 +2334,70 @@ export class DesktopSpiderUiServer {
       return;
     }
     throw new PushServiceError("PUSH_ROUTE_NOT_FOUND", "Push 请求不存在。");
+  }
+
+  private async handleCastRequest(pathname: string, body: Record<string, unknown>): Promise<void> {
+    const service = this.castService;
+    if (!service) throw new CastServiceError("DLNA_UNAVAILABLE", "DLNA 投屏服务不可用。");
+    if (pathname === "/api/cast/discover" || pathname === "/api/cast/refresh") {
+      await service.discover();
+      return;
+    }
+    if (pathname === "/api/cast/play") {
+      const ui = this.playbackUi() ?? this.activeUi();
+      const player = ui?.state.player;
+      const source = player?.source;
+      if (!source) throw new CastServiceError("DLNA_MEDIA_UNAVAILABLE", "当前没有可投屏的媒体。");
+      const selectedSubtitle = source.subtitles?.find((track) => track.default || track.forced) ?? source.subtitles?.[0];
+      const media: CastMediaSource = {
+        url: new URL(source.url, this.url).toString(),
+        title: ui?.state.playbackSession?.media.title ?? "当前媒体",
+        ...(Object.keys(source.headers).length > 0 ? { headers: { ...source.headers } } : {}),
+        ...(selectedSubtitle?.url ? {
+          subtitle: {
+            url: new URL(selectedSubtitle.url, this.url).toString(),
+            ...(selectedSubtitle.headers ? { headers: { ...selectedSubtitle.headers } } : {}),
+            contentType: subtitleContentType(selectedSubtitle.format),
+          },
+        } : {}),
+      };
+      await service.cast({
+        deviceId: stringValue(body.deviceId, ""),
+        media,
+        ...(typeof player.currentTime === "number" ? { startPosition: player.currentTime } : {}),
+      });
+      return;
+    }
+    if (pathname === "/api/cast/pause") {
+      await service.pause();
+      return;
+    }
+    if (pathname === "/api/cast/resume") {
+      await service.play();
+      return;
+    }
+    if (pathname === "/api/cast/stop") {
+      await service.stop();
+      return;
+    }
+    if (pathname === "/api/cast/disconnect") {
+      await service.disconnect();
+      return;
+    }
+    if (pathname === "/api/cast/seek") {
+      const position = typeof body.position === "number" ? body.position : Number(body.position);
+      await service.seek(position);
+      return;
+    }
+    if (pathname === "/api/cast/position") {
+      await service.refreshPosition();
+      return;
+    }
+    if (pathname === "/api/cast/transport") {
+      await service.refreshTransport();
+      return;
+    }
+    throw new CastServiceError("DLNA_ROUTE_NOT_FOUND", "DLNA 投屏请求不存在。");
   }
 
   private async handleLocalMediaRequest(pathname: string, body: Record<string, unknown>): Promise<void> {
@@ -2821,8 +2899,9 @@ export class DesktopSpiderUiServer {
     const localMedia = this.localMediaService?.uiState(this.boundUrl);
     const downloads = this.downloadService?.uiState();
     const push = this.pushService?.uiState();
+    const cast = this.castService?.uiState();
     const state = visibleState
-      ? { ...visibleState, live, ...(localMedia ? { localMedia } : {}), ...(downloads ? { downloads } : {}), ...(push ? { push } : {}) }
+      ? { ...visibleState, live, ...(localMedia ? { localMedia } : {}), ...(downloads ? { downloads } : {}), ...(push ? { push } : {}), ...(cast ? { cast } : {}) }
       : null;
     if (this.importer) {
       writeJson(response, {
@@ -2832,6 +2911,7 @@ export class DesktopSpiderUiServer {
         ...(localMedia ? { localMedia } : {}),
         ...(downloads ? { downloads } : {}),
         ...(push ? { push } : {}),
+        ...(cast ? { cast } : {}),
         ...(persistence ? { persistence } : {}),
       });
     } else {
@@ -2841,6 +2921,7 @@ export class DesktopSpiderUiServer {
         ...(localMedia ? { localMedia } : {}),
         ...(downloads ? { downloads } : {}),
         ...(push ? { push } : {}),
+        ...(cast ? { cast } : {}),
         ...(persistence ? { persistence } : {}),
       });
     }
@@ -3313,6 +3394,10 @@ function renderPlaybackHealth(state: DesktopSpiderUiState): string {
 function listFrom(response: SpiderResponse): Record<string, unknown>[] {
   if (!isRecord(response.result) || !Array.isArray(response.result.list)) return [];
   return response.result.list.filter(isRecord).map((item) => ({ ...item }));
+}
+
+function subtitleContentType(format: string): string {
+  return format === "vtt" ? "text/vtt" : "text/plain";
 }
 
 function stringValue(value: unknown, fallback: string): string {

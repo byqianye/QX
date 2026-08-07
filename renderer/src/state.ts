@@ -17,6 +17,8 @@ import { EMPTY_DOWNLOAD_UI_STATE } from "../../src/downloads/download-types.js";
 import type { DownloadUiState } from "../../src/downloads/download-types.js";
 import { EMPTY_PUSH_UI_STATE } from "../../src/push/push-types.js";
 import type { PushUiState } from "../../src/push/push-types.js";
+import { EMPTY_CAST_UI_STATE } from "../../src/cast/cast-types.js";
+import type { CastUiState } from "../../src/cast/cast-types.js";
 
 export type ImportStatus =
   | "empty"
@@ -283,6 +285,7 @@ export interface RendererState {
   localMedia: LocalMediaUiState;
   downloads: DownloadUiState;
   push: PushUiState;
+  cast: CastUiState;
   live: LiveUiState;
   error: ErrorState;
 }
@@ -320,6 +323,7 @@ export interface ApiSpiderState {
   localMedia?: LocalMediaUiState;
   downloads?: DownloadUiState;
   push?: PushUiState;
+  cast?: CastUiState;
 }
 
 export interface RendererEnvelope {
@@ -330,6 +334,7 @@ export interface RendererEnvelope {
   localMedia?: LocalMediaUiState | null;
   downloads?: DownloadUiState | null;
   push?: PushUiState | null;
+  cast?: CastUiState | null;
   error?: string;
   errorCode?: string;
 }
@@ -389,6 +394,7 @@ export function createRendererState(): RendererState {
     localMedia: cloneLocalMediaState(EMPTY_LOCAL_MEDIA_UI_STATE),
     downloads: cloneDownloadState(EMPTY_DOWNLOAD_UI_STATE),
     push: clonePushState(EMPTY_PUSH_UI_STATE),
+    cast: cloneCastState(EMPTY_CAST_UI_STATE),
     live: cloneLiveUiState(EMPTY_LIVE_UI_STATE),
     error: { error: null },
   };
@@ -420,6 +426,11 @@ export function applyRendererEnvelope(
     : state?.push
       ? clonePushState(state.push)
       : current.push;
+  const cast = envelope.cast
+    ? cloneCastState(envelope.cast)
+    : state?.cast
+      ? cloneCastState(state.cast)
+      : current.cast;
   const envelopeError = envelope.error
     ? { code: envelope.errorCode ?? "RENDERER_REQUEST_ERROR", message: envelope.error }
     : null;
@@ -433,6 +444,7 @@ export function applyRendererEnvelope(
       localMedia,
       downloads,
       push,
+      cast,
       error: {
         error: toAppError(nextError) ?? current.error.error,
       },
@@ -480,6 +492,7 @@ export function applyRendererEnvelope(
     localMedia,
     downloads,
     push,
+    cast,
     live,
     error: { error: toAppError(stateError) },
   };
@@ -775,6 +788,28 @@ function cloneDownloadState(state: DownloadUiState): DownloadUiState {
     targetDirectories: state.targetDirectories.map((directory) => ({ ...directory })),
     backend: state.backend,
     aria2Available: state.aria2Available,
+    error: state.error ? { ...state.error } : null,
+  };
+}
+
+function cloneCastState(state: CastUiState): CastUiState {
+  return {
+    discoveryStatus: state.discoveryStatus,
+    devices: state.devices.map((device) => ({
+      ...device,
+      capabilities: { ...device.capabilities },
+    })),
+    session: state.session
+      ? {
+          ...state.session,
+          device: {
+            ...state.session.device,
+            capabilities: { ...state.session.device.capabilities },
+          },
+          media: { ...state.session.media },
+          error: state.session.error ? { ...state.session.error } : null,
+        }
+      : null,
     error: state.error ? { ...state.error } : null,
   };
 }

@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 
 import { app, BrowserWindow, dialog, screen, session as electronSession, shell as electronShell } from "electron";
@@ -63,6 +64,8 @@ import { LocalMediaService } from "../local-media/local-media-service.js";
 import { DownloadService, createDownloadBackend } from "../downloads/download-service.js";
 import { PushService, PushServiceError } from "../push/push-service.js";
 import type { PushRequest } from "../push/push-types.js";
+import { CastMediaBridge } from "../cast/cast-media-bridge.js";
+import { CastService, UdpSsdpTransport } from "../cast/cast-service.js";
 import {
   IsolatedSniffer,
   type IsolatedSnifferPlatform,
@@ -124,6 +127,7 @@ let danmakuService: DanmakuService | undefined;
 let localMediaService: LocalMediaService | undefined;
 let downloadService: DownloadService | undefined;
 let pushService: PushService | undefined;
+let castService: CastService | undefined;
 let dataStorageService: DataStorageService | undefined;
 let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -195,7 +199,7 @@ function getDataStorageService(): DataStorageService {
   return dataStorageService;
 }
 function initializeDataLayer(): void {
-  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService && livePlaybackService && smartChannelService && epgService && epgMatchingService && danmakuService && localMediaService && downloadService && pushService) return;
+  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService && livePlaybackService && smartChannelService && epgService && epgMatchingService && danmakuService && localMediaService && downloadService && pushService && castService) return;
   const dataStorage = getDataStorageService();
   const directories = dataStorage.prepare();
   const opened = openSqliteDataLayer(directories.database);
@@ -297,6 +301,16 @@ function initializeDataLayer(): void {
       },
     },
   });
+  const castSsdpPort = numberEnvironment("QX_E2E_CAST_SSDP_PORT", 1900);
+  castService = new CastService({
+    ...(process.env.QX_E2E_CAST_SSDP_PORT ? {
+      transport: new UdpSsdpTransport({ address: "127.0.0.1", port: castSsdpPort }),
+    } : {}),
+    bridge: new CastMediaBridge({
+      bindHost: "0.0.0.0",
+      advertisedHost: castAdvertisedHost(),
+    }),
+  });
 }
 
 function createShell(): DesktopShellRuntime {
@@ -364,6 +378,7 @@ function createShell(): DesktopShellRuntime {
         localMedia: getLocalMediaService(),
         ...(downloadService ? { downloads: downloadService } : {}),
         ...(pushService ? { push: pushService } : {}),
+        ...(castService ? { cast: castService } : {}),
         live: getLiveSourceService(),
         ...(livePlaybackService ? { livePlayback: livePlaybackService } : {}),
         ...(smartChannelService ? { smartChannels: smartChannelService } : {}),
@@ -656,6 +671,7 @@ async function closeShell(closeData = false): Promise<void> {
 }
 
 async function closeDataLayer(): Promise<void> {
+  await castService?.close().catch(() => undefined);
   await pushService?.close().catch(() => undefined);
   await downloadService?.close().catch(() => undefined);
   await livePlaybackService?.close();
@@ -676,6 +692,7 @@ async function closeDataLayer(): Promise<void> {
   localMediaService = undefined;
   downloadService = undefined;
   pushService = undefined;
+  castService = undefined;
   dataStorageService = undefined;
   const current = dataLayer;
   dataLayer = undefined;
@@ -1012,6 +1029,7 @@ async function runE2e(baseUrl: string): Promise<void> {
       ...(process.env.QX_E2E_DOWNLOAD_DIR ? { downloadDirectory: process.env.QX_E2E_DOWNLOAD_DIR } : {}),
       verifyPush: Boolean(process.env.QX_E2E_PUSH_URL),
       ...(process.env.QX_E2E_PUSH_URL ? { pushUrl: process.env.QX_E2E_PUSH_URL } : {}),
+      verifyCast: Boolean(process.env.QX_E2E_CAST_SSDP_PORT),
       ...(process.env.QX_E2E_HLS_MASTER_URL ? { hlsMasterUrl: process.env.QX_E2E_HLS_MASTER_URL } : {}),
       ...(process.env.QX_E2E_HLS_CHILD_URL ? { hlsChildUrl: process.env.QX_E2E_HLS_CHILD_URL } : {}),
       verifySniffer: ISOLATED_SNIFFER_ENABLED,
@@ -1135,6 +1153,29 @@ function listEnvironment(name: string): string[] {
     .split(",")
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
+}
+
+function castAdvertisedHost(): string {
+  const configured = process.env.QX_CAST_ADVERTISED_HOST?.trim();
+  if (configured) return configured;
+  for (const addresses of Object.values(networkInterfaces())) {
+    for (const address of addresses ?? []) {
+      const family = address.family;
+      if (family === "IPv4" && !address.internal && isPrivateIpv4(address.address)) return address.address;
+    }
+  }
+  return "127.0.0.1";
+}
+
+function isPrivateIpv4(value: string): boolean {
+  const octets = value.split(".").map(Number);
+  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return false;
+  const [first, second] = octets;
+  if (first === undefined || second === undefined) return false;
+  return first === 10
+    || (first === 172 && second >= 16 && second <= 31)
+    || (first === 192 && second === 168)
+    || (first === 169 && second === 254);
 }
 
 function playbackFallbackModeEnvironment(name: string): PlaybackFallbackMode {

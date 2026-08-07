@@ -26,6 +26,7 @@ import TopSearchBar from "./TopSearchBar.vue";
 import PlaybackDebugPanel from "./PlaybackDebugPanel.vue";
 import DanmakuSettingsPanel from "./DanmakuSettingsPanel.vue";
 import PushSettingsPanel from "./PushSettingsPanel.vue";
+import CastPanel from "./CastPanel.vue";
 import { PlaybackDebugTimeline } from "./playback-debug.js";
 import { displaySource } from "./safe-display.js";
 import type {
@@ -161,6 +162,10 @@ const emit = defineEmits<{
   pushReject: [id: string];
   pushCancel: [id: string];
   pushClear: [];
+  castDiscover: [];
+  cast: [deviceId: string];
+  castStop: [];
+  castDisconnect: [];
 }>();
 
 const view = ref<"browse" | "history" | "favorites" | "follow" | "settings" | "live" | "local" | "downloads">(props.initialNavigation === "settings"
@@ -720,6 +725,14 @@ function navigationFromPage(page: string): RendererNavigation {
               @detach="emit('playerDetach')"
               @stop="emit('playerStop')"
               @sync="emit('playerSync', $event)"
+            />
+            <CastPanel
+              :state="props.state.cast"
+              :pending="props.pending"
+              @discover="emit('castDiscover')"
+              @cast="emit('cast', $event)"
+              @stop="emit('castStop')"
+              @disconnect="emit('castDisconnect')"
             />
             <DiagnosticPanel
               :source="props.state.spider.source"

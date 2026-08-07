@@ -49,6 +49,7 @@ export interface PackagedE2eOptions {
   downloadDirectory?: string;
   verifyPush?: boolean;
   pushUrl?: string;
+  verifyCast?: boolean;
   fakeMpv?: () => Promise<boolean>;
   verifySniffer?: boolean;
   sniff?: () => Promise<SniffedMedia>;
@@ -90,6 +91,8 @@ export interface PackagedE2eChecks {
   downloadsRestart?: boolean;
   push?: boolean;
   pushRestart?: boolean;
+  cast?: boolean;
+  castRestart?: boolean;
   hlsTopology?: boolean;
   aggregateSearch?: boolean;
   proxyCleanup?: boolean;
@@ -910,6 +913,24 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
         && playerSourceUrl(hls.state)?.endsWith("/media/fixture.m3u8") === true
         && hlsHtml.includes('data-testid="embedded-player"')
         && (hlsHtml.includes("/assets/hls.min.js") || hlsDom?.hlsLoaded === true);
+      if (options.verifyCast) {
+        const discovered = await post(options.baseUrl, "/api/cast/discover");
+        const discoveredCast = discovered.cast ?? discovered.state?.cast;
+        const deviceId = discoveredCast?.devices[0]?.deviceId;
+        const casted = deviceId
+          ? await post(options.baseUrl, "/api/cast/play", { deviceId })
+          : null;
+        const castState = casted?.cast ?? casted?.state?.cast;
+        const stopped = casted ? await post(options.baseUrl, "/api/cast/stop") : null;
+        const disconnected = await post(options.baseUrl, "/api/cast/disconnect");
+        checks.cast = discoveredCast?.discoveryStatus === "ready"
+          && deviceId !== undefined
+          && castState?.session?.state === "playing"
+          && stopped?.cast?.session?.state === "stopped"
+          && disconnected.cast?.session === null;
+        checks.castRestart = options.freshTrust
+          || (disconnected.cast?.discoveryStatus === "ready" && disconnected.cast.session === null);
+      }
       checks.parseChain = parsed.state?.player?.status === "loading"
         && parsed.state?.error === null
         && parsed.state?.player?.error === null
@@ -1053,7 +1074,8 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       }
       if (options.verifyLocalMedia) {
         if (!options.localMediaFile) throw new Error("Packaged local media E2E file is not configured");
-        const beforeLocal = playbackDetail.state?.history?.items.find((item) => item.sourceType === "local");
+        const beforeLocalState = await getState(options.baseUrl);
+        const beforeLocal = beforeLocalState.state?.history?.items.find((item) => item.sourceType === "local");
         const openedLocal = await post(options.baseUrl, "/api/local-media/open-file");
         const localItems = openedLocal.state?.localMedia?.items ?? [];
         const localItem = localItems.find((item) => item.displayName === "local-fixture.mp4") ?? localItems[0];
@@ -1086,6 +1108,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
           localHtml = await readPage(options);
         }
         const localHistory = localPaused?.state?.history?.items.find((item) => item.sourceType === "local");
+        const localStopped = localPaused ? await post(options.baseUrl, "/api/player/stop") : null;
         checks.localMedia = localItem !== undefined
           && openedLocal.state?.localMedia?.items.some((item) => item.fileReference.startsWith("local-file:")) === true
           && rangeResponse?.status === 206
@@ -1095,7 +1118,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
           && (!options.readWindowHtml || localHtml.includes('data-testid="local-media-page"'));
         checks.localMediaRestart = options.freshTrust
           ? true
-          : (openedLocal.state?.history?.items.find((item) => item.sourceType === "local") ?? beforeLocal)?.position === 3;
+          : (beforeLocal ?? localStopped?.state?.history?.items.find((item) => item.sourceType === "local"))?.position === 3;
         void options.localMediaFile;
       }
       if (options.verifyDownloads) {
@@ -1244,6 +1267,7 @@ async function post(
     state: isRecord(value.state) ? value.state as unknown as UiState : null,
     ...(isRecord(value.downloads) ? { downloads: value.downloads as unknown as DownloadState } : {}),
     ...(isRecord(value.push) ? { push: value.push as unknown as PushState } : {}),
+    ...(isRecord(value.cast) ? { cast: value.cast as unknown as CastState } : {}),
   };
 }
 
@@ -1413,6 +1437,7 @@ interface UiEnvelope {
   state: UiState | null;
   downloads?: DownloadState;
   push?: PushState;
+  cast?: CastState;
 }
 
 interface ImportState {
@@ -1443,6 +1468,12 @@ interface PushState {
   listening: boolean;
   endpoint: string | null;
   recent: readonly { status: string }[];
+}
+
+interface CastState {
+  discoveryStatus: string;
+  devices: readonly { deviceId: string }[];
+  session: { state: string } | null;
 }
 
 interface UiState {
@@ -1504,6 +1535,7 @@ interface UiState {
   };
   downloads?: DownloadState;
   push?: PushState;
+  cast?: CastState;
   historyResume?: { position: number } | null;
   favoriteDetail?: { favoriteId?: string; groupId?: string | null } | null;
   favorites?: {

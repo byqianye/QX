@@ -20,6 +20,7 @@ import {
 import App from "../renderer/src/App.vue";
 import CategoryTabs from "../renderer/src/CategoryTabs.vue";
 import EmbeddedPlayer from "../renderer/src/EmbeddedPlayer.vue";
+import CastPanel from "../renderer/src/CastPanel.vue";
 import MediaCard from "../renderer/src/MediaCard.vue";
 import PlaybackSelector from "../renderer/src/PlaybackSelector.vue";
 import PlayerWindow from "../renderer/src/PlayerWindow.vue";
@@ -28,6 +29,7 @@ import { displaySource } from "../renderer/src/safe-display.js";
 import LiveSourcesView from "../renderer/src/LiveSourcesView.vue";
 import { EMPTY_LIVE_UI_STATE, type LiveUiState } from "../src/live/live-types.js";
 import { EMPTY_DANMAKU_UI_STATE } from "../src/danmaku/danmaku-types.js";
+import type { CastUiState } from "../src/cast/cast-types.js";
 
 describe("Vue renderer", () => {
   const servers: DesktopSpiderUiServer[] = [];
@@ -157,6 +159,64 @@ describe("Vue renderer", () => {
     expect(wrapper.emitted("localOpenFile")).toEqual([[]]);
     await wrapper.get('[data-testid="local-media-list"] .button-primary').trigger("click");
     expect(wrapper.emitted("localPlay")).toEqual([["local-item-1", undefined]]);
+  });
+
+  it("renders DLNA discovery and session controls with device status", async () => {
+    const device = {
+      deviceId: "uuid:fixture-renderer",
+      friendlyName: "Fixture TV",
+      location: "http://127.0.0.1:43123/description.xml",
+      model: "Fixture Model",
+      manufacturer: "Fixture Manufacturer",
+      lastSeen: 1,
+      capabilities: {
+        setAvTransportUri: true,
+        play: true,
+        pause: true,
+        stop: true,
+        seek: true,
+        getTransportInfo: true,
+        getPositionInfo: true,
+      },
+    };
+    const cast: CastUiState = {
+      discoveryStatus: "ready",
+      devices: [device],
+      session: {
+        device,
+        media: { title: "Fixture Movie", contentType: "video/mp4" },
+        state: "playing",
+        startedAt: 1,
+        lastPosition: 42,
+        error: null,
+      },
+      error: null,
+    };
+    const wrapper = mount(CastPanel, { props: { state: cast, pending: null } });
+
+    expect(wrapper.get('[data-testid="cast-discovery-status"]').text()).toBe("Devices");
+    expect(wrapper.get('[data-testid="cast-devices"]').text()).toContain("Fixture TV");
+    expect(wrapper.get('[data-testid="cast-session"]').text()).toContain("Playing");
+    const searching = mount(CastPanel, {
+      props: { state: { ...cast, discoveryStatus: "searching", session: null }, pending: null },
+    });
+    expect(searching.get('[data-testid="cast-discovery-status"]').text()).toBe("Searching");
+    const error = mount(CastPanel, {
+      props: {
+        state: { ...cast, discoveryStatus: "error", session: null, error: { code: "DLNA_TIMEOUT", message: "timeout" } },
+        pending: null,
+      },
+    });
+    expect(error.get('[data-testid="cast-discovery-status"]').text()).toBe("Error");
+    expect(error.get('[data-testid="cast-error"]').text()).toContain("DLNA_TIMEOUT");
+    await wrapper.get('[data-action="cast-discover"]').trigger("click");
+    await wrapper.get('[data-action="cast-device-uuid:fixture-renderer"]').trigger("click");
+    await wrapper.get('[data-action="cast-stop"]').trigger("click");
+    await wrapper.get('[data-action="cast-disconnect"]').trigger("click");
+    expect(wrapper.emitted("discover")).toEqual([[]]);
+    expect(wrapper.emitted("cast")).toEqual([["uuid:fixture-renderer"]]);
+    expect(wrapper.emitted("stop")).toEqual([[]]);
+    expect(wrapper.emitted("disconnect")).toEqual([[]]);
   });
 
   it("offers history removal without guessing a missing local file", async () => {

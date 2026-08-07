@@ -1,4 +1,5 @@
 import { createServer, type Server } from "node:http";
+import { createSocket, type Socket } from "node:dgram";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -31,6 +32,7 @@ let config = "";
 
 let configServer: Server | undefined;
 const mediaFixture = createMediaFixtureServer();
+let dlnaFixture: DlnaFixture | undefined;
 
 function parserEnvironment(): Record<string, string> {
   return {
@@ -78,6 +80,8 @@ try {
   writeFileSync(localMediaFile, Buffer.alloc(64));
   mkdirSync(downloadDirectory);
   await mediaFixture.start();
+  dlnaFixture = createDlnaFixture(mediaFixture.mp4Url);
+  await dlnaFixture.start();
   config = JSON.stringify({
     spider: "csp_Douban.jvm.jar",
     sites: [
@@ -122,6 +126,8 @@ try {
     QX_E2E_LOCAL_MEDIA_FILE: localMediaFile,
     QX_E2E_DOWNLOAD_DIR: downloadDirectory,
     QX_E2E_PUSH_URL: mediaFixture.mp4Url,
+    QX_E2E_CAST_SSDP_PORT: String(dlnaFixture.ssdpPort),
+    QX_CAST_ADVERTISED_HOST: "127.0.0.1",
     QX_PUSH_TRUSTED_LOCAL_ORIGINS: mediaFixture.baseUrl,
     QX_E2E_FAKE_ARIA2: "1",
     QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,
@@ -168,6 +174,8 @@ try {
     QX_E2E_LOCAL_MEDIA_FILE: localMediaFile,
     QX_E2E_DOWNLOAD_DIR: downloadDirectory,
     QX_E2E_PUSH_URL: mediaFixture.mp4Url,
+    QX_E2E_CAST_SSDP_PORT: String(dlnaFixture.ssdpPort),
+    QX_CAST_ADVERTISED_HOST: "127.0.0.1",
     QX_PUSH_TRUSTED_LOCAL_ORIGINS: mediaFixture.baseUrl,
     QX_E2E_FAKE_ARIA2: "1",
     QX_E2E_EXPECTED_FAVORITE_ID: firstFavoriteId,
@@ -209,8 +217,105 @@ try {
   }, null, 2));
 } finally {
   if (configServer) await closeServer(configServer);
+  if (dlnaFixture) await dlnaFixture.close();
   await mediaFixture.close();
   rmSync(workDirectory, { recursive: true, force: true });
+}
+
+interface DlnaFixture {
+  readonly ssdpPort: number;
+  start(): Promise<void>;
+  close(): Promise<void>;
+}
+
+function createDlnaFixture(mediaUrl: string): DlnaFixture {
+  let httpServer: Server | undefined;
+  let ssdpSocket: Socket | undefined;
+  let descriptionUrl = "";
+  let ssdpPort = 0;
+  return {
+    get ssdpPort() {
+      if (!ssdpPort) throw new Error("DLNA fixture is not running");
+      return ssdpPort;
+    },
+    async start() {
+      httpServer = createServer((request, response) => {
+        void handleDlnaHttp(request, response, mediaUrl);
+      });
+      await listenServer(httpServer);
+      const httpAddress = httpServer.address() as AddressInfo;
+      descriptionUrl = `http://127.0.0.1:${httpAddress.port}/description.xml`;
+      ssdpSocket = createSocket("udp4");
+      ssdpSocket.on("message", (_message, remote) => {
+        const payload = Buffer.from([
+          "HTTP/1.1 200 OK",
+          "CACHE-CONTROL: max-age=60",
+          `LOCATION: ${descriptionUrl}`,
+          "ST: urn:schemas-upnp-org:device:MediaRenderer:1",
+          "USN: uuid:packaged-renderer::urn:schemas-upnp-org:device:MediaRenderer:1",
+          "",
+          "",
+        ].join("\r\n"), "utf8");
+        ssdpSocket?.send(payload, remote.port, remote.address);
+      });
+      await new Promise<void>((resolve, reject) => {
+        ssdpSocket?.once("error", reject);
+        ssdpSocket?.bind(0, "127.0.0.1", resolve);
+      });
+      ssdpPort = (ssdpSocket.address() as AddressInfo).port;
+    },
+    async close() {
+      if (ssdpSocket) {
+        await new Promise<void>((resolve) => ssdpSocket?.close(resolve));
+        ssdpSocket = undefined;
+      }
+      if (httpServer) {
+        await closeServer(httpServer);
+        httpServer = undefined;
+      }
+      ssdpPort = 0;
+    },
+  };
+}
+
+async function handleDlnaHttp(
+  request: import("node:http").IncomingMessage,
+  response: import("node:http").ServerResponse,
+  mediaUrl: string,
+): Promise<void> {
+  const path = new URL(request.url ?? "/", "http://127.0.0.1/").pathname;
+  if (path === "/description.xml") {
+    response.writeHead(200, { "content-type": "text/xml" });
+    response.end("<?xml version=\"1.0\"?><root><device><deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType><friendlyName>Packaged Fixture TV</friendlyName><manufacturer>QX Fixture</manufacturer><modelName>Cast Model</modelName><UDN>uuid:packaged-renderer</UDN><serviceList><service><serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType><SCPDURL>/scpd.xml</SCPDURL><controlURL>/control</controlURL></service></serviceList></device></root>");
+    return;
+  }
+  if (path === "/scpd.xml") {
+    response.writeHead(200, { "content-type": "text/xml" });
+    response.end("<scpd><actionList><action><name>SetAVTransportURI</name></action><action><name>Play</name></action><action><name>Pause</name></action><action><name>Stop</name></action><action><name>Seek</name></action><action><name>GetPositionInfo</name></action></actionList></scpd>");
+    return;
+  }
+  if (path !== "/control") {
+    response.writeHead(404).end();
+    return;
+  }
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  const body = Buffer.concat(chunks).toString("utf8");
+  const action = body.match(/<u:([A-Za-z]+)\s+xmlns:u=/u)?.[1] ?? "Unknown";
+  if (action === "SetAVTransportURI" && !body.includes(mediaUrl) && !body.includes("/__qx_cast/")) {
+    response.writeHead(400);
+    response.end();
+    return;
+  }
+  response.writeHead(200, { "content-type": "text/xml" });
+  response.end(`<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><u:${action}Response xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\" /></s:Body></s:Envelope>`);
+}
+
+async function listenServer(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
 }
 
 async function startConfigServer(payload: string): Promise<string> {

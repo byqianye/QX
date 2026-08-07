@@ -427,6 +427,10 @@ function playLocal(itemId: string, resumeMode?: HistoryResumeMode): void {
       @push-reject="post('push-reject', '/api/push/reject', { id: $event })"
       @push-cancel="post('push-cancel', '/api/push/cancel', { id: $event })"
       @push-clear="post('push-clear', '/api/push/clear')"
+      @cast-discover="post('cast-discover', '/api/cast/discover')"
+      @cast="post('cast', '/api/cast/play', { deviceId: $event })"
+      @cast-stop="post('cast-stop', '/api/cast/stop')"
+      @cast-disconnect="post('cast-disconnect', '/api/cast/disconnect')"
     />
   </div>
 </template>

@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { DatabaseSync, type StatementSync } from "node:sqlite";
+import { backup, DatabaseSync, type StatementSync } from "node:sqlite";
 
 import {
   databaseError,
@@ -579,6 +579,13 @@ export class SqliteDataLayer {
     this.assertOpen();
     const row = this.database.prepare("PRAGMA integrity_check").get() as { integrity_check?: string } | undefined;
     return row?.integrity_check === "ok";
+  }
+
+  /** Creates a consistent SQLite backup without exposing the DatabaseSync handle. */
+  public async backupTo(path: string): Promise<void> {
+    this.assertOpen();
+    mkdirSync(dirname(path), { recursive: true });
+    await backup(this.database, path);
   }
 
   public hasMigration(name: string): boolean {

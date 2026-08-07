@@ -13,6 +13,7 @@ import FollowView from "./FollowView.vue";
 import HistoryView from "./HistoryView.vue";
 import CacheManagement from "./CacheManagement.vue";
 import StorageManagement from "./StorageManagement.vue";
+import BackupRestore from "./BackupRestore.vue";
 import LiveSourcesView from "./LiveSourcesView.vue";
 import LocalMediaView from "./LocalMediaView.vue";
 import DownloadsView from "./DownloadsView.vue";
@@ -99,6 +100,11 @@ const emit = defineEmits<{
   storageRefresh: [];
   storageOpen: [];
   storageSwitch: [mode: "normal" | "portable"];
+  backupCreate: [includeCache: boolean];
+  backupPick: [];
+  backupApply: [];
+  backupClear: [];
+  backupOpen: [];
   livePreview: [input: Record<string, unknown>];
   liveApply: [previewId: string];
   liveRefresh: [sourceId: string];
@@ -584,6 +590,15 @@ function navigationFromPage(page: string): RendererNavigation {
             @refresh="emit('storageRefresh')"
             @open="emit('storageOpen')"
             @switch="emit('storageSwitch', $event)"
+          />
+          <BackupRestore
+            :state="props.state.backup"
+            :pending="props.pending"
+            @create="emit('backupCreate', $event)"
+            @pick="emit('backupPick')"
+            @apply="emit('backupApply')"
+            @clear="emit('backupClear')"
+            @open="emit('backupOpen')"
           />
           <EpgSourcesView
             :state="props.state.live.epg"

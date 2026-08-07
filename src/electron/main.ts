@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 
@@ -30,6 +30,10 @@ import { runFakeMpvExitProbe } from "./fake-mpv-probe.js";
 import { resolveElectronRuntime } from "./runtime.js";
 import { DesktopShellRuntime } from "./shell-runtime.js";
 import { DataDirectoryResolver, DataStorageService, type DataDirectoryMode } from "../data/data-directory.js";
+import {
+  BackupRestoreService,
+} from "../data/backup-restore.js";
+import { EMPTY_BACKUP_UI_STATE, type BackupUiState } from "../backup-types.js";
 import { SqliteConfigHistoryPersistence } from "../data/config-history-persistence.js";
 import { SqliteDesktopStateStore } from "../data/desktop-state-store.js";
 import { LegacyDataMigrator } from "../data/legacy-migration.js";
@@ -133,6 +137,9 @@ let pushService: PushService | undefined;
 let castService: CastService | undefined;
 let webControlService: WebControlService | undefined;
 let webSecurity: WebSecurityManager | undefined;
+let backupRestoreService: BackupRestoreService | undefined;
+let backupState: BackupUiState = { ...EMPTY_BACKUP_UI_STATE };
+let lastBackupPath: string | undefined;
 let dataStorageService: DataStorageService | undefined;
 let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -203,14 +210,116 @@ function getDataStorageService(): DataStorageService {
   }
   return dataStorageService;
 }
+
+function getBackupRestoreService(): BackupRestoreService {
+  initializeDataLayer();
+  if (!backupRestoreService) throw new Error("Backup service is unavailable");
+  return backupRestoreService;
+}
+
+async function createBackup(includeCache: boolean): Promise<BackupUiState> {
+  const service = getBackupRestoreService();
+  if (!dataLayer) throw new Error("Backup data layer is unavailable");
+  try {
+    service.clearPreview();
+    const result = await service.createBackup(dataLayer, { includeCache });
+    lastBackupPath = join(getDataStorageService().directories().backups, result.fileName);
+    backupState = {
+      status: "idle",
+      lastBackup: {
+        fileName: result.fileName,
+        size: result.size,
+        createdAt: result.createdAt,
+        includeCache: result.includeCache,
+        summary: { ...result.summary },
+      },
+      preview: null,
+      error: null,
+    };
+  } catch (error) {
+    backupState = {
+      ...backupState,
+      status: "error",
+      error: { code: errorCode(error, "BACKUP_CREATE_FAILED"), message: errorMessage(error) },
+    };
+  }
+  return backupState;
+}
+
+async function pickBackup(): Promise<BackupUiState> {
+  let selectedPath = E2E_MODE && lastBackupPath && existsSync(lastBackupPath) ? lastBackupPath : undefined;
+  if (!selectedPath) {
+    const picked = await dialog.showOpenDialog({
+      title: "Restore QX backup",
+      properties: ["openFile"],
+      filters: [{ name: "QX backup", extensions: ["zip"] }],
+    });
+    if (picked.canceled || !picked.filePaths[0]) return backupState;
+    selectedPath = picked.filePaths[0];
+  }
+  try {
+    const preview = getBackupRestoreService().preview(selectedPath);
+    backupState = { ...backupState, status: "preview", preview, error: null };
+  } catch (error) {
+    backupState = {
+      ...backupState,
+      status: "error",
+      preview: null,
+      error: { code: errorCode(error, "BACKUP_PREVIEW_FAILED"), message: errorMessage(error) },
+    };
+  }
+  return backupState;
+}
+
+function clearBackupPreview(): void {
+  backupRestoreService?.clearPreview();
+  backupState = { ...EMPTY_BACKUP_UI_STATE };
+}
+
+function requestBackupRestore(): void {
+  setTimeout(() => {
+    void (async () => {
+      const service = backupRestoreService;
+      try {
+        if (!service) throw new Error("Backup service is unavailable");
+        await closeShell(true);
+        service.restore();
+        app.relaunch();
+        app.exit(0);
+      } catch (error) {
+        backupState = {
+          ...backupState,
+          status: "error",
+          error: { code: errorCode(error, "BACKUP_RESTORE_FAILED"), message: errorMessage(error) },
+        };
+        app.relaunch();
+        app.exit(1);
+      }
+    })();
+  }, 0);
+}
+
+function errorCode(error: unknown, fallback: string): string {
+  return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+    ? error.code
+    : fallback;
+}
+
 function initializeDataLayer(): void {
-  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService && livePlaybackService && smartChannelService && epgService && epgMatchingService && danmakuService && localMediaService && downloadService && pushService && castService && webSecurity) return;
+  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService && livePlaybackService && smartChannelService && epgService && epgMatchingService && danmakuService && localMediaService && downloadService && pushService && castService && webSecurity && backupRestoreService) return;
   const dataStorage = getDataStorageService();
   const directories = dataStorage.prepare();
   const opened = openSqliteDataLayer(directories.database);
   dataLayer = opened.layer;
   const settingsRepository = new SettingsRepository(opened.layer);
   webSecurity = new WebSecurityManager({ settings: settingsRepository });
+  backupRestoreService = new BackupRestoreService({
+    dataRoot: directories.dataRoot,
+    databasePath: directories.database,
+    backupsDirectory: directories.backups,
+    tempDirectory: directories.temp,
+    appVersion: app.getVersion(),
+  });
   const legacy = new LegacyDataMigrator(opened.layer).migrate({
     desktopState: join(directories.dataRoot, "desktop-state.json"),
     configHistory: join(directories.dataRoot, "config-history.json"),
@@ -396,6 +505,13 @@ function createShell(): DesktopShellRuntime {
           await electronShell.openPath(getDataStorageService().directories().dataRoot);
         },
         onStorageSwitch: requestStorageSwitch,
+        onBackupCreate: createBackup,
+        onBackupPick: pickBackup,
+        onBackupApply: requestBackupRestore,
+        onBackupClear: clearBackupPreview,
+        onBackupOpen: async () => {
+          await electronShell.openPath(getDataStorageService().directories().backups);
+        },
         onLocalFilePicker: async () => {
           if (process.env.QX_E2E_LOCAL_MEDIA_FILE) return [process.env.QX_E2E_LOCAL_MEDIA_FILE];
           const selected = await dialog.showOpenDialog({
@@ -718,6 +834,7 @@ async function closeDataLayer(): Promise<void> {
   castService = undefined;
   webControlService = undefined;
   webSecurity = undefined;
+  backupRestoreService = undefined;
   dataStorageService = undefined;
   const current = dataLayer;
   dataLayer = undefined;
@@ -1039,6 +1156,7 @@ async function runE2e(baseUrl: string): Promise<void> {
       verifyFollow: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifyCache: true,
       verifyStorage: true,
+      verifyBackup: process.env.QX_E2E_BACKUP === "1",
       verifyLiveSources: Boolean(process.env.QX_E2E_LIVE_URL),
       ...(process.env.QX_E2E_LIVE_URL ? { liveUrl: process.env.QX_E2E_LIVE_URL } : {}),
       verifyLivePlayback: Boolean(process.env.QX_E2E_LIVE_PLAYBACK_URL),

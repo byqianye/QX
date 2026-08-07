@@ -401,6 +401,10 @@ p { margin-bottom: 12px; }
 .storage-management { grid-template-columns: minmax(0, 1fr) minmax(240px, 360px); }
 .storage-summary { display: grid; gap: 0; min-width: 0; }
 .storage-actions { grid-column: 1 / -1; }
+.backup-restore { grid-template-columns: minmax(0, 1fr) minmax(240px, 420px); }
+.backup-summary, .backup-preview { display: grid; gap: 0; min-width: 0; }
+.backup-actions, .backup-preview { grid-column: 1 / -1; }
+.backup-cache-toggle { margin-right: auto; padding-top: 0; }
 @media (max-width: 760px) { .storage-management { grid-template-columns: 1fr; } }
 
 .history-page { display: grid; gap: 20px; }

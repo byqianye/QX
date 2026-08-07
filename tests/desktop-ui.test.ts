@@ -33,6 +33,7 @@ import { DataDirectoryResolver, DataStorageService } from "../src/data/data-dire
 import { LocalMediaService } from "../src/local-media/local-media-service.js";
 import { DownloadService } from "../src/downloads/download-service.js";
 import { FakeDownloadBackend } from "../src/downloads/download-backend.js";
+import type { BackupUiState } from "../src/backup-types.js";
 
 describe("desktop Spider UI", () => {
   const servers: DesktopSpiderUiServer[] = [];
@@ -591,6 +592,62 @@ describe("desktop Spider UI", () => {
     });
     expect(rejected.status).toBe(400);
     expect(await rejected.text()).toContain("STORAGE_CONFIRMATION_REQUIRED");
+  });
+
+  it("exposes backup creation, restore preview, and explicit replace confirmation", async () => {
+    const state: BackupUiState = {
+      status: "idle",
+      lastBackup: null,
+      preview: null,
+      error: null,
+    };
+    let createdIncludeCache = false;
+    let applied = 0;
+    const ui = new DesktopSpiderUiController({ session: new FixtureSession() });
+    const server = new DesktopSpiderUiServer({
+      ui,
+      siteKey: "douban",
+      ext: "fixture-endpoint",
+      onBackupCreate: async (includeCache) => {
+        createdIncludeCache = includeCache;
+        return {
+          ...state,
+          lastBackup: {
+            fileName: "fixture.zip",
+            size: 12,
+            createdAt: "2026-08-08T00:00:00.000Z",
+            includeCache,
+            summary: { settings: 1, history: 2, favorites: 3, following: 4, liveSources: 5, smartChannels: 6 },
+          },
+        };
+      },
+      onBackupPick: async () => ({
+        ...state,
+        status: "preview",
+        preview: {
+          formatVersion: 1,
+          appVersion: "0.1.0",
+          createdAt: "2026-08-08T00:00:00.000Z",
+          sections: ["database"],
+          databaseSchemaVersion: 10,
+          summary: { settings: 1, history: 2, favorites: 3, following: 4, liveSources: 5, smartChannels: 6 },
+          includeCache: false,
+          compatibility: "compatible",
+        },
+      }),
+      onBackupApply: () => { applied += 1; },
+    });
+    servers.push(server);
+    await server.start();
+
+    const created = await post(server.url, "/api/backup/create", { includeCache: true });
+    expect(created.state.backup).toMatchObject({ status: "idle", lastBackup: { fileName: "fixture.zip", includeCache: true } });
+    expect(createdIncludeCache).toBe(true);
+    const preview = await post(server.url, "/api/backup/pick");
+    expect(preview.state.backup).toMatchObject({ status: "preview", preview: { compatibility: "compatible" } });
+    const appliedState = await post(server.url, "/api/backup/apply");
+    expect(appliedState.state.backup).toMatchObject({ status: "restarting" });
+    expect(applied).toBe(1);
   });
 
   it("plays an authorized local file through the existing player and records local history", async () => {

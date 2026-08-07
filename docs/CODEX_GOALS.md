@@ -1603,6 +1603,69 @@ npm run electron:e2e:package
 checkpoint: complete G68 web PIN security
 ```
 
+## G69 (completed)
+
+### Goal
+
+Add versioned user-data Backup & Restore across normal and portable modes, with
+consistent SQLite snapshots, secret exclusion, staging/preview/migration,
+safe ZIP extraction, pre-restore protection, atomic Replace restore, rollback,
+and explicit Settings UI actions.
+
+### Status
+
+Completed for the G69 scope. Export uses the existing SQLite backup API and
+removes sensitive settings before creating a checksummed ZIP. Restore validates
+the archive and database in staging, supports the previous format through the
+existing schema migrations, rejects newer formats, creates a local pre-restore
+copy, and relaunches the Electron app after atomic replacement. The packaged
+run reached `backup=true`; its overall launcher result remains gated by the
+pre-existing G61 `liveFailoverEpgContinuity=false` fixture check before the
+restart half.
+
+### Dependency
+
+- G68 checkpoint `512c36c`: `checkpoint: complete G68 web PIN security`
+
+### Scope and acceptance
+
+- Default backup includes application settings, source/config metadata,
+  history/progress, favorites/groups, following, live/EPG/Smart Channel data,
+  danmaku settings, download metadata, and trusted-source metadata. Cache is
+  opt-in and no active session or credential secret is exported.
+- `manifest.json` records format/app/time/sections/schema/summary/checksums;
+  ZIP Slip, symlink, absolute/UNC/drive paths, ZIP bomb, CRC, checksum and
+  allowlist protections run before staging.
+- Restore shows a preview and compatibility state, runs current migrations and
+  integrity check in staging, uses Replace semantics only, makes a
+  pre-restore backup, rolls back on replacement failure, and relaunches into
+  the current normal or portable DataRoot.
+- Settings → Backup & Restore exposes create, cache opt-in, restore preview,
+  explicit replace/restart, cancel, and backup-folder actions.
+
+### Verification commands
+
+```powershell
+git diff --check
+npm run typecheck
+npx vitest run tests/backup-restore.test.ts tests/desktop-ui.test.ts tests/vue-renderer.test.ts --maxWorkers=1 --minWorkers=1 --reporter=dot
+npm test -- --maxWorkers=1 --minWorkers=1 --reporter=dot
+npm run renderer:build
+npm run electron:build
+npm run electron:package:win
+npm run electron:e2e:package
+```
+
+### Documentation
+
+- `docs/spike-69-backup-restore.md`
+
+### Checkpoint
+
+```text
+checkpoint: complete G69 backup restore
+```
+
 ## Stage 4 (completed)
 
 直播与 EPG 闭环已完成：授权 M3U/TXT 导入、Live 浏览与播放、XMLTV、EPG

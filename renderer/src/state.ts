@@ -7,6 +7,7 @@ import type { FavoriteItem, FavoritesUiState } from "../../src/favorites/favorit
 import type { FollowItem, FollowUiState } from "../../src/follow/follow-types.js";
 import type { CacheUiState } from "../../src/cache/cache-types.js";
 import type { StorageUiState } from "../../src/storage/storage-types.js";
+import { EMPTY_BACKUP_UI_STATE, type BackupUiState } from "../../src/backup-types.js";
 import { EMPTY_LIVE_UI_STATE } from "../../src/live/live-types.js";
 import type { LiveUiState } from "../../src/live/live-types.js";
 import { EMPTY_DANMAKU_UI_STATE } from "../../src/danmaku/danmaku-types.js";
@@ -281,6 +282,7 @@ export interface RendererState {
   followDetail: FollowItem | null;
   cache: CacheUiState;
   storage: StorageUiState;
+  backup: BackupUiState;
   danmaku: DanmakuUiState;
   localMedia: LocalMediaUiState;
   downloads: DownloadUiState;
@@ -318,6 +320,7 @@ export interface ApiSpiderState {
   followDetail?: FollowItem | null;
   cache?: CacheUiState;
   storage?: StorageUiState;
+  backup?: BackupUiState;
   danmaku?: DanmakuUiState;
   live?: LiveUiState;
   localMedia?: LocalMediaUiState;
@@ -390,6 +393,7 @@ export function createRendererState(): RendererState {
     followDetail: null,
     cache: { totalBytes: 0, maxBytes: 0, entries: 0, byType: [] },
     storage: { mode: "normal", dataRoot: "—", normalRoot: "—", portableRoot: "—", databaseBytes: 0, cacheBytes: 0, totalBytes: 0, historyCount: 0, favoritesCount: 0, followCount: 0, writable: false, switching: false, error: null },
+    backup: cloneBackupState(EMPTY_BACKUP_UI_STATE),
     danmaku: cloneDanmakuState(EMPTY_DANMAKU_UI_STATE),
     localMedia: cloneLocalMediaState(EMPTY_LOCAL_MEDIA_UI_STATE),
     downloads: cloneDownloadState(EMPTY_DOWNLOAD_UI_STATE),
@@ -488,6 +492,7 @@ export function applyRendererEnvelope(
     followDetail: state.followDetail ? { ...state.followDetail } : null,
     cache: cloneCacheState(state.cache ?? current.cache),
     storage: cloneStorageState(state.storage ?? current.storage),
+    backup: cloneBackupState(state.backup ?? current.backup),
     danmaku: cloneDanmakuState(state.danmaku ?? current.danmaku),
     localMedia,
     downloads,
@@ -765,6 +770,19 @@ function cloneCacheState(state: CacheUiState): CacheUiState {
 
 function cloneStorageState(state: StorageUiState): StorageUiState {
   return { ...state };
+}
+
+function cloneBackupState(state: BackupUiState): BackupUiState {
+  return {
+    ...state,
+    lastBackup: state.lastBackup
+      ? { ...state.lastBackup, summary: { ...state.lastBackup.summary } }
+      : null,
+    preview: state.preview
+      ? { ...state.preview, sections: [...state.preview.sections], summary: { ...state.preview.summary } }
+      : null,
+    error: state.error ? { ...state.error } : null,
+  };
 }
 
 function cloneLocalMediaState(state: LocalMediaUiState): LocalMediaUiState {

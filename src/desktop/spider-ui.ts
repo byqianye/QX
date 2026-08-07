@@ -89,6 +89,7 @@ import {
 } from "../cache/cache-types.js";
 import { CacheService } from "../cache/cache-service.js";
 import { DataStorageService } from "../data/data-directory.js";
+import { EMPTY_BACKUP_UI_STATE, type BackupUiState } from "../backup-types.js";
 import { EMPTY_STORAGE_UI_STATE, type StorageMode, type StorageUiState } from "../storage/storage-types.js";
 import {
   EMPTY_FOLLOW_UI_STATE,
@@ -269,6 +270,7 @@ export interface DesktopSpiderUiState {
   followDetail: FollowItem | null;
   cache: CacheUiState;
   storage: StorageUiState;
+  backup?: BackupUiState;
   danmaku: import("../danmaku/danmaku-types.js").DanmakuUiState;
   localMedia: LocalMediaUiState;
   downloads: DownloadUiState;
@@ -1571,6 +1573,11 @@ export interface DesktopSpiderUiServerOptions {
   epgMatching?: EpgMatchingService;
   onStorageOpen?: () => void | Promise<void>;
   onStorageSwitch?: (mode: StorageMode) => void;
+  onBackupCreate?: (includeCache: boolean) => Promise<BackupUiState>;
+  onBackupPick?: () => Promise<BackupUiState>;
+  onBackupApply?: () => void | Promise<void>;
+  onBackupClear?: () => void;
+  onBackupOpen?: () => void | Promise<void>;
   onLocalFilePicker?: () => Promise<readonly string[]>;
   onLocalFolderPicker?: () => Promise<string | null>;
   onDownloadFolderPicker?: () => Promise<string | null>;
@@ -1615,6 +1622,12 @@ export class DesktopSpiderUiServer {
   private readonly epgMatching: EpgMatchingService | undefined;
   private readonly onStorageOpen: (() => void | Promise<void>) | undefined;
   private readonly onStorageSwitch: ((mode: StorageMode) => void) | undefined;
+  private readonly onBackupCreate: ((includeCache: boolean) => Promise<BackupUiState>) | undefined;
+  private readonly onBackupPick: (() => Promise<BackupUiState>) | undefined;
+  private readonly onBackupApply: (() => void | Promise<void>) | undefined;
+  private readonly onBackupClear: (() => void) | undefined;
+  private readonly onBackupOpen: (() => void | Promise<void>) | undefined;
+  private backupState: BackupUiState = EMPTY_BACKUP_UI_STATE;
   private readonly onLocalFilePicker: (() => Promise<readonly string[]>) | undefined;
   private readonly onLocalFolderPicker: (() => Promise<string | null>) | undefined;
   private readonly onDownloadFolderPicker: (() => Promise<string | null>) | undefined;
@@ -1672,6 +1685,11 @@ export class DesktopSpiderUiServer {
     this.epgMatching = options.epgMatching;
     this.onStorageOpen = options.onStorageOpen;
     this.onStorageSwitch = options.onStorageSwitch;
+    this.onBackupCreate = options.onBackupCreate;
+    this.onBackupPick = options.onBackupPick;
+    this.onBackupApply = options.onBackupApply;
+    this.onBackupClear = options.onBackupClear;
+    this.onBackupOpen = options.onBackupOpen;
     this.onLocalFilePicker = options.onLocalFilePicker;
     this.onLocalFolderPicker = options.onLocalFolderPicker;
     this.onDownloadFolderPicker = options.onDownloadFolderPicker;
@@ -2243,6 +2261,11 @@ export class DesktopSpiderUiServer {
           return;
         }
         this.writeCurrentState(response);
+        return;
+      }
+
+      if (url.pathname.startsWith("/api/backup/")) {
+        await this.handleBackupRequest(url.pathname, body, response);
         return;
       }
 
@@ -3080,7 +3103,7 @@ export class DesktopSpiderUiServer {
     const push = this.pushService?.uiState();
     const cast = this.castService?.uiState();
     const state = visibleState
-      ? { ...visibleState, live, ...(localMedia ? { localMedia } : {}), ...(downloads ? { downloads } : {}), ...(push ? { push } : {}), ...(cast ? { cast } : {}) }
+      ? { ...visibleState, backup: this.backupState, live, ...(localMedia ? { localMedia } : {}), ...(downloads ? { downloads } : {}), ...(push ? { push } : {}), ...(cast ? { cast } : {}) }
       : null;
     if (this.importer) {
       writeJson(response, {
@@ -3110,13 +3133,40 @@ export class DesktopSpiderUiServer {
     if (!ui) return null;
     const current = ui.state;
     const playback = this.playbackUi();
-    if (!playback || playback === ui || !playback.state.playbackSession) return current;
+    if (!playback || playback === ui || !playback.state.playbackSession) return { ...current, backup: this.backupState };
     return {
       ...current,
+      backup: this.backupState,
       player: playback.state.player,
       playerHost: playback.state.playerHost,
       playbackSession: playback.state.playbackSession,
     };
+  }
+
+  private async handleBackupRequest(pathname: string, body: Record<string, unknown>, response: ServerResponse): Promise<void> {
+    if (pathname === "/api/backup/create") {
+      if (!this.onBackupCreate) throw new Error("BACKUP_UNAVAILABLE");
+      this.backupState = await this.onBackupCreate(body.includeCache === true);
+    } else if (pathname === "/api/backup/pick") {
+      if (!this.onBackupPick) throw new Error("BACKUP_PICK_UNAVAILABLE");
+      this.backupState = await this.onBackupPick();
+    } else if (pathname === "/api/backup/apply") {
+      if (!this.backupState.preview) throw new Error("BACKUP_PREVIEW_REQUIRED");
+      this.backupState = { ...this.backupState, status: "restarting", error: null };
+      this.writeCurrentState(response);
+      void this.onBackupApply?.();
+      return;
+    } else if (pathname === "/api/backup/clear") {
+      this.onBackupClear?.();
+      this.backupState = { ...EMPTY_BACKUP_UI_STATE };
+    } else if (pathname === "/api/backup/open") {
+      if (!this.onBackupOpen) throw new Error("BACKUP_OPEN_UNAVAILABLE");
+      await this.onBackupOpen();
+    } else {
+      writeJson(response, { error: "Not found" }, 404);
+      return;
+    }
+    this.writeCurrentState(response);
   }
 
   private persistPage(patch: PageStatePatch): void {

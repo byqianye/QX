@@ -24,6 +24,7 @@ export interface PackagedE2eOptions {
   verifyFollow?: boolean;
   verifyCache?: boolean;
   verifyStorage?: boolean;
+  verifyBackup?: boolean;
   verifyLiveSources?: boolean;
   liveUrl?: string;
   verifyLivePlayback?: boolean;
@@ -119,6 +120,7 @@ export interface PackagedE2eChecks {
   followRestart?: boolean;
   cache?: boolean;
   storage?: boolean;
+  backup?: boolean;
   liveSources?: boolean;
   liveRestart?: boolean;
   liveSourceDisable?: boolean;
@@ -684,6 +686,21 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
         && storage.state?.storage?.mode === "normal"
         && !storage.state.storage.dataRoot.includes("\\")
         && !storage.state.storage.dataRoot.includes(":");
+    }
+    if (options.verifyBackup) {
+      const createdBackup = await post(options.baseUrl, "/api/backup/create", { includeCache: false });
+      const createdState = isRecord(createdBackup.state?.backup) ? createdBackup.state.backup : null;
+      const lastBackup = createdState && isRecord(createdState.lastBackup) ? createdState.lastBackup : null;
+      const pickedBackup = await post(options.baseUrl, "/api/backup/pick");
+      const pickedState = isRecord(pickedBackup.state?.backup) ? pickedBackup.state.backup : null;
+      const preview = pickedState && isRecord(pickedState.preview) ? pickedState.preview : null;
+      const clearedBackup = await post(options.baseUrl, "/api/backup/clear");
+      const clearedState = isRecord(clearedBackup.state?.backup) ? clearedBackup.state.backup : null;
+      checks.backup = typeof lastBackup?.fileName === "string"
+        && lastBackup.fileName.endsWith(".zip")
+        && pickedState?.status === "preview"
+        && preview?.compatibility === "compatible"
+        && clearedState?.preview === null;
     }
 
     if (options.playback) {
@@ -1620,6 +1637,11 @@ interface UiState {
     favoritesCount: number;
     followCount: number;
     writable: boolean;
+  };
+  backup?: {
+    status: string;
+    lastBackup?: { fileName?: string } | null;
+    preview?: { compatibility?: string } | null;
   };
   live?: {
     sources: readonly {

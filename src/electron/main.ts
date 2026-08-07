@@ -37,6 +37,12 @@ import {
   type SqliteDataLayer,
 } from "../data/sqlite.js";
 import {
+  HistoryRepository,
+  PlaybackProgressRepository,
+  SettingsRepository,
+} from "../data/repositories.js";
+import { HistoryProgressService } from "../history/history-progress.js";
+import {
   IsolatedSniffer,
   type IsolatedSnifferPlatform,
   type IsolatedSnifferSession,
@@ -79,6 +85,7 @@ let engineRouter: EngineRouter | undefined;
 let dataLayer: SqliteDataLayer | undefined;
 let desktopStateStore: DesktopStateStorePort | undefined;
 let configHistoryStore: ConfigHistoryStore | undefined;
+let historyProgressService: HistoryProgressService | undefined;
 let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
 
 function getDesktopStateStore(): DesktopStateStorePort {
@@ -92,8 +99,13 @@ function getConfigHistoryStore(): ConfigHistoryStore {
   if (!configHistoryStore) throw new Error("Config history store is unavailable");
   return configHistoryStore;
 }
+function getHistoryProgressService(): HistoryProgressService {
+  initializeDataLayer();
+  if (!historyProgressService) throw new Error("History progress service is unavailable");
+  return historyProgressService;
+}
 function initializeDataLayer(): void {
-  if (dataLayer && desktopStateStore && configHistoryStore) return;
+  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService) return;
   const directories = new DataDirectoryResolver(app.getPath("userData")).resolve();
   const opened = openSqliteDataLayer(directories.database);
   dataLayer = opened.layer;
@@ -115,6 +127,12 @@ function initializeDataLayer(): void {
   }
   const diagnostic = opened.diagnostic ?? legacy.diagnostic ?? historyDiagnostic;
   desktopStateStore = new SqliteDesktopStateStore(opened.layer, diagnostic);
+  historyProgressService = new HistoryProgressService({
+    db: opened.layer,
+    history: new HistoryRepository(opened.layer),
+    progress: new PlaybackProgressRepository(opened.layer),
+    settings: new SettingsRepository(opened.layer),
+  });
 }
 
 function createShell(): DesktopShellRuntime {
@@ -173,6 +191,7 @@ function createShell(): DesktopShellRuntime {
         importer,
         rendererDirectory: join(app.getAppPath(), "dist", "renderer"),
         stateStore,
+        history: getHistoryProgressService(),
         onPlayerOpen: openPlayerWindow,
         onPlayerAttach: closePlayerWindow,
         onPlayerStop: closePlayerWindow,
@@ -428,6 +447,8 @@ async function closeShell(closeData = false): Promise<void> {
 }
 
 function closeDataLayer(): void {
+  historyProgressService?.appClose();
+  historyProgressService = undefined;
   const current = dataLayer;
   dataLayer = undefined;
   if (!current) return;
@@ -673,6 +694,7 @@ async function runE2e(baseUrl: string): Promise<void> {
       verifySubtitleTracks: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifyPlaybackHealth: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifyPlaybackFallback: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
+      verifyHistory: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifyParserFallback: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifySniffFallback: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG) && ISOLATED_SNIFFER_ENABLED,
       verifyAggregateSearch: true,

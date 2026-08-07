@@ -12,7 +12,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  navigate: [route: "home" | "category" | "settings"];
+  navigate: [route: "home" | "category" | "history" | "settings"];
   open: [];
   switch: [];
   close: [];
@@ -64,8 +64,15 @@ const emit = defineEmits<{
       <button class="sidebar-nav-item sidebar-nav-placeholder" type="button" data-action="live-placeholder" disabled>
         <Icon name="play" /><span>直播（占位）</span>
       </button>
-      <button class="sidebar-nav-item sidebar-nav-placeholder" type="button" data-action="history-placeholder" disabled>
-        <Icon name="grid" /><span>历史（占位）</span>
+      <button
+        class="sidebar-nav-item"
+        :class="{ selected: activePage === 'history' }"
+        type="button"
+        data-action="history"
+        :disabled="pending"
+        @click="emit('navigate', 'history')"
+      >
+        <Icon name="grid" /><span>历史记录</span>
       </button>
       <button class="sidebar-nav-item sidebar-nav-placeholder" type="button" data-action="favorites-placeholder" disabled>
         <Icon name="home" /><span>收藏（占位）</span>

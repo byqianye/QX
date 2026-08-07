@@ -8,6 +8,7 @@ import DiagnosticPanel from "./DiagnosticPanel.vue";
 import EmbeddedPlayer from "./EmbeddedPlayer.vue";
 import ErrorState from "./ErrorState.vue";
 import FilterPanel from "./FilterPanel.vue";
+import HistoryView from "./HistoryView.vue";
 import MediaGrid from "./MediaGrid.vue";
 import PlaybackSelector from "./PlaybackSelector.vue";
 import PlaybackHealthPanel from "./PlaybackHealthPanel.vue";
@@ -23,6 +24,7 @@ import type {
   RendererThemeMode,
   PlayerMediaSync,
   RendererViewStatePatch,
+  HistoryResumeMode,
 } from "./state.js";
 
 const props = defineProps<{
@@ -42,7 +44,7 @@ const emit = defineEmits<{
   category: [];
   search: [key: string];
   detail: [vodId: string];
-  play: [lineIndex: number, episodeIndex: number];
+  play: [lineIndex: number, episodeIndex: number, resumeMode?: HistoryResumeMode];
   retry: [];
   line: [index: number];
   order: [order: "forward" | "reverse"];
@@ -56,13 +58,21 @@ const emit = defineEmits<{
   fallbackCancel: [];
   fallbackApprove: [];
   fallbackMode: [value: "off" | "prompt" | "auto"];
+  historyOpen: [identity: string];
+  historyDelete: [identity: string];
+  historyDeleteProgress: [identity: string];
+  historyClear: [identities: string[]];
+  historyPause: [paused: boolean];
 }>();
 
-const view = ref<"browse" | "settings">(props.initialNavigation === "settings" ? "settings" : "browse");
+const view = ref<"browse" | "history" | "settings">(props.initialNavigation === "settings"
+  ? "settings"
+  : props.initialNavigation === "history" ? "history" : "browse");
 const theme = ref<"system" | "light" | "dark">(props.initialTheme ?? "light");
 const systemTheme = ref<"light" | "dark">("light");
 const debugOpen = ref(false);
 const debugVersion = ref(0);
+const pendingResumeEpisode = ref<{ lineIndex: number; episodeIndex: number } | null>(null);
 const debugTimeline = new PlaybackDebugTimeline();
 let systemMediaQuery: MediaQueryList | null = null;
 
@@ -105,10 +115,21 @@ const selectedLine = computed(() => {
 
 const canStart = computed(() => props.state.spider.status === "idle"
   || (props.state.spider.status === "error" && !props.state.spider.sidecarRunning));
-const activePage = computed(() => view.value === "settings" ? "settings" : props.state.browse.page);
+const activePage = computed(() => view.value === "settings" || view.value === "history" ? view.value : props.state.browse.page);
 const retryable = computed(() => props.state.error.error?.retryable === true);
 const hasPlayback = computed(() => props.state.detail.playbackCatalog !== null || props.state.playback.player.source !== null);
 const playerDetached = computed(() => props.state.playback.session?.host === "detached");
+const resumeTarget = computed(() => pendingResumeEpisode.value ?? (
+  props.state.historyResume?.lineIndex !== null
+  && props.state.historyResume?.lineIndex !== undefined
+  && props.state.historyResume?.episodeIndex !== null
+  && props.state.historyResume?.episodeIndex !== undefined
+    ? {
+        lineIndex: props.state.historyResume.lineIndex,
+        episodeIndex: props.state.historyResume.episodeIndex,
+      }
+    : null
+));
 const debugSnapshot = computed(() => {
   debugVersion.value;
   return debugTimeline.snapshot(props.state);
@@ -123,17 +144,31 @@ watch(
   { deep: true, immediate: true },
 );
 
+watch(() => props.state.browse.page, (page) => {
+  if (view.value === "history" && page === "detail") {
+    view.value = "browse";
+    persistNavigation("detail");
+  }
+});
+
 watch(theme, () => {
   emit("viewState", {
     theme: theme.value,
-    navigation: view.value === "settings" ? "settings" : navigationFromPage(props.state.browse.page),
+    navigation: view.value === "settings" || view.value === "history"
+      ? view.value
+      : navigationFromPage(props.state.browse.page),
   });
 });
 
-function navigate(route: "home" | "category" | "settings"): void {
+function navigate(route: "home" | "category" | "history" | "settings"): void {
   if (route === "settings") {
     view.value = "settings";
     persistNavigation("settings");
+    return;
+  }
+  if (route === "history") {
+    view.value = "history";
+    persistNavigation("history");
     return;
   }
   view.value = "browse";
@@ -155,7 +190,43 @@ function selectCategory(key: "home" | "category"): void {
 function playFirstEpisode(): void {
   const line = selectedLine.value;
   const episode = line?.episodes[0];
-  if (line && episode) emit("play", line.index, episode.index);
+  if (line && episode) requestPlay(line.index, episode.index);
+}
+
+function requestPlay(lineIndex: number, episodeIndex: number): void {
+  const candidate = props.state.historyResume;
+  const candidateMatches = candidate !== null
+    && candidate !== undefined
+    && candidate.lineIndex === lineIndex
+    && candidate.episodeIndex === episodeIndex;
+  if (candidateMatches) {
+    pendingResumeEpisode.value = { lineIndex, episodeIndex };
+    return;
+  }
+  emit("play", lineIndex, episodeIndex);
+}
+
+function continueResume(): void {
+  const target = resumeTarget.value;
+  if (!target) return;
+  pendingResumeEpisode.value = null;
+  emit("play", target.lineIndex, target.episodeIndex, "continue");
+}
+
+function playResumeFromBeginning(): void {
+  const target = resumeTarget.value;
+  if (!target) return;
+  pendingResumeEpisode.value = null;
+  emit("play", target.lineIndex, target.episodeIndex, "beginning");
+}
+
+function cancelResume(): void {
+  pendingResumeEpisode.value = null;
+}
+
+function formatResumePosition(position: number): string {
+  const seconds = Math.max(0, Math.floor(position));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
 function openDebug(): void {
@@ -217,8 +288,8 @@ function navigationFromPage(page: string): RendererNavigation {
       <div class="workspace-content">
         <header class="workspace-header">
           <div>
-            <span class="section-kicker">{{ view === "settings" ? "工作区设置" : "媒体工作台" }}</span>
-            <h1>{{ view === "settings" ? "设置" : (props.state.spider.api ? displaySource(props.state.spider.api) : "QX 影视") }}</h1>
+            <span class="section-kicker">{{ view === "settings" ? "工作区设置" : view === "history" ? "播放历史" : "媒体工作台" }}</span>
+            <h1>{{ view === "settings" ? "设置" : view === "history" ? "History" : (props.state.spider.api ? displaySource(props.state.spider.api) : "QX 影视") }}</h1>
             <p data-testid="status" class="workspace-status" :class="{ loading: props.state.browse.loading || props.pending !== null }">
               {{ statusLabels[props.state.spider.status] }}{{ props.state.browse.loading || props.pending !== null ? " · 加载中" : "" }}
             </p>
@@ -277,6 +348,17 @@ function navigationFromPage(page: string): RendererNavigation {
           </SettingsSection>
         </template>
 
+        <HistoryView
+          v-else-if="view === 'history'"
+          :state="props.state.history"
+          :pending="props.pending"
+          @open="emit('historyOpen', $event)"
+          @delete="emit('historyDelete', $event)"
+          @delete-progress="emit('historyDeleteProgress', $event)"
+          @clear="emit('historyClear', $event)"
+          @pause="emit('historyPause', $event)"
+        />
+
         <template v-else>
           <CategoryTabs :active="props.state.browse.page" @select="selectCategory" />
           <FilterPanel @clear="emit('home')" />
@@ -311,6 +393,21 @@ function navigationFromPage(page: string): RendererNavigation {
           />
 
           <section v-if="hasPlayback" class="playback-stage" data-testid="playback-stage">
+            <section v-if="resumeTarget && props.state.historyResume" class="panel history-resume-prompt" data-testid="history-resume-prompt">
+              <span class="section-kicker">播放进度</span>
+              <h3>{{ props.state.historyResume.title }}</h3>
+              <p class="meta">
+                {{ props.state.historyResume.episodeName ?? "当前集数" }} · 已播放 {{ formatResumePosition(props.state.historyResume.position) }}
+                <span v-if="props.state.historyResume.completed">· 已看完</span>
+              </p>
+              <p>要从上次位置继续，还是从头开始？</p>
+              <div class="button-row">
+                <button type="button" class="button-primary" data-action="history-resume" @click="continueResume">继续播放</button>
+                <button type="button" class="button-secondary" data-action="history-beginning" @click="playResumeFromBeginning">从头播放</button>
+                <button type="button" class="text-button" data-action="history-delete-progress" @click="emit('historyDeleteProgress', props.state.historyResume!.identity); cancelResume()">删除进度</button>
+                <button type="button" class="text-button" data-action="history-cancel" @click="cancelResume">取消</button>
+              </div>
+            </section>
             <PlaybackSelector
               v-if="props.state.detail.playbackCatalog"
               :catalog="props.state.detail.playbackCatalog"
@@ -319,7 +416,7 @@ function navigationFromPage(page: string): RendererNavigation {
               :retryable="retryable"
               @line="emit('line', $event)"
               @order="emit('order', $event)"
-              @episode="emit('play', $event[0], $event[1])"
+              @episode="requestPlay($event[0], $event[1])"
               @retry="emit('retry')"
             />
             <template v-if="playerDetached">

@@ -126,6 +126,7 @@ try {
   const firstResultValue = readResult(firstResult);
   assertRun("first packaged E2E", first, firstResultValue);
   assertPersistedDesktopState(userData, "douban");
+  assertPersistedHistoryPrivacy(userData);
 
   const second = await runPackagedExecutable(executable, {
     QX_ELECTRON_E2E: "1",
@@ -149,6 +150,7 @@ try {
   const secondResultValue = readResult(secondResult);
   assertRun("restarted packaged E2E", second, secondResultValue);
   assertPersistedDesktopState(userData, "douban");
+  assertPersistedHistoryPrivacy(userData);
 
   console.log(JSON.stringify({
     probe: "packaged-electron-e2e",
@@ -211,6 +213,25 @@ function assertPersistedDesktopState(userDataPath: string, expectedSiteKey: stri
     || typeof window?.isMaximized !== "boolean"
     || JSON.stringify(value).match(/authorization|cookie|token|api[_-]?key/i)) {
     throw new Error("Packaged E2E desktop state persistence contract failed");
+  }
+}
+
+function assertPersistedHistoryPrivacy(userDataPath: string): void {
+  const database = new DatabaseSync(join(userDataPath, "qx-yingshi.db"), { readOnly: true });
+  try {
+    const rows = database.prepare(`
+      SELECT identity, source_id, vod_id, season_id, episode_id, title, poster,
+             episode, episode_name, playback_line, position, duration,
+             updated_at, completed, source_display_name
+      FROM history
+    `).all();
+    if (rows.length === 0) throw new Error("Packaged E2E history row was not persisted");
+    const serialized = JSON.stringify(rows);
+    if (/https?:\/\/|token|cookie|authorization|bearer|__qx_playback/i.test(serialized)) {
+      throw new Error("Packaged E2E history privacy contract failed");
+    }
+  } finally {
+    database.close();
   }
 }
 

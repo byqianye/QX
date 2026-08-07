@@ -18,6 +18,7 @@ export interface PackagedE2eOptions {
   verifySubtitleTracks?: boolean;
   verifyPlaybackHealth?: boolean;
   verifyPlaybackFallback?: boolean;
+  verifyHistory?: boolean;
   verifyParserFallback?: boolean;
   verifySniffFallback?: boolean;
   verifyAggregateSearch?: boolean;
@@ -70,6 +71,8 @@ export interface PackagedE2eChecks {
   detachablePlayer?: boolean;
   singlePlaybackSession?: boolean;
   noBackgroundPlayer?: boolean;
+  history?: boolean;
+  historyRestart?: boolean;
 }
 
 export interface PackagedE2eResult {
@@ -189,6 +192,10 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       const playbackOpened = await post(options.baseUrl, "/api/open");
       const playbackHome = await post(options.baseUrl, "/api/home");
       const playbackDetail = await post(options.baseUrl, "/api/detail", { vodId: "fixture:movie-1" });
+      if (options.verifyHistory) {
+        checks.historyRestart = options.freshTrust
+          || playbackDetail.state?.historyResume?.position === 44;
+      }
       const playbackDetailHtml = await readPage(options);
       const mp4 = await post(options.baseUrl, "/api/player", {
         lineIndex: 1,
@@ -212,6 +219,33 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       const headeredPlaylist = options.verifyPlaybackRules && playerSourceUrl(headered.state)
         ? await fetch(playerSourceUrl(headered.state) as string).then((response) => response.text())
         : "";
+      let sessionReference = headered;
+      if (options.verifyHistory) {
+        const firstFrame = await post(options.baseUrl, "/api/player/sync", {
+          status: "playing",
+          currentTime: 44,
+          duration: 100,
+          event: { type: "first-frame" },
+        });
+        const paused = await post(options.baseUrl, "/api/player/sync", {
+          status: "paused",
+          currentTime: 44,
+          duration: 100,
+          event: { type: "user-pause" },
+        });
+        const resumeDetail = await post(options.baseUrl, "/api/detail", { vodId: "fixture:movie-1" });
+        const resumed = await post(options.baseUrl, "/api/player", {
+          lineIndex: 0,
+          episodeIndex: 1,
+          resume: "continue",
+        });
+        sessionReference = resumed;
+        const historyItems = paused.state?.history?.items ?? [];
+        checks.history = firstFrame.state?.history !== undefined
+          && historyItems.some((item) => item.position === 44 && item.duration === 100)
+          && resumeDetail.state?.historyResume?.position === 44
+          && resumed.state?.player?.currentTime === 44;
+      }
       const detached = await post(options.baseUrl, "/api/player/detach");
       const detachedHtml = await readPage(options);
       const opened = await post(options.baseUrl, "/api/player/open");
@@ -285,12 +319,12 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
           && playerSourceHeaders(headered.state) !== null
           && Object.keys(playerSourceHeaders(headered.state) ?? {}).length === 0
           && headeredHtml.includes('data-testid="embedded-player"');
-      const sessionId = headered.state?.playbackSession?.id;
+      const sessionId = sessionReference.state?.playbackSession?.id;
       checks.singlePlaybackSession = typeof sessionId === "string"
         && detached.state?.playbackSession?.id === sessionId
         && attached.state?.playbackSession?.id === sessionId
-        && playerSourceUrl(detached.state) === playerSourceUrl(headered.state)
-        && playerSourceUrl(attached.state) === playerSourceUrl(headered.state);
+        && playerSourceUrl(detached.state) === playerSourceUrl(sessionReference.state)
+        && playerSourceUrl(attached.state) === playerSourceUrl(sessionReference.state);
       checks.noBackgroundPlayer = detached.state?.playerHost === "detached"
         && (!options.readWindowHtml
           || (detachedHtml.includes('data-testid="detached-player-panel"')
@@ -511,6 +545,8 @@ interface UiState {
   error?: { code?: string; message?: string } | null;
   player?: {
     status?: string;
+    currentTime?: number;
+    duration?: number;
     parse?: {
       status?: string;
       parserId?: string | null;
@@ -541,6 +577,11 @@ interface UiState {
   playbackHealth?: {
     bufferingCount?: { value?: number | null; samples?: number };
   };
+  history?: {
+    items: readonly { position: number; duration: number }[];
+    paused: boolean;
+  };
+  historyResume?: { position: number } | null;
 }
 
 function playerSourceUrl(state: UiState | null): string | null {

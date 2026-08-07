@@ -702,6 +702,64 @@ checkpoint: complete G49 playback enhancement acceptance
 checkpoint: complete G50 SQLite data layer
 ```
 
+## G51（进行中）
+
+### 目标
+
+建立来源/内容/集数稳定身份的播放历史与进度闭环，接入 SQLite、Electron 播放生命周期、明确恢复交互、正式 History 页面和隐私控制。
+
+### 状态
+
+已完成。G51 核心服务、播放 Controller 接线、History API、Vue History 页面和专项测试已实现；全量回归、Windows packaged first/restart E2E、resume/privacy/lifecycle 验证均通过。
+
+### 依赖
+
+- G50 SQLite 数据层与 `PlaybackProgressWriter`
+- G26 Open Design 桌面 UI 合同
+
+### 范围
+
+- `src/history/`：稳定身份、完成规则、resume candidate、脱敏 DTO、进度服务；
+- `src/desktop/spider-ui.ts`：播放成功、同步、暂停/停止/换集/关闭 flush，以及 History API；
+- `src/electron/main.ts`：共享 History service 与 DB close 生命周期；
+- `renderer/src/HistoryView.vue`、History 路由和恢复确认交互；
+- `tests/history-progress.test.ts`、桌面 UI/Renderer 回归与 G51 文档。
+
+### 验收标准
+
+- 同标题不同来源不互相覆盖；不以标题作为身份；跨线路按 episode ID 匹配；
+- 起播成功后才创建记录，进度 debounce，pause/stop/换集/窗口关闭/app exit flush；
+- 完成阈值明确且有测试；已完成记录的从头/继续策略明确；恢复不静默 seek；
+- History 页面支持最近、继续、已完成、搜索、排序、来源、单删、批删、清空和确认；
+- 默认保留历史，可暂停记录；SQLite 中无临时播放 URL、Proxy token、Cookie、Authorization；
+- 全量测试、typecheck、build、Windows package、packaged first/restart E2E 和 sidecar/resource 清理通过。
+
+### 验证命令
+
+```powershell
+npm run typecheck
+npx vitest run tests/history-progress.test.ts tests/desktop-ui.test.ts tests/vue-renderer.test.ts
+npm test
+npm run electron:build
+npm run electron:package:win
+npm run electron:e2e:package
+```
+
+### 文档
+
+- `docs/spike-51-history-progress.md`
+- `docs/design/open-design/data-features/history-page-spec.md`
+- `docs/design/open-design/data-features/design-extension.md`
+- `docs/design/open-design/data-features/page-specs.md`
+- `docs/design/open-design/data-features/component-specs.md`
+- `docs/design/open-design/data-features/interaction-specs.md`
+
+### checkpoint
+
+```text
+checkpoint: complete G51 history and progress
+```
+
 DEX-1 ~ DEX-5（实验支线）
 
 - DEX-1：Android Emulator 探针

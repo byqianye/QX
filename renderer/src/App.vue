@@ -15,6 +15,7 @@ import {
   type RendererState,
   type PlayerMediaSync,
   type RendererViewStatePatch,
+  type HistoryResumeMode,
 } from "./state.js";
 
 const api = new RendererApi();
@@ -192,6 +193,9 @@ async function restorePage(): Promise<void> {
     }));
   } else if (candidate.navigation === "detail" && candidate.recentDetailId) {
     await request("restore-detail", () => api.post("/api/detail", { vodId: candidate.recentDetailId }));
+  } else if (candidate.navigation === "history") {
+    restoreScroll(candidate.scrollTop);
+    return;
   } else {
     await request("restore-home", () => api.post("/api/home"));
   }
@@ -215,9 +219,14 @@ function selectSite(siteKey: string): void {
   post("select", "/api/import/select", { siteKey });
 }
 
-function play(line: number, episode: number): void {
+function play(line: number, episode: number, resumeMode?: HistoryResumeMode): void {
   lineIndex.value = line;
-  post("player", "/api/player", { lineIndex: line, episodeIndex: episode, vipFlags: [] });
+  post("player", "/api/player", {
+    lineIndex: line,
+    episodeIndex: episode,
+    vipFlags: [],
+    ...(resumeMode ? { resume: resumeMode } : {}),
+  });
 }
 </script>
 
@@ -269,6 +278,11 @@ function play(line: number, episode: number): void {
       @fallback-cancel="cancelFallback"
       @fallback-approve="approveFallback"
       @fallback-mode="setFallbackMode"
+      @history-open="post('history-open', '/api/history/open', { identity: $event })"
+      @history-delete="post('history-delete', '/api/history/delete', { identity: $event })"
+      @history-delete-progress="post('history-delete-progress', '/api/history/delete-progress', { identity: $event })"
+      @history-clear="post('history-clear', '/api/history/clear', { identities: $event })"
+      @history-pause="post('history-pause', '/api/history/pause', { paused: $event })"
     />
   </div>
 </template>

@@ -59,6 +59,18 @@ import {
   type PlaybackFallbackTrigger,
   type PlaybackHealthSnapshot,
 } from "../health/playback-health.js";
+import {
+  EMPTY_HISTORY_UI_STATE,
+  type HistoryCatalogEpisode,
+  type HistoryResumeCandidate,
+  type HistoryResumeMode,
+  type HistoryUiState,
+} from "../history/history-types.js";
+import {
+  createHistoryContext,
+  HistoryProgressService,
+  sourceIdForHistory,
+} from "../history/history-progress.js";
 
 const require = createRequire(import.meta.url);
 
@@ -165,6 +177,8 @@ export interface DesktopSpiderUiState {
   aggregateSearch: AggregateSearchSnapshot | null;
   playbackHealth: PlaybackHealthSnapshot;
   fallback: PlaybackFallbackState;
+  history: HistoryUiState;
+  historyResume: HistoryResumeCandidate | null;
 }
 
 export interface DesktopSpiderUiOptions {
@@ -179,6 +193,7 @@ export interface DesktopSpiderUiOptions {
   playbackFallbackMode?: PlaybackFallbackMode;
   playbackFallbackMaxAttempts?: number;
   playbackFallbackTimeoutMs?: number;
+  history?: HistoryProgressService;
 }
 
 export class DesktopSpiderUiController {
@@ -211,10 +226,14 @@ export class DesktopSpiderUiController {
   private currentHealthKey = "playback:idle";
   private readonly fallbackRequests = new Map<string, PlaybackRequest>();
   private pendingFallback: Promise<void> | null = null;
+  private readonly historyService: HistoryProgressService | undefined;
+  private historyResume: HistoryResumeCandidate | null = null;
+  private pendingResumeSeconds = 0;
 
   public constructor(options: DesktopSpiderUiOptions) {
     this.session = options.session;
     this.createSession = options.createSession;
+    this.historyService = options.history;
     this.parserCandidates = options.parserCandidates?.map(cloneParserCandidate) ?? [];
     this.sniffer = options.sniffer;
     this.parserAllowedOrigins = options.parserAllowedOrigins ?? [];
@@ -266,6 +285,8 @@ export class DesktopSpiderUiController {
       aggregateSearch: this.aggregateSearchValue,
       playbackHealth: this.publicPlaybackHealth(),
       fallback: this.fallbackCoordinator.state,
+      history: this.historyService?.uiState() ?? EMPTY_HISTORY_UI_STATE,
+      historyResume: this.historyResume ? { ...this.historyResume } : null,
     };
   }
 
@@ -357,6 +378,7 @@ export class DesktopSpiderUiController {
         this.detailItem = listFrom(response)[0] ?? null;
         this.playbackCatalog = this.detailItem ? parseVodPlayback(this.detailItem) : null;
         this.playbackSelection = null;
+        this.historyResume = this.findDetailResume();
         this.scrollTop = 0;
         this.aggregateSearchValue = null;
       },
@@ -368,8 +390,9 @@ export class DesktopSpiderUiController {
     id: string,
     vipFlags: string[] = [],
     timeoutMs?: number,
+    resumeMode?: HistoryResumeMode,
   ): Promise<DesktopSpiderUiState> {
-    return this.playPlayer(flag, id, vipFlags, timeoutMs);
+    return this.playPlayer(flag, id, vipFlags, timeoutMs, undefined, resumeMode);
   }
 
   public setAggregateSearch(snapshot: AggregateSearchSnapshot): DesktopSpiderUiState {
@@ -395,6 +418,7 @@ export class DesktopSpiderUiController {
     episodeIndex: number,
     vipFlags: string[] = [],
     timeoutMs?: number,
+    resumeMode?: HistoryResumeMode,
   ): Promise<DesktopSpiderUiState> {
     const line = this.playbackCatalog?.lines[lineIndex];
     const episode = line?.episodes[episodeIndex];
@@ -412,7 +436,7 @@ export class DesktopSpiderUiController {
       episodeIndex,
       lineName: line.name,
       episodeName: episode.name,
-    });
+    }, resumeMode);
   }
 
   public detachPlayer(): DesktopSpiderUiState {
@@ -436,6 +460,7 @@ export class DesktopSpiderUiController {
 
   public syncPlayerState(patch: PlayerMediaSync): DesktopSpiderUiState {
     this.playerController.syncMedia(patch);
+    this.historyService?.sync(patch);
     this.recordMediaEvent(patch);
     if (patch.error) this.localError = { ...patch.error };
     return this.state;
@@ -475,8 +500,14 @@ export class DesktopSpiderUiController {
     return this.state;
   }
 
+  public clearHistoryResume(): DesktopSpiderUiState {
+    this.historyResume = null;
+    return this.state;
+  }
+
   public async stopPlayer(): Promise<DesktopSpiderUiState> {
     this.fallbackCoordinator.cancel("用户停止播放");
+    this.historyService?.stop();
     this.playerController.stop();
     this.sniffer?.cancelAll();
     await this.releasePlaybackProxy();
@@ -492,6 +523,7 @@ export class DesktopSpiderUiController {
     vipFlags: string[] = [],
     timeoutMs?: number,
     metadata?: Pick<DesktopPlaybackSession, "lineIndex" | "episodeIndex" | "lineName" | "episodeName">,
+    resumeMode?: HistoryResumeMode,
   ): Promise<DesktopSpiderUiState> {
     const request: PlaybackRequest = {
       flag,
@@ -500,6 +532,7 @@ export class DesktopSpiderUiController {
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
       ...(metadata ? { metadata: { ...metadata } } : {}),
     };
+    this.prepareHistoryForPlayback(request, resumeMode);
     this.currentPlaybackRequest = request;
     this.currentHealthKey = healthKeyFor(request);
     this.fallbackRequests.clear();
@@ -526,6 +559,7 @@ export class DesktopSpiderUiController {
       };
     }
     this.playbackHealthRegistry.tracker(this.currentHealthKey).beginAttempt();
+    this.historyService?.flush("stop");
     this.playerController.stop();
     this.parseState = initialParseState();
     this.playbackSession = null;
@@ -543,6 +577,7 @@ export class DesktopSpiderUiController {
           const playbackSessionId = randomUUID();
           const source = await this.preparePlayback(playback, playbackSessionId, request.flag);
           this.playerController.load(source);
+          if (this.pendingResumeSeconds > 0) this.playerController.seek(this.pendingResumeSeconds);
           const sourceState = this.playerController.state.source;
           if (!sourceState) throw new Error("Playback source was not loaded");
           this.playbackHealthRegistry.tracker(this.currentHealthKey).recordResolve(true);
@@ -570,6 +605,7 @@ export class DesktopSpiderUiController {
   }
 
   public async switchSource(): Promise<DesktopSpiderUiState> {
+    this.historyService?.appClose();
     this.sniffer?.cancelAll();
     await this.session.destroy();
     this.playerController.stop();
@@ -590,11 +626,13 @@ export class DesktopSpiderUiController {
     this.items = [];
     this.detailItem = null;
     this.clearPlaybackCatalog();
+    this.historyResume = null;
     return this.state;
   }
 
   public async close(): Promise<DesktopSpiderUiState> {
     this.activeOperation = null;
+    this.historyService?.appClose();
     this.sniffer?.cancelAll();
     this.parseResolver.close();
     try {
@@ -611,6 +649,7 @@ export class DesktopSpiderUiController {
   }
 
   public async releaseResources(): Promise<void> {
+    this.historyService?.appClose();
     this.playerController.stop();
     this.sniffer?.cancelAll();
     await this.releasePlaybackProxy();
@@ -675,6 +714,60 @@ export class DesktopSpiderUiController {
     this.session.retrySourceHealth?.();
     const nextState = await this.runPlayerAttempt(nextRequest, true);
     return nextState.player.source !== null && nextState.player.status !== "error";
+  }
+
+  private prepareHistoryForPlayback(
+    request: PlaybackRequest,
+    resumeMode?: HistoryResumeMode,
+  ): void {
+    const context = this.historyContextForRequest(request);
+    this.pendingResumeSeconds = 0;
+    this.historyResume = null;
+    if (!context || !this.historyService) return;
+    const candidate = request.metadata?.lineIndex !== null && request.metadata?.lineIndex !== undefined
+      && request.metadata.episodeIndex !== null && request.metadata.episodeIndex !== undefined
+      ? this.historyService.findResumeForEpisode(context, {
+        lineIndex: request.metadata.lineIndex,
+        episodeIndex: request.metadata.episodeIndex,
+        lineName: request.metadata.lineName ?? context.playbackLine ?? "当前线路",
+        episodeName: request.metadata.episodeName ?? context.episodeName ?? "当前集数",
+        episodeId: context.identity.episodeId ?? request.id,
+      })
+      : null;
+    this.historyService.begin(context);
+    if (resumeMode === "continue" && candidate) this.pendingResumeSeconds = candidate.position;
+    if (resumeMode === "beginning" && candidate) this.historyService.deleteProgress(candidate.identity);
+  }
+
+  private historyContextForRequest(request: PlaybackRequest) {
+    const vodId = optionalString(this.detailItem?.vod_id);
+    if (!vodId) return null;
+    return createHistoryContext({
+      source: this.session.view.source,
+      vodId,
+      episodeId: request.id,
+      title: optionalString(this.detailItem?.vod_name),
+      poster: optionalString(this.detailItem?.vod_pic),
+      episode: request.metadata?.episodeIndex === null || request.metadata?.episodeIndex === undefined
+        ? null
+        : request.metadata.episodeIndex + 1,
+      ...(request.metadata?.episodeName === undefined ? {} : { episodeName: request.metadata.episodeName }),
+      playbackLine: request.metadata?.lineName ?? request.flag,
+    });
+  }
+
+  private findDetailResume(): HistoryResumeCandidate | null {
+    if (!this.historyService || !this.detailItem || !this.playbackCatalog) return null;
+    const vodId = optionalString(this.detailItem.vod_id);
+    if (!vodId) return null;
+    const episodes: HistoryCatalogEpisode[] = this.playbackCatalog.lines.flatMap((line) => line.episodes.map((episode) => ({
+      lineIndex: line.index,
+      episodeIndex: episode.index,
+      lineName: line.name,
+      episodeName: episode.name,
+      episodeId: episode.id,
+    })));
+    return this.historyService.findResumeForDetail(this.session.view.source, vodId, episodes);
   }
 
   private recordMediaEvent(patch: PlaybackMediaSync): void {
@@ -1032,6 +1125,7 @@ export interface DesktopSpiderUiServerOptions {
   playbackFallbackMode?: PlaybackFallbackMode;
   playbackFallbackMaxAttempts?: number;
   playbackFallbackTimeoutMs?: number;
+  history?: HistoryProgressService;
 }
 
 export class DesktopSpiderUiServer {
@@ -1055,6 +1149,7 @@ export class DesktopSpiderUiServer {
   private readonly playbackFallbackMode: PlaybackFallbackMode | undefined;
   private readonly playbackFallbackMaxAttempts: number | undefined;
   private readonly playbackFallbackTimeoutMs: number | undefined;
+  private readonly historyService: HistoryProgressService | undefined;
   private server: Server | undefined;
   private boundUrl: string | undefined;
   private boundSession: DesktopSpiderSessionPort | undefined;
@@ -1090,6 +1185,7 @@ export class DesktopSpiderUiServer {
     this.playbackFallbackMode = options.playbackFallbackMode;
     this.playbackFallbackMaxAttempts = options.playbackFallbackMaxAttempts;
     this.playbackFallbackTimeoutMs = options.playbackFallbackTimeoutMs;
+    this.historyService = options.history;
   }
 
   public get url(): string {
@@ -1244,6 +1340,38 @@ export class DesktopSpiderUiServer {
         return;
       }
 
+      if (url.pathname.startsWith("/api/history/")) {
+        const historyService = this.historyService;
+        if (!historyService) throw new Error("HISTORY_UNAVAILABLE");
+        if (url.pathname === "/api/history/delete") {
+          historyService.delete(stringValue(body.identity, ""));
+          this.activeUi()?.clearHistoryResume();
+        } else if (url.pathname === "/api/history/delete-progress") {
+          historyService.deleteProgress(stringValue(body.identity, ""));
+          this.activeUi()?.clearHistoryResume();
+        } else if (url.pathname === "/api/history/clear") {
+          const identities = stringList(body.identities);
+          if (identities.length === 0) historyService.clear();
+          else historyService.deleteMany(identities);
+        } else if (url.pathname === "/api/history/pause") {
+          historyService.setPaused(booleanValue(body.paused, false));
+        } else if (url.pathname === "/api/history/open") {
+          const item = historyService.get(stringValue(body.identity, ""));
+          if (!item) throw new Error("HISTORY_NOT_FOUND");
+          const ui = this.activeUi();
+          if (!ui) throw new Error("HISTORY_SOURCE_SWITCH_REQUIRED");
+          if (sourceIdForHistory(ui.state.source) !== item.sourceId) {
+            throw new Error("HISTORY_SOURCE_SWITCH_REQUIRED");
+          }
+          await ui.detail(item.vodId);
+        } else {
+          writeJson(response, { error: "Not found" }, 404);
+          return;
+        }
+        this.writeCurrentState(response);
+        return;
+      }
+
       const ui = this.activeUi();
       if (!ui) throw new Error("Import confirmation is required before Spider actions");
       switch (url.pathname) {
@@ -1352,12 +1480,16 @@ export class DesktopSpiderUiServer {
               indexValue(body.lineIndex),
               indexValue(body.episodeIndex),
               stringList(body.vipFlags),
+              undefined,
+              historyResumeMode(body.resume),
             );
           } else {
             await ui.player(
               stringValue(body.flag, "default"),
               stringValue(body.id, ""),
               stringList(body.vipFlags),
+              undefined,
+              historyResumeMode(body.resume),
             );
           }
           break;
@@ -1417,6 +1549,7 @@ export class DesktopSpiderUiServer {
         ...(this.playbackFallbackMode ? { playbackFallbackMode: this.playbackFallbackMode } : {}),
         ...(this.playbackFallbackMaxAttempts ? { playbackFallbackMaxAttempts: this.playbackFallbackMaxAttempts } : {}),
         ...(this.playbackFallbackTimeoutMs ? { playbackFallbackTimeoutMs: this.playbackFallbackTimeoutMs } : {}),
+        ...(this.historyService ? { history: this.historyService } : {}),
       });
       this.importedUiBySession.set(session, this.importedUi);
     }
@@ -1893,6 +2026,10 @@ function stringValue(value: unknown, fallback: string): string {
 
 function booleanValue(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function historyResumeMode(value: unknown): HistoryResumeMode | undefined {
+  return value === "continue" || value === "beginning" ? value : undefined;
 }
 
 function optionalString(value: unknown): string | null {

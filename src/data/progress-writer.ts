@@ -1,7 +1,7 @@
 import { type DataLayerError } from "./errors.js";
 import { PlaybackProgressRepository, type PlaybackProgressRecord } from "./repositories.js";
 
-export type ProgressFlushReason = "debounce" | "interval" | "pause" | "stop" | "episode-change" | "app-close";
+export type ProgressFlushReason = "debounce" | "interval" | "pause" | "stop" | "episode-change" | "app-close" | "completion";
 
 export interface ProgressWriterScheduler {
   setTimeout(handler: () => void, delayMs: number): unknown;
@@ -12,6 +12,7 @@ export interface PlaybackProgressWriterOptions {
   debounceMs?: number;
   intervalMs?: number;
   scheduler?: ProgressWriterScheduler;
+  onFlush?: (record: PlaybackProgressRecord, reason: ProgressFlushReason) => void;
 }
 
 /**
@@ -23,6 +24,7 @@ export class PlaybackProgressWriter {
   private readonly debounceMs: number;
   private readonly intervalMs: number;
   private readonly scheduler: ProgressWriterScheduler;
+  private readonly onFlush: ((record: PlaybackProgressRecord, reason: ProgressFlushReason) => void) | undefined;
   private pending: PlaybackProgressRecord | null = null;
   private debounceHandle: unknown;
   private intervalHandle: unknown;
@@ -34,6 +36,7 @@ export class PlaybackProgressWriter {
   ) {
     this.debounceMs = Math.max(1, Math.floor(options.debounceMs ?? 750));
     this.intervalMs = Math.max(this.debounceMs, Math.floor(options.intervalMs ?? 5_000));
+    this.onFlush = options.onFlush;
     this.scheduler = options.scheduler ?? {
       setTimeout: (handler, delayMs) => setTimeout(handler, delayMs),
       clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
@@ -78,6 +81,12 @@ export class PlaybackProgressWriter {
     this.repository.upsert(pending);
     this.pending = null;
     this.lastFlushReasonValue = reason;
+    this.clearTimers();
+    this.onFlush?.({ ...pending }, reason);
+  }
+
+  public discard(): void {
+    this.pending = null;
     this.clearTimers();
   }
 

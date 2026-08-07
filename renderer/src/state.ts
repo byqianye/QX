@@ -2,6 +2,7 @@ import { toAppError } from "./error.js";
 import type { SubtitleTrack } from "../../src/subtitles.js";
 import type { PlaybackFallbackState, PlaybackHealthSnapshot } from "../../src/health/playback-health.js";
 import type { PlaybackMediaEvent } from "../../src/desktop/playback.js";
+import type { HistoryResumeCandidate, HistoryUiState } from "../../src/history/history-types.js";
 
 export type ImportStatus =
   | "empty"
@@ -21,7 +22,7 @@ export type SpiderStatus =
   | "destroyed";
 
 export type RendererThemeMode = "system" | "light" | "dark";
-export type RendererNavigation = "home" | "category" | "search" | "detail" | "settings";
+export type RendererNavigation = "home" | "category" | "search" | "detail" | "history" | "settings";
 export type PlayerHostMode = "embedded" | "detached";
 export const PLAYBACK_RESTORE_MAX_DRIFT_SECONDS = 2;
 
@@ -256,6 +257,8 @@ export interface RendererState {
   browse: BrowseState;
   detail: DetailState;
   playback: PlaybackState;
+  history: HistoryUiState;
+  historyResume: HistoryResumeCandidate | null;
   error: ErrorState;
 }
 
@@ -279,6 +282,8 @@ export interface ApiSpiderState {
   playbackSession?: RendererPlaybackSession | null;
   playbackHealth?: PlaybackHealthSnapshot;
   fallback?: PlaybackFallbackState;
+  history?: HistoryUiState;
+  historyResume?: HistoryResumeCandidate | null;
 }
 
 export interface RendererEnvelope {
@@ -332,6 +337,8 @@ export function createRendererState(): RendererState {
       health: emptyPlaybackHealth(),
       fallback: emptyPlaybackFallback(),
     },
+    history: { items: [], paused: false },
+    historyResume: null,
     error: { error: null },
   };
 }
@@ -386,6 +393,8 @@ export function applyRendererEnvelope(
       health: clonePlaybackHealth(state.playbackHealth ?? current.playback.health),
       fallback: clonePlaybackFallback(state.fallback ?? current.playback.fallback),
     },
+    history: cloneHistoryState(state.history ?? current.history),
+    historyResume: state.historyResume ? { ...state.historyResume } : null,
     error: { error: toAppError(stateError) },
   };
 }
@@ -489,6 +498,13 @@ function clonePlaybackFallback(state: PlaybackFallbackState): PlaybackFallbackSt
     current: state.current ? { ...state.current } : null,
     next: state.next ? { ...state.next } : null,
     tried: [...state.tried],
+  };
+}
+
+function cloneHistoryState(state: HistoryUiState): HistoryUiState {
+  return {
+    paused: state.paused,
+    items: state.items.map((item) => ({ ...item })),
   };
 }
 

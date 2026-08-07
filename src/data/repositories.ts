@@ -231,6 +231,22 @@ export class PlaybackProgressRepository {
     ).get(identity);
     return row ? progressFromRow(row) : null;
   }
+
+  public delete(identity: string): void {
+    try {
+      this.db.prepare("DELETE FROM playback_progress WHERE identity = ?").run(identity);
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public clear(): void {
+    try {
+      this.db.exec("DELETE FROM playback_progress");
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
 }
 
 export class FavoritesRepository {

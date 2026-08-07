@@ -466,7 +466,8 @@ describe("Vue renderer", () => {
     expect(wrapper.findAll('[data-od-id]').length).toBeGreaterThan(10);
     expect(wrapper.find('[data-play-url]').exists()).toBe(false);
     expect(wrapper.findAll('[data-diagnostic-step]').length).toBeGreaterThan(0);
-    expect(wrapper.findAll('[data-action$="-placeholder"]')).toHaveLength(5);
+    expect(wrapper.findAll('[data-action$="-placeholder"]')).toHaveLength(4);
+    expect(wrapper.get('[data-action="history"]')).toBeTruthy();
     expect(wrapper.get('[data-testid="detail-drawer"]').text()).toContain("导演");
     await wrapper.get('[data-action="settings"]').trigger("click");
     expect(wrapper.findAll('[data-testid="settings-section"]').length).toBeGreaterThanOrEqual(5);
@@ -507,6 +508,74 @@ describe("Vue renderer", () => {
     expect(unavailable.get('[data-testid="error-state"]').text()).toContain("当前线路暂时无法播放");
     expect(unavailable.find('[data-action="switch-line"]').exists()).toBe(true);
     unavailable.unmount();
+  });
+
+  it("renders the formal history page and confirms destructive actions", async () => {
+    const envelope = readyEnvelope();
+    envelope.state = {
+      ...envelope.state!,
+      history: {
+        paused: false,
+        items: [{
+          identity: "history-1",
+          sourceId: "source-1",
+          vodId: "vod-1",
+          seasonId: null,
+          episodeId: "episode-1",
+          title: "Fixture history",
+          poster: null,
+          episode: 1,
+          episodeName: "第一集",
+          playbackLine: "主线",
+          position: 42,
+          duration: 100,
+          updatedAt: Date.now(),
+          completed: false,
+          sourceDisplayName: "Fixture source",
+        }],
+      },
+    };
+    const state = applyRendererEnvelope(createRendererState(), envelope);
+    const wrapper = mount(SpiderView, {
+      props: { state, pending: null, lineIndex: 0, order: "forward", initialNavigation: "history" },
+    });
+
+    expect(wrapper.get('[data-testid="history-page"]')).toBeTruthy();
+    expect(wrapper.get('[data-testid="history-list"]').text()).toContain("Fixture history");
+    await wrapper.get('[data-action="history-delete-progress"]').trigger("click");
+    expect(wrapper.get('[data-testid="history-confirm"]')).toBeTruthy();
+    await wrapper.get('[data-action="history-confirm"]').trigger("click");
+    expect(wrapper.emitted("historyDeleteProgress")).toEqual([["history-1"]]);
+    await wrapper.get('[data-action="history-delete"]').trigger("click");
+    expect(wrapper.get('[data-testid="history-confirm"]')).toBeTruthy();
+    await wrapper.get('[data-action="history-confirm"]').trigger("click");
+    expect(wrapper.emitted("historyDelete")).toEqual([["history-1"]]);
+    wrapper.unmount();
+
+    const browseEnvelope = formalDesignEnvelope();
+    const history = envelope.state?.history;
+    if (!history) throw new Error("Expected history state");
+    browseEnvelope.state = {
+      ...browseEnvelope.state!,
+      history,
+      historyResume: {
+        ...history.items[0]!,
+        lineIndex: 0,
+        episodeIndex: 0,
+        lineName: "主线",
+        canResume: true,
+      },
+    };
+    const browseState = applyRendererEnvelope(createRendererState(), browseEnvelope);
+    const browse = mount(SpiderView, {
+      props: { state: browseState, pending: null, lineIndex: 0, order: "forward" },
+    });
+    expect(browse.get('[data-testid="history-resume-prompt"]')).toBeTruthy();
+    expect(browse.get('[data-action="history-resume"]')).toBeTruthy();
+    expect(browse.get('[data-action="history-beginning"]')).toBeTruthy();
+    expect(browse.get('[data-action="history-delete-progress"]')).toBeTruthy();
+    expect(browseState.playback.player.currentTime).toBe(0);
+    browse.unmount();
   });
 });
 

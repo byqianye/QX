@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import type {
   DesktopSpiderPlaybackState,
@@ -22,13 +25,23 @@ import {
   type SnifferViolation,
 } from "../src/electron/isolated-sniffer.js";
 import type { SpiderResponse } from "../src/spider/rpc.js";
+import { HistoryRepository, PlaybackProgressRepository, SettingsRepository } from "../src/data/repositories.js";
+import { SqliteDataLayer } from "../src/data/sqlite.js";
+import { HistoryProgressService } from "../src/history/history-progress.js";
 
 describe("desktop Spider UI", () => {
   const servers: DesktopSpiderUiServer[] = [];
+  const historyLayers: SqliteDataLayer[] = [];
+  const historyDirectories: string[] = [];
 
   afterEach(async () => {
     while (servers.length > 0) {
       await servers.pop()?.close();
+    }
+    while (historyLayers.length > 0) historyLayers.pop()?.close();
+    while (historyDirectories.length > 0) {
+      const directory = historyDirectories.pop();
+      if (directory) rmSync(directory, { recursive: true, force: true });
     }
   });
 
@@ -284,6 +297,34 @@ describe("desktop Spider UI", () => {
     await ui.close();
   });
 
+  it("creates history only after playback sync, shows resume after restart, and seeks only after choice", async () => {
+    const history = createHistoryService();
+    const first = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
+    const firstUi = new DesktopSpiderUiController({ session: first, history });
+    first.confirmImport();
+    await firstUi.open("playable", "fixture-endpoint");
+    await firstUi.detail("fixture:movie-1");
+    await firstUi.playEpisode(0, 0);
+    expect(history.uiState().items).toHaveLength(0);
+    firstUi.syncPlayerState({ status: "playing", currentTime: 44, duration: 100 });
+    await firstUi.stopPlayer();
+    expect(history.uiState().items[0]).toMatchObject({ episodeId: "direct-hls", position: 44 });
+    await firstUi.close();
+
+    const second = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
+    const secondUi = new DesktopSpiderUiController({ session: second, history });
+    second.confirmImport();
+    await secondUi.open("playable", "fixture-endpoint");
+    await secondUi.detail("fixture:movie-1");
+    expect(secondUi.state.historyResume).toMatchObject({ position: 44 });
+    await secondUi.playEpisode(0, 0);
+    expect(secondUi.state.player.currentTime).toBe(0);
+    await secondUi.stopPlayer();
+    await secondUi.playEpisode(0, 0, [], undefined, "continue");
+    expect(secondUi.state.player.currentTime).toBe(44);
+    await secondUi.close();
+  });
+
   it("preserves the selected episode and detail when playback fails", async () => {
     const fixture = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
     const ui = new DesktopSpiderUiController({
@@ -463,6 +504,19 @@ describe("desktop Spider UI", () => {
     expect(response.headers.get("content-type")).toContain("javascript");
     expect(await response.text()).toContain("Hls");
   });
+
+  function createHistoryService(): HistoryProgressService {
+    const directory = mkdtempSync(join(tmpdir(), "qx-desktop-history-"));
+    historyDirectories.push(directory);
+    const layer = SqliteDataLayer.create(join(directory, "qx-yingshi.db"));
+    historyLayers.push(layer);
+    return new HistoryProgressService({
+      db: layer,
+      history: new HistoryRepository(layer),
+      progress: new PlaybackProgressRepository(layer),
+      settings: new SettingsRepository(layer),
+    });
+  }
 });
 
 class FixtureSession implements DesktopSpiderSessionPort {

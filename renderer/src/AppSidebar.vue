@@ -9,10 +9,11 @@ defineProps<{
   canStart: boolean;
   pending: boolean;
   theme: "system" | "light" | "dark";
+  followUpdates: number;
 }>();
 
 const emit = defineEmits<{
-  navigate: [route: "home" | "category" | "history" | "favorites" | "settings"];
+  navigate: [route: "home" | "category" | "history" | "favorites" | "follow" | "settings"];
   open: [];
   switch: [];
   close: [];
@@ -83,6 +84,16 @@ const emit = defineEmits<{
         @click="emit('navigate', 'favorites')"
       >
         <Icon name="home" /><span>收藏</span>
+      </button>
+      <button
+        class="sidebar-nav-item"
+        :class="{ selected: activePage === 'follow' }"
+        type="button"
+        data-action="follow"
+        :disabled="pending"
+        @click="emit('navigate', 'follow')"
+      >
+        <Icon name="grid" /><span>追更</span><span v-if="followUpdates > 0" class="sidebar-badge">{{ followUpdates }}</span>
       </button>
       <button class="sidebar-nav-item sidebar-nav-placeholder" type="button" data-action="downloads-placeholder" disabled>
         <Icon name="grid" /><span>下载（占位）</span>

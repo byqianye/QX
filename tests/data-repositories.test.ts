@@ -149,6 +149,7 @@ describe("SQLite repositories", () => {
       sourceId: "source-a",
       vodId: "vod-a",
       title: "A",
+      poster: null,
       latestEpisodeId: "ep-2",
       latestEpisodeName: "第二集",
       watchedEpisodeId: "ep-1",

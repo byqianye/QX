@@ -199,6 +199,10 @@ async function restorePage(): Promise<void> {
   } else if (candidate.navigation === "favorites") {
     restoreScroll(candidate.scrollTop);
     return;
+  } else if (candidate.navigation === "follow") {
+    await request("restore-follow", () => api.post("/api/follow/refresh"));
+    restoreScroll(candidate.scrollTop);
+    return;
   } else {
     await request("restore-home", () => api.post("/api/home"));
   }
@@ -296,6 +300,13 @@ function play(line: number, episode: number, resumeMode?: HistoryResumeMode): vo
       @favorite-rename-group="post('favorite-rename-group', '/api/favorites/group/rename', { groupId: $event.groupId, name: $event.name })"
       @favorite-delete-group="post('favorite-delete-group', '/api/favorites/group/delete', { groupId: $event.groupId, disposition: $event.disposition })"
       @favorite-reorder-groups="post('favorite-reorder-groups', '/api/favorites/group/reorder', { groupIds: $event })"
+      @follow-refresh="post('follow-refresh', '/api/follow/refresh')"
+      @follow-open="post('follow-open', '/api/follow/open', { identity: $event })"
+      @follow-delete="post('follow-delete', '/api/follow/delete', { identity: $event })"
+      @follow-mark-watched="post('follow-mark-watched', '/api/follow/mark-watched', { identity: $event })"
+      @follow-mark-unwatched="post('follow-mark-unwatched', '/api/follow/mark-unwatched', { identity: $event })"
+      @follow-toggle="post('follow-toggle-detail', '/api/follow/toggle-detail')"
+      @follow-and-favorite="post('follow-and-favorite-detail', '/api/follow/favorite-detail')"
     />
   </div>
 </template>

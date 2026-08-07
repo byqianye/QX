@@ -57,6 +57,7 @@ export interface FollowRecord {
   sourceId: string;
   vodId: string;
   title: string;
+  poster: string | null;
   latestEpisodeId: string | null;
   latestEpisodeName: string | null;
   watchedEpisodeId: string | null;
@@ -193,6 +194,12 @@ export class HistoryRepository {
       "SELECT MAX(updated_at) AS updated_at FROM history WHERE source_id = ? AND vod_id = ?",
     ).get(sourceId, vodId) as { updated_at?: unknown } | undefined;
     return row?.updated_at === null || row?.updated_at === undefined ? null : numberValue(row.updated_at);
+  }
+
+  public listForContent(sourceId: string, vodId: string): readonly HistoryRecord[] {
+    return this.db.prepare(
+      "SELECT * FROM history WHERE source_id = ? AND vod_id = ? ORDER BY episode DESC, updated_at DESC",
+    ).all(sourceId, vodId).map(historyFromRow);
   }
 
   public delete(identity: string): void {
@@ -459,14 +466,15 @@ export class FollowRepository {
     try {
       this.db.prepare(`
         INSERT INTO follow_items(
-          identity, source_id, vod_id, title, latest_episode_id, latest_episode_name,
+          identity, source_id, vod_id, title, poster, latest_episode_id, latest_episode_name,
           watched_episode_id, watched_episode_name, known_episode_count,
           last_checked_at, last_updated_at, update_available, check_error, enabled
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(identity) DO UPDATE SET
           source_id = excluded.source_id,
           vod_id = excluded.vod_id,
           title = excluded.title,
+          poster = excluded.poster,
           latest_episode_id = excluded.latest_episode_id,
           latest_episode_name = excluded.latest_episode_name,
           watched_episode_id = excluded.watched_episode_id,
@@ -482,6 +490,7 @@ export class FollowRepository {
         record.sourceId,
         record.vodId,
         record.title,
+        record.poster,
         record.latestEpisodeId,
         record.latestEpisodeName,
         record.watchedEpisodeId,
@@ -500,6 +509,13 @@ export class FollowRepository {
 
   public list(): readonly FollowRecord[] {
     return this.db.prepare("SELECT * FROM follow_items ORDER BY last_updated_at DESC").all().map(followFromRow);
+  }
+
+  public get(identity: string): FollowRecord | null {
+    const row = this.db.prepare(
+      "SELECT * FROM follow_items WHERE identity = ?",
+    ).get(identity);
+    return row ? followFromRow(row) : null;
   }
 
   public delete(identity: string): void {
@@ -664,6 +680,7 @@ function followFromRow(row: Record<string, unknown>): FollowRecord {
     sourceId: stringValue(row.source_id),
     vodId: stringValue(row.vod_id),
     title: stringValue(row.title),
+    poster: nullableString(row.poster),
     latestEpisodeId: nullableString(row.latest_episode_id),
     latestEpisodeName: nullableString(row.latest_episode_name),
     watchedEpisodeId: nullableString(row.watched_episode_id),

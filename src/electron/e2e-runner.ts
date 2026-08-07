@@ -20,7 +20,9 @@ export interface PackagedE2eOptions {
   verifyPlaybackFallback?: boolean;
   verifyHistory?: boolean;
   verifyFavorites?: boolean;
+  verifyFollow?: boolean;
   expectedFavoriteId?: string;
+  expectedFollowIdentity?: string;
   verifyParserFallback?: boolean;
   verifySniffFallback?: boolean;
   verifyAggregateSearch?: boolean;
@@ -77,6 +79,8 @@ export interface PackagedE2eChecks {
   historyRestart?: boolean;
   favorites?: boolean;
   favoritesRestart?: boolean;
+  follow?: boolean;
+  followRestart?: boolean;
 }
 
 export interface PackagedE2eResult {
@@ -85,6 +89,7 @@ export interface PackagedE2eResult {
   searchVodId: string | null;
   detailVodId: string | null;
   favoriteId: string | null;
+  followIdentity: string | null;
   sidecarPid: number | null;
   error?: string;
 }
@@ -94,6 +99,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
   let searchVodId: string | null = null;
   let detailVodId: string | null = null;
   let favoriteId: string | null = null;
+  let followIdentity: string | null = null;
   let sidecarPid: number | null = null;
 
   try {
@@ -279,6 +285,45 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
           && historyItems.some((item) => item.position === 44 && item.duration === 100)
           && resumeDetail.state?.historyResume?.position === 44
           && resumed.state?.player?.currentTime === 44;
+      }
+      if (options.verifyFollow) {
+        const existingFollowIdentity = playbackDetail.state?.followDetail?.identity;
+        if (options.expectedFollowIdentity !== undefined) {
+          checks.followRestart = existingFollowIdentity === options.expectedFollowIdentity;
+        }
+        const followed = typeof existingFollowIdentity === "string"
+          ? playbackDetail
+          : await post(options.baseUrl, "/api/follow/toggle-detail");
+        followIdentity = stringField(followed.state?.followDetail?.identity);
+        const refreshed = typeof followIdentity === "string"
+          ? await post(options.baseUrl, "/api/follow/refresh")
+          : null;
+        const refreshedItem = followItem(refreshed?.state ?? null, followIdentity);
+        const markedWatched = typeof followIdentity === "string"
+          ? await post(options.baseUrl, "/api/follow/mark-watched", { identity: followIdentity })
+          : null;
+        const watchedItem = followItem(markedWatched?.state ?? null, followIdentity);
+        const markedUnwatched = typeof followIdentity === "string"
+          ? await post(options.baseUrl, "/api/follow/mark-unwatched", { identity: followIdentity })
+          : null;
+        const unwatchedItem = followItem(markedUnwatched?.state ?? null, followIdentity);
+        let followHtml = "";
+        if (options.readWindowHtml) {
+          await post(options.baseUrl, "/api/view-state", { navigation: "follow" });
+          followHtml = await readPage(options);
+          await post(options.baseUrl, "/api/view-state", {
+            navigation: "detail",
+            recentDetailId: "fixture:movie-1",
+          });
+          await readPage(options);
+        }
+        checks.follow = typeof followIdentity === "string"
+          && typeof refreshedItem?.lastCheckedAt === "number"
+          && refreshedItem?.checkError === null
+          && watchedItem?.updateAvailable === false
+          && unwatchedItem?.updateAvailable === true
+          && markedUnwatched?.state?.follow?.updateCount === 1
+          && (!options.readWindowHtml || followHtml.includes('data-testid="follow-page"'));
       }
       const detached = await post(options.baseUrl, "/api/player/detach");
       const detachedHtml = await readPage(options);
@@ -479,6 +524,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       searchVodId,
       detailVodId,
       favoriteId,
+      followIdentity,
       sidecarPid,
     };
   } catch (error) {
@@ -488,6 +534,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       searchVodId,
       detailVodId,
       favoriteId,
+      followIdentity,
       sidecarPid,
       error: errorMessage(error),
     };
@@ -563,6 +610,12 @@ function emptyChecks(): PackagedE2eChecks {
   };
 }
 
+function followItem(state: UiState | null, identity: string | null): Record<string, unknown> | null {
+  if (!state || !identity || !state.follow) return null;
+  const item = state.follow.items.find((candidate) => candidate.identity === identity);
+  return isRecord(item) ? item : null;
+}
+
 interface UiEnvelope {
   import: ImportState;
   state: UiState | null;
@@ -623,6 +676,12 @@ interface UiState {
     items: readonly Record<string, unknown>[];
     groups: readonly { groupId: string; name: string; count: number }[];
   };
+  follow?: {
+    items: readonly Record<string, unknown>[];
+    checking: boolean;
+    updateCount: number;
+  };
+  followDetail?: { identity?: string } | null;
 }
 
 function playerSourceUrl(state: UiState | null): string | null {

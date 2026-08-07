@@ -9,7 +9,7 @@ import {
   type DatabaseErrorCode,
 } from "./errors.js";
 
-export const SUPPORTED_SCHEMA_VERSION = 2;
+export const SUPPORTED_SCHEMA_VERSION = 3;
 
 interface Migration {
   version: number;
@@ -172,6 +172,13 @@ const migrations: readonly Migration[] = [
       INSERT OR IGNORE INTO favorite_groups(group_id, name, sort_order, created_at, updated_at)
         VALUES ('default', '默认收藏', 0, 0, 0);
       UPDATE favorites SET group_id = 'default' WHERE group_id IS NULL;
+    `,
+  },
+  {
+    version: 3,
+    name: "follow-poster",
+    sql: `
+      ALTER TABLE follow_items ADD COLUMN poster TEXT;
     `,
   },
 ];

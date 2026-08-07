@@ -675,6 +675,98 @@ describe("Vue renderer", () => {
     expect(browse.emitted("favoriteToggle")).toHaveLength(1);
     browse.unmount();
   });
+
+  it("renders follow updates, source failures, badges, and detail follow actions", async () => {
+    const envelope = readyEnvelope();
+    envelope.state = {
+      ...envelope.state!,
+      page: "detail",
+      detail: { vod_id: "vod-1", vod_name: "Fixture follow" },
+      follow: {
+        checking: false,
+        updateCount: 1,
+        items: [
+          {
+            identity: "follow-1",
+            sourceId: "source-a",
+            vodId: "vod-1",
+            title: "Fixture follow",
+            poster: null,
+            latestEpisodeId: "episode-2",
+            latestEpisodeName: "Episode 2",
+            watchedEpisodeId: "episode-1",
+            watchedEpisodeName: "Episode 1",
+            knownEpisodeCount: 2,
+            lastCheckedAt: 2,
+            lastUpdatedAt: 2,
+            updateAvailable: true,
+            checkError: null,
+            enabled: true,
+            sourceAvailable: true,
+            status: "updated",
+          },
+          {
+            identity: "follow-2",
+            sourceId: "source-b",
+            vodId: "vod-2",
+            title: "Unavailable follow",
+            poster: null,
+            latestEpisodeId: "episode-1",
+            latestEpisodeName: "Episode 1",
+            watchedEpisodeId: "episode-1",
+            watchedEpisodeName: "Episode 1",
+            knownEpisodeCount: 1,
+            lastCheckedAt: null,
+            lastUpdatedAt: 1,
+            updateAvailable: false,
+            checkError: "SOURCE_CIRCUIT_OPEN",
+            enabled: true,
+            sourceAvailable: false,
+            status: "error",
+          },
+        ],
+      },
+      followDetail: null,
+    };
+    const state = applyRendererEnvelope(createRendererState(), envelope);
+    const follow = mount(SpiderView, {
+      props: { state, pending: null, lineIndex: 0, order: "forward", initialNavigation: "follow" },
+    });
+
+    expect(follow.get('[data-testid="follow-page"]')).toBeTruthy();
+    expect(follow.get('[data-testid="follow-list"]').text()).toContain("Fixture follow");
+    expect(follow.get('[data-testid="follow-list"]').text()).toContain("SOURCE_CIRCUIT_OPEN");
+    expect(follow.get('[data-action="follow-refresh"]')).toBeTruthy();
+    expect(follow.get('[data-action="follow-mark-watched"]')).toBeTruthy();
+    expect(follow.get('[data-action="follow-delete"]')).toBeTruthy();
+    await follow.get('[data-action="follow-refresh"]').trigger("click");
+    expect(follow.emitted("followRefresh")).toHaveLength(1);
+    await follow.get('[data-action="follow-open"]').trigger("click");
+    expect(follow.emitted("followOpen")).toEqual([["follow-1"]]);
+    await follow.get('[data-action="follow-mark-watched"]').trigger("click");
+    expect(follow.emitted("followMarkWatched")).toEqual([["follow-1"]]);
+    await follow.get('[data-action="follow-delete"]').trigger("click");
+    await follow.get('[data-action="follow-confirm"]').trigger("click");
+    expect(follow.emitted("followDelete")).toEqual([["follow-1"]]);
+    follow.unmount();
+
+    const detailState = applyRendererEnvelope(createRendererState(), {
+      ...envelope,
+      state: {
+        ...envelope.state!,
+        follow: { items: [], checking: false, updateCount: 0 },
+        followDetail: null,
+      },
+    });
+    const detail = mount(SpiderView, {
+      props: { state: detailState, pending: null, lineIndex: 0, order: "forward" },
+    });
+    await detail.get('[data-action="follow-toggle-detail"]').trigger("click");
+    expect(detail.emitted("followToggle")).toHaveLength(1);
+    await detail.get('[data-action="follow-and-favorite-detail"]').trigger("click");
+    expect(detail.emitted("followAndFavorite")).toHaveLength(1);
+    detail.unmount();
+  });
 });
 
 function readyEnvelope(): RendererEnvelope {

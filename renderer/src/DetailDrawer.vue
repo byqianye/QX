@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import Icon from "./Icon.vue";
 import { displaySource } from "./safe-display.js";
 import type { FavoriteGroupItem, FavoriteItem } from "../../src/favorites/favorites-types.js";
+import type { FollowItem } from "../../src/follow/follow-types.js";
 
 const props = defineProps<{
   detail: Record<string, unknown>;
@@ -12,6 +13,8 @@ const props = defineProps<{
   favorite?: FavoriteItem | null;
   favoriteGroups?: readonly FavoriteGroupItem[];
   favoritePending?: boolean;
+  follow?: FollowItem | null;
+  followPending?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -19,6 +22,8 @@ const emit = defineEmits<{
   play: [];
   favoriteToggle: [];
   favoriteMove: [groupId: string];
+  followToggle: [];
+  followAndFavorite: [];
 }>();
 const closeButton = ref<HTMLButtonElement | null>(null);
 let previousFocus: HTMLElement | null = null;
@@ -88,6 +93,23 @@ const detailFields = computed(() => [
             <option v-for="group in favoriteGroups ?? []" :key="group.groupId" :value="group.groupId">{{ group.name }}</option>
           </select>
         </label>
+      </div>
+      <div class="follow-detail-actions" data-testid="follow-detail-actions">
+        <button
+          type="button"
+          class="button-secondary"
+          data-action="follow-toggle-detail"
+          :disabled="followPending"
+          @click="emit('followToggle')"
+        >{{ follow ? "已在追更" : "加入追更" }}</button>
+        <button
+          v-if="!favorite && !follow"
+          type="button"
+          class="button-secondary"
+          data-action="follow-and-favorite-detail"
+          :disabled="followPending || favoritePending"
+          @click="emit('followAndFavorite')"
+        >收藏并追更</button>
       </div>
       <button
         data-testid="play-button"

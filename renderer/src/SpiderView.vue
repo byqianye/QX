@@ -9,6 +9,7 @@ import EmbeddedPlayer from "./EmbeddedPlayer.vue";
 import ErrorState from "./ErrorState.vue";
 import FilterPanel from "./FilterPanel.vue";
 import FavoritesView from "./FavoritesView.vue";
+import FollowView from "./FollowView.vue";
 import HistoryView from "./HistoryView.vue";
 import MediaGrid from "./MediaGrid.vue";
 import PlaybackSelector from "./PlaybackSelector.vue";
@@ -74,12 +75,20 @@ const emit = defineEmits<{
   favoriteRenameGroup: [payload: { groupId: string; name: string }];
   favoriteDeleteGroup: [payload: { groupId: string; disposition?: "default" | "delete" }];
   favoriteReorderGroups: [groupIds: string[]];
+  followRefresh: [];
+  followOpen: [identity: string];
+  followDelete: [identity: string];
+  followMarkWatched: [identity: string];
+  followMarkUnwatched: [identity: string];
+  followToggle: [];
+  followAndFavorite: [];
 }>();
 
-const view = ref<"browse" | "history" | "favorites" | "settings">(props.initialNavigation === "settings"
+const view = ref<"browse" | "history" | "favorites" | "follow" | "settings">(props.initialNavigation === "settings"
   ? "settings"
   : props.initialNavigation === "history" ? "history"
-    : props.initialNavigation === "favorites" ? "favorites" : "browse");
+    : props.initialNavigation === "favorites" ? "favorites"
+      : props.initialNavigation === "follow" ? "follow" : "browse");
 const theme = ref<"system" | "light" | "dark">(props.initialTheme ?? "light");
 const systemTheme = ref<"light" | "dark">("light");
 const debugOpen = ref(false);
@@ -127,7 +136,7 @@ const selectedLine = computed(() => {
 
 const canStart = computed(() => props.state.spider.status === "idle"
   || (props.state.spider.status === "error" && !props.state.spider.sidecarRunning));
-const activePage = computed(() => view.value === "settings" || view.value === "history" || view.value === "favorites" ? view.value : props.state.browse.page);
+const activePage = computed(() => view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow" ? view.value : props.state.browse.page);
 const retryable = computed(() => props.state.error.error?.retryable === true);
 const hasPlayback = computed(() => props.state.detail.playbackCatalog !== null || props.state.playback.player.source !== null);
 const playerDetached = computed(() => props.state.playback.session?.host === "detached");
@@ -157,7 +166,7 @@ watch(
 );
 
 watch(() => props.state.browse.page, (page) => {
-  if ((view.value === "history" || view.value === "favorites") && page === "detail") {
+  if ((view.value === "history" || view.value === "favorites" || view.value === "follow") && page === "detail") {
     view.value = "browse";
     persistNavigation("detail");
   }
@@ -166,13 +175,13 @@ watch(() => props.state.browse.page, (page) => {
 watch(theme, () => {
   emit("viewState", {
     theme: theme.value,
-    navigation: view.value === "settings" || view.value === "history" || view.value === "favorites"
+    navigation: view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow"
       ? view.value
       : navigationFromPage(props.state.browse.page),
   });
 });
 
-function navigate(route: "home" | "category" | "history" | "favorites" | "settings"): void {
+function navigate(route: "home" | "category" | "history" | "favorites" | "follow" | "settings"): void {
   if (route === "settings") {
     view.value = "settings";
     persistNavigation("settings");
@@ -186,6 +195,12 @@ function navigate(route: "home" | "category" | "history" | "favorites" | "settin
   if (route === "favorites") {
     view.value = "favorites";
     persistNavigation("favorites");
+    return;
+  }
+  if (route === "follow") {
+    view.value = "follow";
+    persistNavigation("follow");
+    emit("followRefresh");
     return;
   }
   view.value = "browse";
@@ -286,6 +301,7 @@ function navigationFromPage(page: string): RendererNavigation {
       :can-start="canStart"
       :pending="props.pending !== null"
       :theme="theme"
+      :follow-updates="props.state.follow.updateCount"
       @navigate="navigate"
       @open="emit('open')"
       @switch="emit('switch')"
@@ -305,8 +321,8 @@ function navigationFromPage(page: string): RendererNavigation {
       <div class="workspace-content">
         <header class="workspace-header">
           <div>
-            <span class="section-kicker">{{ view === "settings" ? "工作区设置" : view === "history" ? "播放历史" : view === "favorites" ? "收藏管理" : "媒体工作台" }}</span>
-            <h1>{{ view === "settings" ? "设置" : view === "history" ? "History" : view === "favorites" ? "Favorites" : (props.state.spider.api ? displaySource(props.state.spider.api) : "QX 影视") }}</h1>
+            <span class="section-kicker">{{ view === "settings" ? "工作区设置" : view === "history" ? "播放历史" : view === "favorites" ? "收藏管理" : view === "follow" ? "追更状态" : "媒体工作台" }}</span>
+            <h1>{{ view === "settings" ? "设置" : view === "history" ? "History" : view === "favorites" ? "Favorites" : view === "follow" ? "追更" : (props.state.spider.api ? displaySource(props.state.spider.api) : "QX 影视") }}</h1>
             <p data-testid="status" class="workspace-status" :class="{ loading: props.state.browse.loading || props.pending !== null }">
               {{ statusLabels[props.state.spider.status] }}{{ props.state.browse.loading || props.pending !== null ? " · 加载中" : "" }}
             </p>
@@ -379,6 +395,16 @@ function navigationFromPage(page: string): RendererNavigation {
           @reorder-groups="emit('favoriteReorderGroups', $event)"
           @search="submitSearch"
         />
+        <FollowView
+          v-else-if="view === 'follow'"
+          :state="props.state.follow"
+          :pending="props.pending"
+          @refresh="emit('followRefresh')"
+          @open="emit('followOpen', $event)"
+          @delete="emit('followDelete', $event)"
+          @mark-watched="emit('followMarkWatched', $event)"
+          @mark-unwatched="emit('followMarkUnwatched', $event)"
+        />
         <HistoryView
           v-else-if="view === 'history'"
           :state="props.state.history"
@@ -422,10 +448,14 @@ function navigationFromPage(page: string): RendererNavigation {
             :favorite="props.state.favoriteDetail"
             :favorite-groups="props.state.favorites.groups"
             :favorite-pending="props.pending !== null"
+            :follow="props.state.followDetail"
+            :follow-pending="props.pending !== null"
             @close="emit('home')"
             @play="playFirstEpisode"
             @favorite-toggle="emit('favoriteToggle')"
             @favorite-move="emit('favoriteMoveDetail', $event)"
+            @follow-toggle="emit('followToggle')"
+            @follow-and-favorite="emit('followAndFavorite')"
           />
 
           <section v-if="hasPlayback" class="playback-stage" data-testid="playback-stage">

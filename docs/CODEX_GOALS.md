@@ -814,6 +814,62 @@ npm run electron:e2e:package
 checkpoint: complete G52 favorites
 ```
 
+## G53（已完成）
+
+### 目标
+
+建立基于来源/内容身份的追更闭环：SQLite 持久化追更状态、复用现有 detail 能力检查更新、同步播放历史中的已看集数，并在 Open Design 桌面壳中提供应用内更新提示。
+
+### 状态
+
+已完成。追更服务、schema v3 poster 迁移、来源串行/全局并发限制、历史同步、Follow 页面、详情页加入追更/收藏并追更、应用内 badge、重启持久化和 packaged E2E 均已实现；不包含 Windows Toast、后台 Service 或云推送。
+
+### 依赖
+
+- G52 SQLite 收藏与来源/内容身份边界
+- G51 播放历史与进度同步
+- G41 Source Health/circuit-breaker 合同
+- G26 Open Design 桌面 UI 与 G52 数据特性扩展
+
+### 范围
+
+- `src/follow/`：FollowService、稳定身份、详情 episode 提取、更新判定、并发检查、历史已看同步和脱敏状态。
+- `src/data/`：`follow_items.poster` 的 schema v3 additive migration 与 repository 映射。
+- `src/desktop/spider-ui.ts`、`src/electron/main.ts`：Follow API、当前来源约束、现有 detail/health 路径和服务生命周期。
+- `renderer/src/FollowView.vue`、Sidebar、DetailDrawer、state/persistence 接线。
+- G53 专项、Renderer、desktop API、Electron E2E、packaged privacy audit 与设计文档。
+
+### 验收标准
+
+- 加入/取消追更、收藏并追更、重启恢复和 source/vod 去重通过；普通收藏不会自动成为追更。
+- 稳定 episode ID 优先、名称其次，ordered episode list 作为 episode 来源；不得只比较总集数。
+- 用户打开追更页或手动刷新才触发检查；单来源失败记录错误且不阻塞其他来源；并发受限并复用现有 detail/source health 能力。
+- 已看状态从 G51 history 同步；标记已看/未看不删除原始 history；Follow 页面显示更新、已追平、检查中、来源失败、最后检查、最新集和已看集，并支持更新优先/最近/标题排序。
+- 仅提供应用内 badge；不实现 Windows Toast、后台服务或云推送。
+- typecheck、定向测试、全量测试、Renderer/Electron build 和 packaged first/restart E2E 通过，且无遗留 QX/Electron/Java 进程。
+
+### 验证命令
+
+```powershell
+npm run typecheck
+npx vitest run tests/follow.test.ts tests/vue-renderer.test.ts tests/electron-e2e.test.ts
+npm test
+npm run renderer:build
+npm run electron:build
+npm run electron:e2e:package
+```
+
+### 文档
+
+- `docs/spike-53-follow-updates.md`
+- `docs/design/open-design/data-features/follow-page-spec.md`
+
+### checkpoint
+
+```text
+checkpoint: complete G53 follow updates
+```
+
 DEX-1 ~ DEX-5（实验支线）
 
 - DEX-1：Android Emulator 探针

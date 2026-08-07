@@ -4,6 +4,7 @@ import type { PlaybackFallbackState, PlaybackHealthSnapshot } from "../../src/he
 import type { PlaybackMediaEvent } from "../../src/desktop/playback.js";
 import type { HistoryResumeCandidate, HistoryUiState } from "../../src/history/history-types.js";
 import type { FavoriteItem, FavoritesUiState } from "../../src/favorites/favorites-types.js";
+import type { FollowItem, FollowUiState } from "../../src/follow/follow-types.js";
 
 export type ImportStatus =
   | "empty"
@@ -23,7 +24,7 @@ export type SpiderStatus =
   | "destroyed";
 
 export type RendererThemeMode = "system" | "light" | "dark";
-export type RendererNavigation = "home" | "category" | "search" | "detail" | "history" | "favorites" | "settings";
+export type RendererNavigation = "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings";
 export type PlayerHostMode = "embedded" | "detached";
 export const PLAYBACK_RESTORE_MAX_DRIFT_SECONDS = 2;
 
@@ -262,6 +263,8 @@ export interface RendererState {
   historyResume: HistoryResumeCandidate | null;
   favorites: FavoritesUiState;
   favoriteDetail: FavoriteItem | null;
+  follow: FollowUiState;
+  followDetail: FollowItem | null;
   error: ErrorState;
 }
 
@@ -289,6 +292,8 @@ export interface ApiSpiderState {
   historyResume?: HistoryResumeCandidate | null;
   favorites?: FavoritesUiState;
   favoriteDetail?: FavoriteItem | null;
+  follow?: FollowUiState;
+  followDetail?: FollowItem | null;
 }
 
 export interface RendererEnvelope {
@@ -346,6 +351,8 @@ export function createRendererState(): RendererState {
     historyResume: null,
     favorites: { items: [], groups: [], defaultGroupId: "default" },
     favoriteDetail: null,
+    follow: { items: [], checking: false, updateCount: 0 },
+    followDetail: null,
     error: { error: null },
   };
 }
@@ -404,6 +411,8 @@ export function applyRendererEnvelope(
     historyResume: state.historyResume ? { ...state.historyResume } : null,
     favorites: cloneFavoritesState(state.favorites ?? current.favorites),
     favoriteDetail: state.favoriteDetail ? { ...state.favoriteDetail } : null,
+    follow: cloneFollowState(state.follow ?? current.follow),
+    followDetail: state.followDetail ? { ...state.followDetail } : null,
     error: { error: toAppError(stateError) },
   };
 }
@@ -521,6 +530,14 @@ function cloneFavoritesState(state: FavoritesUiState): FavoritesUiState {
   return {
     defaultGroupId: state.defaultGroupId,
     groups: state.groups.map((group) => ({ ...group })),
+    items: state.items.map((item) => ({ ...item })),
+  };
+}
+
+function cloneFollowState(state: FollowUiState): FollowUiState {
+  return {
+    checking: state.checking,
+    updateCount: state.updateCount,
     items: state.items.map((item) => ({ ...item })),
   };
 }

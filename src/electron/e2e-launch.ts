@@ -126,9 +126,11 @@ try {
   const firstResultValue = readResult(firstResult);
   assertRun("first packaged E2E", first, firstResultValue);
   const firstFavoriteId = stringValue(firstResultValue.favoriteId, "Packaged E2E did not return a favorite identity");
+  const firstFollowIdentity = stringValue(firstResultValue.followIdentity, "Packaged E2E did not return a follow identity");
   assertPersistedDesktopState(userData, "douban");
   assertPersistedHistoryPrivacy(userData);
   assertPersistedFavoritesPrivacy(userData);
+  assertPersistedFollowPrivacy(userData);
 
   const second = await runPackagedExecutable(executable, {
     QX_ELECTRON_E2E: "1",
@@ -140,6 +142,7 @@ try {
     QX_E2E_USER_DATA: userData,
     QX_E2E_PLAYBACK_CONFIG: playbackConfig,
     QX_E2E_EXPECTED_FAVORITE_ID: firstFavoriteId,
+    QX_E2E_EXPECTED_FOLLOW_ID: firstFollowIdentity,
     QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,
     QX_PLAYBACK_FALLBACK_MODE: "auto",
     QX_E2E_HLS_MASTER_URL: mediaFixture.hlsMasterUrl,
@@ -155,6 +158,7 @@ try {
   assertPersistedDesktopState(userData, "douban");
   assertPersistedHistoryPrivacy(userData);
   assertPersistedFavoritesPrivacy(userData);
+  assertPersistedFollowPrivacy(userData);
 
   console.log(JSON.stringify({
     probe: "packaged-electron-e2e",
@@ -256,6 +260,26 @@ function assertPersistedFavoritesPrivacy(userDataPath: string): void {
     const serialized = JSON.stringify(rows);
     if (/token|cookie|authorization|bearer|__qx_playback|m3u8|\.mp4|\.mkv|\.webm|\.mpd|\/(?:live|stream|playback|playlist|session|proxy)(?:\/|["?])/i.test(serialized)) {
       throw new Error("Packaged E2E favorites privacy contract failed");
+    }
+  } finally {
+    database.close();
+  }
+}
+
+function assertPersistedFollowPrivacy(userDataPath: string): void {
+  const database = new DatabaseSync(join(userDataPath, "qx-yingshi.db"), { readOnly: true });
+  try {
+    const rows = database.prepare(`
+      SELECT identity, source_id, vod_id, title, poster, latest_episode_id,
+             latest_episode_name, watched_episode_id, watched_episode_name,
+             known_episode_count, last_checked_at, last_updated_at,
+             update_available, check_error, enabled
+      FROM follow_items
+    `).all();
+    if (rows.length === 0) throw new Error("Packaged E2E follow row was not persisted");
+    const serialized = JSON.stringify(rows);
+    if (/token|cookie|authorization|bearer|__qx_playback|m3u8|\.mp4|\.mkv|\.webm|\.mpd|\/(?:live|stream|playback|playlist|session|proxy)(?:\/|["?])/i.test(serialized)) {
+      throw new Error("Packaged E2E follow privacy contract failed");
     }
   } finally {
     database.close();

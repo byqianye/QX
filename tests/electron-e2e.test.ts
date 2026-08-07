@@ -18,9 +18,10 @@ import type {
 import type { SpiderResponse } from "../src/spider/rpc.js";
 import type { SubtitleTrack } from "../src/subtitles.js";
 import { runPackagedE2e } from "../src/electron/e2e-runner.js";
-import { FavoritesRepository, HistoryRepository, PlaybackProgressRepository, SettingsRepository } from "../src/data/repositories.js";
+import { FavoritesRepository, FollowRepository, HistoryRepository, PlaybackProgressRepository, SettingsRepository } from "../src/data/repositories.js";
 import { SqliteDataLayer } from "../src/data/sqlite.js";
 import { FavoritesService } from "../src/favorites/favorites-service.js";
+import { FollowService } from "../src/follow/follow-service.js";
 import { HistoryProgressService } from "../src/history/history-progress.js";
 
 describe("packaged Electron E2E flow", () => {
@@ -116,6 +117,11 @@ describe("packaged Electron E2E flow", () => {
         favorites: new FavoritesRepository(dataServices.layer),
         history: new HistoryRepository(dataServices.layer),
       }),
+      follow: new FollowService({
+        db: dataServices.layer,
+        follow: new FollowRepository(dataServices.layer),
+        history: new HistoryRepository(dataServices.layer),
+      }),
       playbackProxyOrigins: ["http://127.0.0.1:43123"],
       parserCandidates: [
         {
@@ -167,6 +173,7 @@ describe("packaged Electron E2E flow", () => {
       verifyPlaybackFallback: true,
       verifyHistory: true,
       verifyFavorites: true,
+      verifyFollow: true,
       verifyAggregateSearch: true,
       verifyFakeMpv: true,
       fakeMpv: async () => true,
@@ -195,6 +202,7 @@ describe("packaged Electron E2E flow", () => {
         history: true,
         historyRestart: true,
         favorites: true,
+        follow: true,
         fakeMpvExit: true,
         proxyCleanup: true,
         snifferCleanup: true,

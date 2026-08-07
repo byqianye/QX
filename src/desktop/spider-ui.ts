@@ -39,6 +39,7 @@ import {
 } from "./state-persistence.js";
 import type { SpiderResponse } from "../spider/rpc.js";
 import type { SourceCapabilities } from "../source/media-source.js";
+import { normalizeVodDetails, unwrapSpiderResponse } from "../source/normalizers.js";
 import type { AggregateSearchSnapshot } from "../search/aggregate-search.js";
 import {
   ParseChainError,
@@ -80,6 +81,16 @@ import {
   type FavoritesUiState,
 } from "../favorites/favorites-types.js";
 import { FavoritesService } from "../favorites/favorites-service.js";
+import {
+  EMPTY_FOLLOW_UI_STATE,
+  type FollowContentInput,
+  type FollowItem,
+  type FollowUiState,
+} from "../follow/follow-types.js";
+import {
+  followContentFromDetail,
+  FollowService,
+} from "../follow/follow-service.js";
 
 const require = createRequire(import.meta.url);
 
@@ -96,6 +107,15 @@ class SubtitlePreparationError extends Error {
     super(message);
     this.name = "SubtitlePreparationError";
     this.code = code;
+  }
+}
+
+class FollowSourceUnavailableError extends Error {
+  public readonly code = "FOLLOW_SOURCE_UNAVAILABLE";
+
+  public constructor() {
+    super("The source for this follow item is unavailable");
+    this.name = "FollowSourceUnavailableError";
   }
 }
 
@@ -190,6 +210,8 @@ export interface DesktopSpiderUiState {
   historyResume: HistoryResumeCandidate | null;
   favorites: FavoritesUiState;
   favoriteDetail: FavoriteItem | null;
+  follow: FollowUiState;
+  followDetail: FollowItem | null;
 }
 
 export interface DesktopSpiderUiOptions {
@@ -206,6 +228,7 @@ export interface DesktopSpiderUiOptions {
   playbackFallbackTimeoutMs?: number;
   history?: HistoryProgressService;
   favorites?: FavoritesService;
+  follow?: FollowService;
 }
 
 export class DesktopSpiderUiController {
@@ -240,6 +263,7 @@ export class DesktopSpiderUiController {
   private pendingFallback: Promise<void> | null = null;
   private readonly historyService: HistoryProgressService | undefined;
   private readonly favoritesService: FavoritesService | undefined;
+  private readonly followService: FollowService | undefined;
   private historyResume: HistoryResumeCandidate | null = null;
   private pendingResumeSeconds = 0;
 
@@ -248,6 +272,7 @@ export class DesktopSpiderUiController {
     this.createSession = options.createSession;
     this.historyService = options.history;
     this.favoritesService = options.favorites;
+    this.followService = options.follow;
     this.parserCandidates = options.parserCandidates?.map(cloneParserCandidate) ?? [];
     this.sniffer = options.sniffer;
     this.parserAllowedOrigins = options.parserAllowedOrigins ?? [];
@@ -303,6 +328,8 @@ export class DesktopSpiderUiController {
       historyResume: this.historyResume ? { ...this.historyResume } : null,
       favorites: this.favoritesService?.uiState(sourceIdForHistory(view.source)) ?? EMPTY_FAVORITES_UI_STATE,
       favoriteDetail: this.favoriteForDetail(),
+      follow: this.followService?.uiState(sourceIdForHistory(view.source)) ?? EMPTY_FOLLOW_UI_STATE,
+      followDetail: this.followForDetail(),
     };
   }
 
@@ -327,6 +354,66 @@ export class DesktopSpiderUiController {
     return this.state;
   }
 
+  public toggleFollow(): DesktopSpiderUiState {
+    const service = this.followService;
+    const input = this.followInputForDetail();
+    if (!service || !input) {
+      this.localError = { code: "FOLLOW_DETAIL_REQUIRED", message: "Follow detail required" };
+      return this.state;
+    }
+    service.toggle(input);
+    return this.state;
+  }
+
+  public followAndFavorite(): DesktopSpiderUiState {
+    const followInput = this.followInputForDetail();
+    const favoriteInput = this.favoriteInputForDetail();
+    if (!this.followService || !followInput || !this.favoritesService || !favoriteInput) {
+      this.localError = { code: "FOLLOW_DETAIL_REQUIRED", message: "Follow detail required" };
+      return this.state;
+    }
+    if (!this.favoritesService.findByContent(favoriteInput.sourceId, favoriteInput.vodId)) {
+      this.favoritesService.toggle(favoriteInput);
+    }
+    if (!this.followService.findByContent(followInput.sourceId, followInput.vodId)) {
+      this.followService.follow(followInput);
+    }
+    return this.state;
+  }
+
+  public deleteFollow(identity: string): DesktopSpiderUiState {
+    this.followService?.unfollow(identity);
+    return this.state;
+  }
+
+  public markFollowWatched(identity: string): DesktopSpiderUiState {
+    this.followService?.markWatched(identity);
+    return this.state;
+  }
+
+  public markFollowUnwatched(identity: string): DesktopSpiderUiState {
+    this.followService?.markUnwatched(identity);
+    return this.state;
+  }
+
+  public async checkFollow(): Promise<DesktopSpiderUiState> {
+    const service = this.followService;
+    if (!service) throw new Error("FOLLOW_UNAVAILABLE");
+    const currentSourceId = sourceIdForHistory(this.session.view.source);
+    if (this.session.capabilities && !this.session.capabilities.detail) {
+      throw new Error("FOLLOW_DETAIL_UNAVAILABLE");
+    }
+    await service.check(async (record) => {
+      if (record.sourceId !== currentSourceId) throw new FollowSourceUnavailableError();
+      const detail = normalizeVodDetails(
+        unwrapSpiderResponse(await this.session.detailContent([record.vodId]), "detail"),
+      )[0];
+      if (!detail) throw new Error("FOLLOW_DETAIL_NOT_FOUND");
+      return followContentFromDetail(detail, currentSourceId, record.vodId);
+    });
+    return this.state;
+  }
+
   private favoriteForDetail(): FavoriteItem | null {
     const input = this.favoriteInputForDetail();
     if (!input || !this.favoritesService) return null;
@@ -334,6 +421,15 @@ export class DesktopSpiderUiController {
     if (!record) return null;
     return this.favoritesService.uiState(input.sourceId).items
       .find((item) => item.favoriteId === record.favoriteId) ?? null;
+  }
+
+  private followForDetail(): FollowItem | null {
+    const input = this.followInputForDetail();
+    if (!input || !this.followService) return null;
+    const record = this.followService.findByContent(input.sourceId, input.vodId);
+    if (!record) return null;
+    return this.followService.uiState(input.sourceId).items
+      .find((item) => item.identity === record.identity) ?? null;
   }
 
   private favoriteInputForDetail(): FavoriteContentInput | null {
@@ -356,6 +452,25 @@ export class DesktopSpiderUiController {
       category: optionalString(this.detailItem?.vod_class),
       sourceName: sourceDisplayNameForHistory(view.source),
       metadata,
+    };
+  }
+
+  private followInputForDetail(): FollowContentInput | null {
+    const vodId = optionalString(this.detailItem?.vod_id);
+    if (!vodId) return null;
+    const view = this.session.view;
+    const episodes = this.playbackCatalog?.lines
+      .filter((line) => line.episodes.length > 0)
+      .sort((left, right) => right.episodes.length - left.episodes.length)[0]
+      ?.episodes
+      .map((episode) => ({ id: episode.id, name: episode.name }))
+      ?? (this.detailItem ? followContentFromDetail(this.detailItem, sourceIdForHistory(view.source), vodId).episodes : []);
+    return {
+      sourceId: sourceIdForHistory(view.source),
+      vodId,
+      title: optionalString(this.detailItem?.vod_name) ?? vodId,
+      poster: optionalString(this.detailItem?.vod_pic),
+      episodes,
     };
   }
 
@@ -1196,6 +1311,7 @@ export interface DesktopSpiderUiServerOptions {
   playbackFallbackTimeoutMs?: number;
   history?: HistoryProgressService;
   favorites?: FavoritesService;
+  follow?: FollowService;
 }
 
 export class DesktopSpiderUiServer {
@@ -1221,6 +1337,7 @@ export class DesktopSpiderUiServer {
   private readonly playbackFallbackTimeoutMs: number | undefined;
   private readonly historyService: HistoryProgressService | undefined;
   private readonly favoritesService: FavoritesService | undefined;
+  private readonly followService: FollowService | undefined;
   private server: Server | undefined;
   private boundUrl: string | undefined;
   private boundSession: DesktopSpiderSessionPort | undefined;
@@ -1258,6 +1375,7 @@ export class DesktopSpiderUiServer {
     this.playbackFallbackTimeoutMs = options.playbackFallbackTimeoutMs;
     this.historyService = options.history;
     this.favoritesService = options.favorites;
+    this.followService = options.follow;
   }
 
   public get url(): string {
@@ -1488,6 +1606,40 @@ export class DesktopSpiderUiServer {
         return;
       }
 
+      if (url.pathname.startsWith("/api/follow/")) {
+        const followService = this.followService;
+        if (!followService) throw new Error("FOLLOW_UNAVAILABLE");
+        const ui = this.activeUi();
+        if (url.pathname === "/api/follow/toggle-detail") {
+          if (!ui) throw new Error("FOLLOW_DETAIL_REQUIRED");
+          ui.toggleFollow();
+        } else if (url.pathname === "/api/follow/favorite-detail") {
+          if (!ui) throw new Error("FOLLOW_DETAIL_REQUIRED");
+          ui.followAndFavorite();
+        } else if (url.pathname === "/api/follow/refresh") {
+          if (!ui) throw new Error("FOLLOW_SOURCE_UNAVAILABLE");
+          await ui.checkFollow();
+        } else if (url.pathname === "/api/follow/delete") {
+          followService.unfollow(stringValue(body.identity, ""));
+        } else if (url.pathname === "/api/follow/mark-watched") {
+          followService.markWatched(stringValue(body.identity, ""));
+        } else if (url.pathname === "/api/follow/mark-unwatched") {
+          followService.markUnwatched(stringValue(body.identity, ""));
+        } else if (url.pathname === "/api/follow/open") {
+          const item = followService.get(stringValue(body.identity, ""));
+          if (!item) throw new Error("FOLLOW_NOT_FOUND");
+          if (!ui || sourceIdForHistory(ui.state.source) !== item.sourceId) {
+            throw new Error("FOLLOW_SOURCE_SWITCH_REQUIRED");
+          }
+          await ui.detail(item.vodId);
+        } else {
+          writeJson(response, { error: "Not found" }, 404);
+          return;
+        }
+        this.writeCurrentState(response);
+        return;
+      }
+
       const ui = this.activeUi();
       if (!ui) throw new Error("Import confirmation is required before Spider actions");
       switch (url.pathname) {
@@ -1667,6 +1819,7 @@ export class DesktopSpiderUiServer {
         ...(this.playbackFallbackTimeoutMs ? { playbackFallbackTimeoutMs: this.playbackFallbackTimeoutMs } : {}),
         ...(this.historyService ? { history: this.historyService } : {}),
         ...(this.favoritesService ? { favorites: this.favoritesService } : {}),
+        ...(this.followService ? { follow: this.followService } : {}),
       });
       this.importedUiBySession.set(session, this.importedUi);
     }
@@ -2349,13 +2502,14 @@ function isThemeMode(value: unknown): value is "system" | "light" | "dark" {
   return value === "system" || value === "light" || value === "dark";
 }
 
-function isNavigation(value: unknown): value is "home" | "category" | "search" | "detail" | "history" | "favorites" | "settings" {
+function isNavigation(value: unknown): value is "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" {
   return value === "home"
     || value === "category"
     || value === "search"
     || value === "detail"
     || value === "history"
     || value === "favorites"
+    || value === "follow"
     || value === "settings";
 }
 

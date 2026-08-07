@@ -864,6 +864,7 @@ export class DesktopSpiderUiController {
   }
 
   public syncPlayerState(patch: PlayerMediaSync): DesktopSpiderUiState {
+    if (patch.sessionId !== undefined && patch.sessionId !== this.playbackSession?.id) return this.state;
     this.playerController.syncMedia(patch);
     if (patch.event?.type === "completion") this.playerController.markEnded();
     this.historyService?.sync(patch);
@@ -3991,6 +3992,8 @@ function liveBackendFromRequest(body: Record<string, unknown>): LivePlaybackBack
 
 function playerMediaSyncFromRequest(body: Record<string, unknown>): PlayerMediaSync {
   const patch: PlayerMediaSync = {};
+  const sessionId = optionalString(body.sessionId);
+  if (sessionId) patch.sessionId = sessionId;
   if (isPlaybackStatus(body.status)) patch.status = body.status;
   if (typeof body.currentTime === "number") patch.currentTime = body.currentTime;
   if (typeof body.duration === "number") patch.duration = body.duration;

@@ -1110,12 +1110,16 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
         const playedLocal = localItem
           ? await post(options.baseUrl, "/api/local-media/play", { itemId: localItem.id })
           : null;
+        const localSessionId = typeof playedLocal?.state?.playbackSession?.id === "string"
+          ? playedLocal.state.playbackSession.id
+          : undefined;
         const localUrl = playedLocal ? playerSourceUrl(playedLocal.state) : null;
         const rangeResponse = localUrl
           ? await fetch(localUrl, { headers: { range: "bytes=0-3" } })
           : null;
         const localPlaying = playedLocal
           ? await post(options.baseUrl, "/api/player/sync", {
+              ...(localSessionId ? { sessionId: localSessionId } : {}),
               status: "playing",
               currentTime: 3,
               duration: 100,
@@ -1124,6 +1128,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
           : null;
         const localPaused = localPlaying
           ? await post(options.baseUrl, "/api/player/sync", {
+              ...(localSessionId ? { sessionId: localSessionId } : {}),
               status: "paused",
               currentTime: 3,
               duration: 100,

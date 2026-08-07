@@ -239,6 +239,7 @@ export interface PlayerState {
 }
 
 export interface PlayerMediaSync {
+  sessionId?: string;
   status?: PlayerState["status"];
   currentTime?: number;
   duration?: number;

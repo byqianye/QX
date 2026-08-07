@@ -63,6 +63,7 @@ export interface PlaybackState {
 }
 
 export interface PlaybackMediaSync {
+  sessionId?: string;
   status?: PlaybackStatus;
   currentTime?: number;
   duration?: number;

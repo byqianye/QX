@@ -11,6 +11,7 @@ const props = defineProps<{
   state: LocalMediaUiState;
   history: HistoryUiState;
   player: PlayerState;
+  sessionId?: string | null;
   danmaku: DanmakuUiState;
   pending: string | null;
 }>();
@@ -183,6 +184,7 @@ function formatBytes(value: number): string {
     <section v-if="hasPlayback" class="playback-stage" data-testid="local-media-playback-stage">
       <EmbeddedPlayer
         :state="props.player"
+        :session-id="props.sessionId"
         :danmaku="props.danmaku"
         @detach="emit('playerDetach')"
         @stop="emit('playerStop')"

@@ -466,6 +466,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleChannelKeydown
           <EmbeddedPlayer
             v-if="livePlayerState"
             :state="livePlayerState"
+            :session-id="props.state.session?.sessionId"
             :danmaku="props.danmaku"
             :detachable="false"
             @stop="emit('stop')"

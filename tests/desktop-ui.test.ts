@@ -699,22 +699,31 @@ describe("desktop Spider UI", () => {
       .toEqual(expect.arrayContaining([expect.objectContaining({ displayName: "dropped.webm" })]));
     const played = await post(server.url, "/api/local-media/play", { itemId: item.id });
     const source = (played.state.player as { source: { url: string } }).source;
+    const sessionId = (played.state.playbackSession as { id: string }).id;
     expect(source.url).toContain("/api/local-media/stream/");
     const media = await fetch(source.url, { headers: { range: "bytes=0-3" } });
     expect(media.status).toBe(206);
     expect((await media.arrayBuffer()).byteLength).toBe(4);
 
     await post(server.url, "/api/player/sync", {
+      sessionId,
       status: "playing",
       currentTime: 5,
       duration: 100,
       event: { type: "first-frame" },
     });
     await post(server.url, "/api/player/sync", {
+      sessionId,
       status: "paused",
       currentTime: 5,
       duration: 100,
       event: { type: "user-pause" },
+    });
+    await post(server.url, "/api/player/sync", {
+      sessionId: "stale-renderer-session",
+      status: "paused",
+      currentTime: 0,
+      duration: 1,
     });
     expect(history.uiState().items).toEqual(expect.arrayContaining([
       expect.objectContaining({ sourceType: "local", position: 5 }),

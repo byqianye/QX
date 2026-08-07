@@ -25,7 +25,7 @@ const PLAYBACK_STARTUP_TIMEOUT_MS = 10_000;
 const windowWithHls = window as Window & { Hls?: typeof Hls };
 windowWithHls.Hls ??= Hls;
 
-const props = defineProps<{ state: PlayerState; detachable?: boolean; danmaku?: DanmakuUiState }>();
+const props = defineProps<{ state: PlayerState; sessionId?: string | null; detachable?: boolean; danmaku?: DanmakuUiState }>();
 const emit = defineEmits<{
   sync: [value: PlayerMediaSync];
   detach: [];
@@ -272,6 +272,7 @@ function emitSync(status = localStatus.value, event?: PlaybackMediaEvent): void 
     ? { code: localErrorCode ?? "HTML_VIDEO_ERROR", message: localError }
     : undefined;
   emit("sync", {
+    ...(props.sessionId ? { sessionId: props.sessionId } : {}),
     status: status as PlayerState["status"],
     currentTime: element?.currentTime ?? currentTime.value,
     duration: element && Number.isFinite(element.duration) ? element.duration : duration.value,

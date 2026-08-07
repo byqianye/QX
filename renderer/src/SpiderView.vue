@@ -476,6 +476,7 @@ function navigationFromPage(page: string): RendererNavigation {
             :state="props.state.localMedia"
             :history="props.state.history"
             :player="props.state.playback.player"
+            :session-id="props.state.playback.session?.id"
             :danmaku="props.state.danmaku"
             :pending="props.pending"
             @open-file="emit('localOpenFile')"
@@ -736,6 +737,7 @@ function navigationFromPage(page: string): RendererNavigation {
             <EmbeddedPlayer
               v-else
               :state="props.state.playback.player"
+              :session-id="props.state.playback.session?.id"
               :danmaku="props.state.danmaku"
               @detach="emit('playerDetach')"
               @stop="emit('playerStop')"

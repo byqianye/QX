@@ -191,6 +191,11 @@ export class HistoryProgressService {
 
     const position = finiteNonNegative(snapshot.currentTime, active.latest.position);
     const duration = finiteNonNegative(snapshot.duration, active.latest.duration);
+    const nonMeaningfulReset = position <= 0
+      && duration <= 1
+      && snapshot.status !== "playing"
+      && eventType !== "first-frame";
+    if (nonMeaningfulReset && (active.latest.position > 0 || active.latest.duration > 1)) return;
     const completed = active.latest.completed
       || isHistoryCompleted(position, duration, eventType === "completion" || snapshot.status === "ended");
     active.latest = {

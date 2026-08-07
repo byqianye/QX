@@ -85,6 +85,7 @@ async function flushSync(): Promise<void> {
       </div>
       <EmbeddedPlayer
         :state="state.playback.player"
+        :danmaku="state.danmaku"
         :detachable="false"
         @sync="sync"
         @stop="stop"

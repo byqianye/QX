@@ -109,6 +109,12 @@ import { EpgMappingError, EpgMatchingService } from "../epg/epg-matching-service
 import { EpgSourceError, EpgService } from "../epg/epg-service.js";
 import { isEpgSourceType, type EpgSourceImportInput } from "../epg/epg-types.js";
 import {
+  EMPTY_DANMAKU_UI_STATE,
+  type DanmakuLoadInput,
+  type DanmakuSettingsPatch,
+} from "../danmaku/danmaku-types.js";
+import { DanmakuService } from "../danmaku/danmaku-service.js";
+import {
   EMPTY_LIVE_UI_STATE,
   isLiveSourceType,
   type LivePlaybackBackend,
@@ -239,6 +245,7 @@ export interface DesktopSpiderUiState {
   followDetail: FollowItem | null;
   cache: CacheUiState;
   storage: StorageUiState;
+  danmaku: import("../danmaku/danmaku-types.js").DanmakuUiState;
 }
 
 export interface DesktopSpiderUiOptions {
@@ -258,6 +265,7 @@ export interface DesktopSpiderUiOptions {
   follow?: FollowService;
   cache?: CacheService;
   storage?: DataStorageService;
+  danmaku?: DanmakuService;
 }
 
 export class DesktopSpiderUiController {
@@ -295,6 +303,7 @@ export class DesktopSpiderUiController {
   private readonly followService: FollowService | undefined;
   private readonly cacheService: CacheService | undefined;
   private readonly storageService: DataStorageService | undefined;
+  private readonly danmakuService: DanmakuService | undefined;
   private historyResume: HistoryResumeCandidate | null = null;
   private pendingResumeSeconds = 0;
 
@@ -306,6 +315,7 @@ export class DesktopSpiderUiController {
     this.followService = options.follow;
     this.cacheService = options.cache;
     this.storageService = options.storage;
+    this.danmakuService = options.danmaku;
     this.parserCandidates = options.parserCandidates?.map(cloneParserCandidate) ?? [];
     this.sniffer = options.sniffer;
     this.parserAllowedOrigins = options.parserAllowedOrigins ?? [];
@@ -365,6 +375,7 @@ export class DesktopSpiderUiController {
       followDetail: this.followForDetail(),
       cache: this.cacheService?.uiState() ?? EMPTY_CACHE_UI_STATE,
       storage: this.storageService?.uiState() ?? EMPTY_STORAGE_UI_STATE,
+      danmaku: this.danmakuService?.uiState() ?? EMPTY_DANMAKU_UI_STATE,
     };
   }
 
@@ -693,6 +704,9 @@ export class DesktopSpiderUiController {
   public syncPlayerState(patch: PlayerMediaSync): DesktopSpiderUiState {
     this.playerController.syncMedia(patch);
     this.historyService?.sync(patch);
+    if (patch.currentTime !== undefined && Number.isFinite(patch.currentTime)) {
+      this.danmakuService?.sync(patch.currentTime * 1_000, patch.event?.type, patch.status);
+    }
     this.recordMediaEvent(patch);
     if (patch.error) this.localError = { ...patch.error };
     return this.state;
@@ -741,6 +755,7 @@ export class DesktopSpiderUiController {
     this.fallbackCoordinator.cancel("用户停止播放");
     this.historyService?.stop();
     this.playerController.stop();
+    this.danmakuService?.clear();
     this.sniffer?.cancelAll();
     await this.releasePlaybackProxy();
     await this.session.stopPlayback?.();
@@ -793,6 +808,7 @@ export class DesktopSpiderUiController {
     this.playbackHealthRegistry.tracker(this.currentHealthKey).beginAttempt();
     this.historyService?.flush("stop");
     this.playerController.stop();
+    this.danmakuService?.clear();
     this.parseState = initialParseState();
     this.playbackSession = null;
     this.playerHost = "embedded";
@@ -812,6 +828,19 @@ export class DesktopSpiderUiController {
           if (this.pendingResumeSeconds > 0) this.playerController.seek(this.pendingResumeSeconds);
           const sourceState = this.playerController.state.source;
           if (!sourceState) throw new Error("Playback source was not loaded");
+          if (playback.danmaku !== undefined && this.danmakuService) {
+            try {
+              await this.danmakuService.load({
+                format: "auto",
+                data: playback.danmaku,
+                source: this.session.view.source,
+                timeline: "vod",
+              });
+            } catch {
+              // Optional danmaku must not make an otherwise playable source fail.
+              this.danmakuService.clear();
+            }
+          }
           this.playbackHealthRegistry.tracker(this.currentHealthKey).recordResolve(true);
           this.playbackSession = {
             id: playbackSessionId,
@@ -841,6 +870,7 @@ export class DesktopSpiderUiController {
     this.sniffer?.cancelAll();
     await this.session.destroy();
     this.playerController.stop();
+    this.danmakuService?.clear();
     await this.releasePlaybackProxy();
     this.clearPlaybackSession();
     const nextSession = this.createSession?.();
@@ -870,6 +900,7 @@ export class DesktopSpiderUiController {
     try {
       await this.session.destroy();
       this.playerController.stop();
+      this.danmakuService?.clear();
       await this.releasePlaybackProxy();
       this.clearPlaybackSession();
       this.localStatus = "destroyed";
@@ -883,6 +914,7 @@ export class DesktopSpiderUiController {
   public async releaseResources(): Promise<void> {
     this.historyService?.appClose();
     this.playerController.stop();
+    this.danmakuService?.clear();
     this.sniffer?.cancelAll();
     await this.releasePlaybackProxy();
     await this.session.stopPlayback?.();
@@ -1365,6 +1397,7 @@ export interface DesktopSpiderUiServerOptions {
   follow?: FollowService;
   cache?: CacheService;
   storage?: DataStorageService;
+  danmaku?: DanmakuService;
   live?: LiveSourceService;
   livePlayback?: LivePlaybackService;
   smartChannels?: SmartChannelService;
@@ -1400,6 +1433,7 @@ export class DesktopSpiderUiServer {
   private readonly followService: FollowService | undefined;
   private readonly cacheService: CacheService | undefined;
   private readonly storageService: DataStorageService | undefined;
+  private readonly danmakuService: DanmakuService | undefined;
   private readonly liveService: LiveSourceService | undefined;
   private readonly livePlayback: LivePlaybackService | undefined;
   private readonly smartChannels: SmartChannelService | undefined;
@@ -1447,6 +1481,7 @@ export class DesktopSpiderUiServer {
     this.followService = options.follow;
     this.cacheService = options.cache;
     this.storageService = options.storage;
+    this.danmakuService = options.danmaku;
     this.liveService = options.live;
     this.livePlayback = options.livePlayback;
     this.smartChannels = options.smartChannels;
@@ -1544,6 +1579,11 @@ export class DesktopSpiderUiServer {
       }
 
       const body = await readJson(request);
+      if (url.pathname.startsWith("/api/danmaku/")) {
+        await this.handleDanmakuRequest(url.pathname, body);
+        this.writeCurrentState(response);
+        return;
+      }
       if (url.pathname.startsWith("/api/epg/")) {
         await this.handleEpgRequest(url.pathname, body);
         this.writeCurrentState(response);
@@ -1936,6 +1976,43 @@ export class DesktopSpiderUiServer {
     }
   }
 
+  private async handleDanmakuRequest(pathname: string, body: Record<string, unknown>): Promise<void> {
+    const service = this.danmakuService;
+    if (!service) throw new Error("DANMAKU_UNAVAILABLE");
+    if (pathname === "/api/danmaku/load") {
+      const format = body.format === "json" || body.format === "xml" || body.format === "items" || body.format === "auto"
+        ? body.format
+        : "auto";
+      const data = Object.prototype.hasOwnProperty.call(body, "data")
+        ? body.data
+        : Object.prototype.hasOwnProperty.call(body, "content")
+          ? body.content
+          : body.items;
+      await service.load({
+        format,
+        data,
+        ...(typeof body.source === "string" ? { source: body.source } : {}),
+        ...(body.timeline === "live" ? { timeline: "live" } : { timeline: "vod" }),
+      } satisfies DanmakuLoadInput);
+      return;
+    }
+    if (pathname === "/api/danmaku/settings") {
+      service.setSettings(danmakuSettingsPatchFromRequest(body));
+      return;
+    }
+    if (pathname === "/api/danmaku/clear") {
+      service.clear();
+      return;
+    }
+    if (pathname === "/api/danmaku/sync") {
+      const currentTime = optionalNumber(body.currentTime);
+      if (currentTime === undefined) throw new Error("DANMAKU_CURRENT_TIME_INVALID");
+      service.sync(currentTime * 1_000, optionalString(body.eventType) ?? undefined, optionalString(body.status) ?? undefined);
+      return;
+    }
+    throw new Error("DANMAKU_ROUTE_NOT_FOUND");
+  }
+
   private async handleLiveRequest(pathname: string, body: Record<string, unknown>): Promise<void> {
     const live = this.liveService;
     if (!live) throw new LiveSourceError("LIVE_UNAVAILABLE", "直播源服务不可用。");
@@ -2107,7 +2184,11 @@ export class DesktopSpiderUiServer {
       return;
     }
     if (pathname === "/api/live/sync") {
-      await playback.syncAndMaybeFailover(optionalString(body.sessionId) ?? undefined, playerMediaSyncFromRequest(body), liveBackendFromRequest(body));
+      const patch = playerMediaSyncFromRequest(body);
+      await playback.syncAndMaybeFailover(optionalString(body.sessionId) ?? undefined, patch, liveBackendFromRequest(body));
+      if (patch.currentTime !== undefined && Number.isFinite(patch.currentTime)) {
+        this.danmakuService?.sync(patch.currentTime * 1_000, patch.event?.type, patch.status);
+      }
       return;
     }
     throw new LiveSourceError("LIVE_ROUTE_NOT_FOUND", "直播源请求不存在。");
@@ -2212,6 +2293,7 @@ export class DesktopSpiderUiServer {
         ...(this.followService ? { follow: this.followService } : {}),
         ...(this.cacheService ? { cache: this.cacheService } : {}),
         ...(this.storageService ? { storage: this.storageService } : {}),
+        ...(this.danmakuService ? { danmaku: this.danmakuService } : {}),
         ...(this.onStorageOpen ? { onStorageOpen: this.onStorageOpen } : {}),
         ...(this.onStorageSwitch ? { onStorageSwitch: this.onStorageSwitch } : {}),
       });
@@ -2386,15 +2468,18 @@ function errorCodeFromMessage(message: string): string | null {
 }
 
 function publicPlaybackState(playback: DesktopSpiderPlaybackState): DesktopSpiderPlaybackState {
-  return playback.available
-    ? {
-        ...playback,
-        headers: {},
-        ...(playback.subtitles
-          ? { subtitles: playback.subtitles.map(publicSubtitleTrack) }
-          : {}),
-      }
-    : { ...playback };
+  if (!playback.available) return { ...playback };
+  return {
+    available: true,
+    label: playback.label,
+    message: playback.message,
+    parse: playback.parse,
+    url: playback.url,
+    headers: {},
+    ...(playback.subtitles
+      ? { subtitles: playback.subtitles.map(publicSubtitleTrack) }
+      : {}),
+  };
 }
 
 function publicSubtitleTrack(track: SubtitleTrack): SubtitleTrack {
@@ -2859,6 +2944,22 @@ function recordOfStrings(value: unknown): Record<string, string> {
 
 function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function danmakuSettingsPatchFromRequest(body: Record<string, unknown>): DanmakuSettingsPatch {
+  const patch: DanmakuSettingsPatch = {};
+  if (typeof body.enabled === "boolean") patch.enabled = body.enabled;
+  for (const key of ["opacity", "fontSize", "speed", "density", "displayArea", "maxActive", "maxPerSecond", "trackCount"] as const) {
+    if (typeof body[key] === "number" && Number.isFinite(body[key])) patch[key] = body[key];
+  }
+  if (typeof body.keyword === "string") patch.keyword = body.keyword;
+  if (typeof body.regex === "string") patch.regex = body.regex;
+  if (Array.isArray(body.types)) {
+    patch.types = body.types.filter((item): item is "scroll" | "top" | "bottom" | "reverse" =>
+      item === "scroll" || item === "top" || item === "bottom" || item === "reverse");
+  }
+  if (Array.isArray(body.sources)) patch.sources = stringList(body.sources);
+  return patch;
 }
 
 function liveBackendFromRequest(body: Record<string, unknown>): LivePlaybackBackend | undefined {

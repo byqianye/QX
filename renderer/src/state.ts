@@ -9,6 +9,8 @@ import type { CacheUiState } from "../../src/cache/cache-types.js";
 import type { StorageUiState } from "../../src/storage/storage-types.js";
 import { EMPTY_LIVE_UI_STATE } from "../../src/live/live-types.js";
 import type { LiveUiState } from "../../src/live/live-types.js";
+import { EMPTY_DANMAKU_UI_STATE } from "../../src/danmaku/danmaku-types.js";
+import type { DanmakuUiState } from "../../src/danmaku/danmaku-types.js";
 
 export type ImportStatus =
   | "empty"
@@ -271,6 +273,7 @@ export interface RendererState {
   followDetail: FollowItem | null;
   cache: CacheUiState;
   storage: StorageUiState;
+  danmaku: DanmakuUiState;
   live: LiveUiState;
   error: ErrorState;
 }
@@ -303,6 +306,7 @@ export interface ApiSpiderState {
   followDetail?: FollowItem | null;
   cache?: CacheUiState;
   storage?: StorageUiState;
+  danmaku?: DanmakuUiState;
   live?: LiveUiState;
 }
 
@@ -366,6 +370,7 @@ export function createRendererState(): RendererState {
     followDetail: null,
     cache: { totalBytes: 0, maxBytes: 0, entries: 0, byType: [] },
     storage: { mode: "normal", dataRoot: "—", normalRoot: "—", portableRoot: "—", databaseBytes: 0, cacheBytes: 0, totalBytes: 0, historyCount: 0, favoritesCount: 0, followCount: 0, writable: false, switching: false, error: null },
+    danmaku: cloneDanmakuState(EMPTY_DANMAKU_UI_STATE),
     live: cloneLiveUiState(EMPTY_LIVE_UI_STATE),
     error: { error: null },
   };
@@ -435,6 +440,7 @@ export function applyRendererEnvelope(
     followDetail: state.followDetail ? { ...state.followDetail } : null,
     cache: cloneCacheState(state.cache ?? current.cache),
     storage: cloneStorageState(state.storage ?? current.storage),
+    danmaku: cloneDanmakuState(state.danmaku ?? current.danmaku),
     live,
     error: { error: toAppError(stateError) },
   };
@@ -697,6 +703,20 @@ function cloneCacheState(state: CacheUiState): CacheUiState {
 
 function cloneStorageState(state: StorageUiState): StorageUiState {
   return { ...state };
+}
+
+function cloneDanmakuState(state: DanmakuUiState): DanmakuUiState {
+  return {
+    ...state,
+    settings: {
+      ...state.settings,
+      types: [...state.settings.types],
+      sources: [...state.settings.sources],
+    },
+    sources: [...state.sources],
+    items: state.items.map((item) => ({ ...item })),
+    error: state.error ? { ...state.error } : null,
+  };
 }
 
 function emptyPlaybackHealth(): PlaybackHealthSnapshot {

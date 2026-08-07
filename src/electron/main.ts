@@ -58,6 +58,7 @@ import { LivePlaybackService } from "../live/live-playback.js";
 import { SmartChannelService } from "../live/smart-channels.js";
 import { EpgMatchingService } from "../epg/epg-matching-service.js";
 import { EpgService } from "../epg/epg-service.js";
+import { DanmakuService } from "../danmaku/danmaku-service.js";
 import {
   IsolatedSniffer,
   type IsolatedSnifferPlatform,
@@ -114,6 +115,7 @@ let livePlaybackService: LivePlaybackService | undefined;
 let smartChannelService: SmartChannelService | undefined;
 let epgService: EpgService | undefined;
 let epgMatchingService: EpgMatchingService | undefined;
+let danmakuService: DanmakuService | undefined;
 let dataStorageService: DataStorageService | undefined;
 let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -165,6 +167,11 @@ function getLiveSourceService(): LiveSourceService {
   if (!liveSourceService) throw new Error("Live source service is unavailable");
   return liveSourceService;
 }
+function getDanmakuService(): DanmakuService {
+  initializeDataLayer();
+  if (!danmakuService) throw new Error("Danmaku service is unavailable");
+  return danmakuService;
+}
 function getDataStorageService(): DataStorageService {
   if (!dataStorageService) {
     dataStorageService = new DataStorageService(new DataDirectoryResolver(app.getPath("userData"), {
@@ -175,7 +182,7 @@ function getDataStorageService(): DataStorageService {
   return dataStorageService;
 }
 function initializeDataLayer(): void {
-  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService && livePlaybackService && smartChannelService && epgService && epgMatchingService) return;
+  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService && livePlaybackService && smartChannelService && epgService && epgMatchingService && danmakuService) return;
   const dataStorage = getDataStorageService();
   const directories = dataStorage.prepare();
   const opened = openSqliteDataLayer(directories.database);
@@ -258,6 +265,9 @@ function initializeDataLayer(): void {
     },
     ...(PLAYBACK_PROXY_ORIGINS.length > 0 ? { proxyAllowedOrigins: PLAYBACK_PROXY_ORIGINS } : {}),
   });
+  danmakuService = new DanmakuService({
+    settings: new SettingsRepository(opened.layer),
+  });
 }
 
 function createShell(): DesktopShellRuntime {
@@ -321,6 +331,7 @@ function createShell(): DesktopShellRuntime {
         follow: getFollowService(),
         cache: getCacheService(),
         storage: getDataStorageService(),
+        danmaku: getDanmakuService(),
         live: getLiveSourceService(),
         ...(livePlaybackService ? { livePlayback: livePlaybackService } : {}),
         ...(smartChannelService ? { smartChannels: smartChannelService } : {}),
@@ -588,6 +599,7 @@ async function closeDataLayer(): Promise<void> {
   await livePlaybackService?.close();
   epgService?.close();
   epgMatchingService?.close();
+  danmakuService?.close();
   historyProgressService?.appClose();
   historyProgressService = undefined;
   favoritesService = undefined;
@@ -598,6 +610,7 @@ async function closeDataLayer(): Promise<void> {
   smartChannelService = undefined;
   epgService = undefined;
   epgMatchingService = undefined;
+  danmakuService = undefined;
   dataStorageService = undefined;
   const current = dataLayer;
   dataLayer = undefined;
@@ -896,6 +909,7 @@ async function runE2e(baseUrl: string): Promise<void> {
       verifyPlaybackRules: PLAYBACK_RULES.length > 0,
       verifyPlaybackDebug: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifySubtitleTracks: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
+      verifyDanmaku: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifyPlaybackHealth: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifyPlaybackFallback: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifyHistory: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),

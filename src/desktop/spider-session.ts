@@ -56,6 +56,7 @@ export type DesktopSpiderPlaybackState =
       url: string;
       headers: Record<string, string>;
       subtitles?: SubtitleTrack[];
+      danmaku?: unknown;
     };
 
 export interface DesktopSpiderView {
@@ -519,6 +520,7 @@ function playbackFrom(value: unknown): Extract<DesktopSpiderPlaybackState, { ava
     ...(normalizeSubtitleTracks(value.subtitles ?? value.subtitleTracks ?? value.subtitle).length > 0
       ? { subtitles: normalizeSubtitleTracks(value.subtitles ?? value.subtitleTracks ?? value.subtitle) }
       : {}),
+    ...(value.danmaku !== undefined ? { danmaku: value.danmaku } : {}),
   };
 }
 
@@ -528,8 +530,22 @@ function clonePlayback(playback: DesktopSpiderPlaybackState): DesktopSpiderPlayb
         ...playback,
         headers: { ...playback.headers },
         ...(playback.subtitles ? { subtitles: playback.subtitles.map(cloneSubtitleTrack) } : {}),
+        ...(playback.danmaku !== undefined ? { danmaku: cloneDanmakuValue(playback.danmaku) } : {}),
       }
     : { ...playback };
+}
+
+function cloneDanmakuValue(value: unknown): unknown {
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(value);
+    } catch {
+      // Fall back to a shallow-safe value below for non-cloneable source data.
+    }
+  }
+  if (Array.isArray(value)) return value.map(cloneDanmakuValue);
+  if (isRecord(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, cloneDanmakuValue(item)]));
+  return value;
 }
 
 function cloneSubtitleTrack(track: SubtitleTrack): SubtitleTrack {

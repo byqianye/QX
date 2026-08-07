@@ -27,6 +27,7 @@ import SpiderView from "../renderer/src/SpiderView.vue";
 import { displaySource } from "../renderer/src/safe-display.js";
 import LiveSourcesView from "../renderer/src/LiveSourcesView.vue";
 import { EMPTY_LIVE_UI_STATE, type LiveUiState } from "../src/live/live-types.js";
+import { EMPTY_DANMAKU_UI_STATE } from "../src/danmaku/danmaku-types.js";
 
 describe("Vue renderer", () => {
   const servers: DesktopSpiderUiServer[] = [];
@@ -212,7 +213,7 @@ describe("Vue renderer", () => {
     await flushPromises();
 
     expect(wrapper.get('[data-testid="desktop-spider-ui"]').attributes("data-theme")).toBe("dark");
-    expect(wrapper.findAll('[data-testid="settings-section"]')).toHaveLength(6);
+    expect(wrapper.findAll('[data-testid="settings-section"]')).toHaveLength(7);
     expect(wrapper.get('[data-testid="cache-management"]')).toBeTruthy();
     expect(wrapper.get('[data-testid="storage-management"]')).toBeTruthy();
     expect((wrapper.get("#search-key").element as HTMLInputElement).value).toBe("蜘蛛侠");
@@ -632,7 +633,7 @@ describe("Vue renderer", () => {
         },
       }],
     };
-    const wrapper = mount(LiveSourcesView, { props: { state, pending: null } });
+    const wrapper = mount(LiveSourcesView, { props: { state, pending: null, danmaku: EMPTY_DANMAKU_UI_STATE } });
 
     await wrapper.get('[data-action="live-tab-smart"]').trigger("click");
     expect(wrapper.get('[data-testid="smart-channel-create"]')).toBeTruthy();
@@ -706,7 +707,7 @@ describe("Vue renderer", () => {
         manualOverrideUntil: 4_000,
       },
     };
-    const wrapper = mount(LiveSourcesView, { props: { state, pending: null } });
+    const wrapper = mount(LiveSourcesView, { props: { state, pending: null, danmaku: EMPTY_DANMAKU_UI_STATE } });
 
     expect(wrapper.get('[data-testid="live-health-summary"]').text()).toContain("评分 42");
     expect(wrapper.get('[data-testid="live-failover-prompt"]').text()).toContain("连续分片失败");

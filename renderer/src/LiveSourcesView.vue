@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import EmbeddedPlayer from "./EmbeddedPlayer.vue";
 import type { PlayerMediaSync, PlayerState } from "./state.js";
+import type { DanmakuUiState } from "../../src/danmaku/danmaku-types.js";
 import type {
   LiveSourceType,
   LiveUiState,
@@ -13,6 +14,7 @@ import type {
 const props = defineProps<{
   state: LiveUiState;
   pending: string | null;
+  danmaku: DanmakuUiState;
 }>();
 
 const emit = defineEmits<{
@@ -464,6 +466,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleChannelKeydown
           <EmbeddedPlayer
             v-if="livePlayerState"
             :state="livePlayerState"
+            :danmaku="props.danmaku"
             :detachable="false"
             @stop="emit('stop')"
             @sync="emit('sync', $event)"

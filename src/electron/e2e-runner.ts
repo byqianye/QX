@@ -16,6 +16,7 @@ export interface PackagedE2eOptions {
   verifyPlaybackRules?: boolean;
   verifyPlaybackDebug?: boolean;
   verifySubtitleTracks?: boolean;
+  verifyDanmaku?: boolean;
   verifyPlaybackHealth?: boolean;
   verifyPlaybackFallback?: boolean;
   verifyHistory?: boolean;
@@ -71,6 +72,7 @@ export interface PackagedE2eChecks {
   playbackRules?: boolean;
   playbackDebug?: boolean;
   subtitleTracks?: boolean;
+  danmaku?: boolean;
   playbackHealth?: boolean;
   playbackFallback?: boolean;
   parserFallback?: boolean;
@@ -713,6 +715,27 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       });
       const hlsHtml = await readPage(options);
       const hlsDom = await probeWindow(options, hlsHtml);
+      if (options.verifyDanmaku) {
+        const loaded = await post(options.baseUrl, "/api/danmaku/load", {
+          format: "json",
+          source: "fixture-danmaku",
+          data: JSON.stringify({ items: [{ id: "e2e-danmaku", timeMs: 1_000, text: "fixture 弹幕", type: "scroll", source: "fixture" }] }),
+        });
+        const synced = await post(options.baseUrl, "/api/player/sync", {
+          status: "playing",
+          currentTime: 1.2,
+          duration: 100,
+          event: { type: "first-frame" },
+        });
+        const danmakuHtml = await readPage(options);
+        checks.danmaku = loaded.state?.danmaku?.status === "ready"
+          && loaded.state.danmaku.totalCount === 1
+          && synced.state?.danmaku?.playing === true
+          && synced.state.danmaku.currentTimeMs === 1_200
+          && (!options.readWindowHtml
+            || (danmakuHtml.includes('data-testid="danmaku-overlay"')
+              && danmakuHtml.includes('data-rendered-count="1"')));
+      }
       const headered = await post(options.baseUrl, "/api/player", {
         lineIndex: 0,
         episodeIndex: 1,
@@ -1215,6 +1238,12 @@ interface UiState {
     } | null;
     error?: { code?: string; message?: string } | null;
   } | null;
+  danmaku?: {
+    status?: string;
+    totalCount?: number;
+    currentTimeMs?: number;
+    playing?: boolean;
+  };
   playbackSelection?: { lineIndex?: number; episodeIndex?: number } | null;
   playerHost?: "embedded" | "detached";
   playbackSession?: { id?: string; host?: "embedded" | "detached" } | null;

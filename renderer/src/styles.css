@@ -268,6 +268,16 @@ p { margin-bottom: 12px; }
 .episode-list button { min-height: 44px; color: var(--fg-2); background: var(--surface); border-color: var(--border); }
 .episode-list button:hover:not(:disabled) { border-color: var(--accent); }
 .embedded-player-panel video { display: block; width: 100%; max-height: 520px; background: var(--player-bg); border-radius: var(--radius-sm); }
+.player-video-stage { position: relative; overflow: hidden; border-radius: var(--radius-sm); background: var(--player-bg); }
+.player-video-stage video { border-radius: 0; }
+.danmaku-overlay { position: absolute; inset: 0; z-index: 2; height: calc(var(--danmaku-display-area, .82) * 100%); overflow: hidden; pointer-events: none; opacity: var(--danmaku-opacity, .86); }
+.danmaku-item { position: absolute; top: var(--danmaku-track); left: 0; display: block; max-width: 100%; color: var(--danmaku-color, white); font-size: var(--danmaku-font-size, 24px); font-weight: 600; line-height: 1.2; white-space: nowrap; text-shadow: 0 1px 2px #000, 0 -1px 2px #000, 1px 0 2px #000, -1px 0 2px #000; animation: danmaku-scroll var(--danmaku-duration) linear calc(var(--danmaku-elapsed) * -1) 1 both; }
+.danmaku-item.is-paused, .danmaku-overlay.is-paused .danmaku-item { animation-play-state: paused; }
+.danmaku-top { left: 50%; transform: translateX(-50%); animation: none; }
+.danmaku-bottom { top: auto; bottom: var(--danmaku-track); left: 50%; transform: translateX(-50%); animation: none; }
+.danmaku-reverse { animation-name: danmaku-reverse; }
+@keyframes danmaku-scroll { from { transform: translateX(100%); } to { transform: translateX(-100%); } }
+@keyframes danmaku-reverse { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
 .player-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
 .player-controls label { display: inline-flex; min-height: 44px; align-items: center; gap: 8px; color: var(--muted); }
 .player-controls input[type="range"] { min-height: 44px; }
@@ -315,6 +325,11 @@ p { margin-bottom: 12px; }
 .settings-section { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; margin-bottom: 16px; padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
 .settings-section > .settings-row { grid-column: 1 / -1; width: 100%; }
 .settings-section h2 { margin-bottom: 4px; }
+.danmaku-type-controls, .danmaku-source-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; grid-column: 1 / -1; }
+.checkbox-control { display: inline-flex; min-height: 40px; align-items: center; gap: 6px; color: var(--muted); }
+.danmaku-file-button { position: relative; display: inline-flex; align-items: center; min-height: 44px; }
+.danmaku-file-button input[type="file"] { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+.danmaku-settings-panel .error-text, .settings-section .error-text { grid-column: 1 / -1; color: var(--danger); }
 .live-sources { display: grid; gap: 16px; }
 .live-mode-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); }
 .live-mode-tab { min-height: 44px; padding: 8px 12px; color: var(--muted); background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; }

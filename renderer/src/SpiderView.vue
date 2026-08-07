@@ -22,6 +22,7 @@ import SettingsSection from "./SettingsSection.vue";
 import SourceSwitcher from "./SourceSwitcher.vue";
 import TopSearchBar from "./TopSearchBar.vue";
 import PlaybackDebugPanel from "./PlaybackDebugPanel.vue";
+import DanmakuSettingsPanel from "./DanmakuSettingsPanel.vue";
 import { PlaybackDebugTimeline } from "./playback-debug.js";
 import { displaySource } from "./safe-display.js";
 import type {
@@ -61,6 +62,9 @@ const emit = defineEmits<{
   playerAttach: [];
   playerStop: [];
   playerSync: [value: PlayerMediaSync];
+  danmakuLoad: [input: Record<string, unknown>];
+  danmakuClear: [];
+  danmakuSettings: [patch: Record<string, unknown>];
   fallbackCancel: [];
   fallbackApprove: [];
   fallbackMode: [value: "off" | "prompt" | "auto"];
@@ -398,6 +402,7 @@ function navigationFromPage(page: string): RendererNavigation {
           <LiveSourcesView
             :state="props.state.live"
             :pending="props.pending"
+            :danmaku="props.state.danmaku"
             @preview="emit('livePreview', $event)"
             @apply="emit('liveApply', $event)"
             @refresh="emit('liveRefresh', $event)"
@@ -447,6 +452,13 @@ function navigationFromPage(page: string): RendererNavigation {
           <SettingsSection title="播放偏好" description="播放顺序与当前线路由既有会话状态决定；本阶段不增加未确认的播放器能力。">
             <div class="settings-row"><span>当前剧集顺序</span><strong>{{ props.order === "forward" ? "正序" : "倒序" }}</strong></div>
           </SettingsSection>
+          <DanmakuSettingsPanel
+            :state="props.state.danmaku"
+            :pending="props.pending"
+            @load="emit('danmakuLoad', $event)"
+            @clear="emit('danmakuClear')"
+            @settings="emit('danmakuSettings', $event)"
+          />
           <SettingsSection title="诊断与日志" description="只展示主进程返回的脱敏诊断，不在 renderer 读取日志文件或凭据。">
             <DiagnosticPanel
               :source="props.state.spider.source"
@@ -611,6 +623,7 @@ function navigationFromPage(page: string): RendererNavigation {
             <EmbeddedPlayer
               v-else
               :state="props.state.playback.player"
+              :danmaku="props.state.danmaku"
               @detach="emit('playerDetach')"
               @stop="emit('playerStop')"
               @sync="emit('playerSync', $event)"

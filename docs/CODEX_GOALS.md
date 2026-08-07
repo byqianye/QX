@@ -1211,6 +1211,64 @@ npm run electron:e2e:package
 checkpoint: complete G61 live failover
 ```
 
+## G62 (completed)
+
+### Goal
+
+Add a read-only danmaku path for user-provided, local, adapter, and fixture
+JSON/XML: bounded parsing, VOD/live timeline sync, filtering, collision-aware
+player overlay, and SQLite-backed player settings.
+
+### Status
+
+Completed. The model and local adapter support project JSON, XML fixtures, item
+arrays, and all four render types. The main-process service/API handles load,
+clear, settings, VOD/live sync, payload/text/regex limits, and safe public UI
+state. The existing player now renders a bounded overlay and the Settings page
+exposes the danmaku controls. No third-party danmaku discovery or sending was
+added, and schema version 8 was reused.
+
+### Dependency
+
+- G61 checkpoint `c1efa26`: `checkpoint: complete G61 live failover`
+
+### Scope and acceptance
+
+- Play, pause, resume, forward/backward seek, speed change, and episode reset
+  rebuild a finite danmaku timeline.
+- Scroll, top, bottom, and reverse items use bounded track allocation with
+  `maxActive`, `maxPerSecond`, `trackCount`, density, and display settings.
+- Text is plain text only; unsafe XML, HTML/script/image/SVG content, source
+  labels, user hashes, and regex hazards are bounded or redacted.
+- Keyword, regex, type, and source filters persist through the existing
+  SQLite `settings` table.
+- VOD and local/fixture live timelines are covered by tests; packaged E2E
+  covers danmaku load, playback sync, and overlay state.
+
+### Verification commands
+
+```powershell
+git diff --check
+npm run typecheck
+npm test
+npm run renderer:build
+npm run electron:build
+npm run electron:package:win
+npm run electron:e2e:package
+```
+
+### Documentation
+
+- `docs/spike-62-danmaku.md`
+- `docs/design/open-design/stage-5/design-extension.md`
+- `docs/design/open-design/stage-5/danmaku-spec.md`
+
+### Checkpoint
+
+```text
+checkpoint: complete G62 danmaku
+```
+
 ## Stage 4 (completed)
 
 直播与 EPG 闭环已完成：授权 M3U/TXT 导入、Live 浏览与播放、XMLTV、EPG

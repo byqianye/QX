@@ -65,6 +65,7 @@ export function normalizePlayerResult(result: unknown): PlayerResult {
     url,
     headers: headersValue(raw.header ?? raw.headers),
     ...(subtitles.length > 0 ? { subtitles } : {}),
+    ...(raw.danmaku !== undefined ? { danmaku: raw.danmaku } : {}),
   };
 }
 

@@ -7,6 +7,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ImportTrustStore } from "../src/config/trust.js";
+import { DanmakuService } from "../src/danmaku/danmaku-service.js";
 import {
   DesktopSpiderImportController,
 } from "../src/desktop/spider-import.js";
@@ -111,6 +112,8 @@ describe("packaged Electron E2E flow", () => {
       createSession: (_source, _config, site) => new SessionFixture(site.api ?? "csp_Douban"),
     });
     const dataServices = createHistoryService(resources, directory);
+    const danmaku = new DanmakuService({ settings: new SettingsRepository(dataServices.layer) });
+    resources.push({ close: async () => danmaku.close() });
     const cache = new CacheService({
       root: join(directory, "cache"),
       repository: new CacheRepository(dataServices.layer),
@@ -132,6 +135,7 @@ describe("packaged Electron E2E flow", () => {
       }),
       cache,
       storage,
+      danmaku,
       playbackProxyOrigins: ["http://127.0.0.1:43123"],
       parserCandidates: [
         {
@@ -178,6 +182,7 @@ describe("packaged Electron E2E flow", () => {
       getSidecarPid: () => 4321,
       waitForSidecarExit: async () => true,
       verifySubtitleTracks: true,
+      verifyDanmaku: true,
       verifyPlaybackHealth: true,
       verifyParserFallback: true,
       verifyPlaybackFallback: true,
@@ -207,6 +212,7 @@ describe("packaged Electron E2E flow", () => {
         singlePlaybackSession: true,
         noBackgroundPlayer: true,
         subtitleTracks: true,
+        danmaku: true,
         playbackHealth: true,
         aggregateSearch: true,
         parserFallback: true,

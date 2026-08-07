@@ -110,6 +110,7 @@ export interface PlayerResult {
   url: string;
   headers: Record<string, string>;
   subtitles?: readonly import("../subtitles.js").SubtitleTrack[];
+  danmaku?: unknown;
 }
 
 export class MediaSourceError extends Error {

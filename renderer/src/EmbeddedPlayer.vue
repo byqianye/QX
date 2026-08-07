@@ -4,6 +4,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import PlayerControls from "./PlayerControls.vue";
 import SubtitleTrackPanel from "./SubtitleTrackPanel.vue";
+import DanmakuOverlay from "./DanmakuOverlay.vue";
 import { PLAYBACK_RESTORE_MAX_DRIFT_SECONDS, type PlayerMediaSync, type PlayerState } from "./state.js";
 import {
   SubtitleObjectUrlRegistry,
@@ -17,13 +18,14 @@ import {
   type SubtitleTrack,
 } from "../../src/subtitles.js";
 import type { PlaybackMediaEvent } from "../../src/desktop/playback.js";
+import type { DanmakuUiState } from "../../src/danmaku/danmaku-types.js";
 
 const PLAYBACK_STARTUP_TIMEOUT_MS = 10_000;
 
 const windowWithHls = window as Window & { Hls?: typeof Hls };
 windowWithHls.Hls ??= Hls;
 
-const props = defineProps<{ state: PlayerState; detachable?: boolean }>();
+const props = defineProps<{ state: PlayerState; detachable?: boolean; danmaku?: DanmakuUiState }>();
 const emit = defineEmits<{
   sync: [value: PlayerMediaSync];
   detach: [];
@@ -506,19 +508,26 @@ function parserStatusLabel(
   >
     <strong>内嵌播放器</strong>
     <template v-if="props.state.source">
-      <video ref="video" data-testid="embedded-player" playsinline controls preload="metadata">
-        <track
-          v-for="subtitle in subtitleSources"
-          :key="subtitle.id"
-          ref="subtitleElements"
-          kind="subtitles"
-          :src="subtitle.url"
-          :srclang="subtitle.language"
-          :label="subtitle.label"
-          :data-subtitle-id="subtitle.id"
-          :default="subtitle.forced || subtitle.id === selectedSubtitleId"
-        >
-      </video>
+      <div class="player-video-stage">
+        <video ref="video" data-testid="embedded-player" playsinline controls preload="metadata">
+          <track
+            v-for="subtitle in subtitleSources"
+            :key="subtitle.id"
+            ref="subtitleElements"
+            kind="subtitles"
+            :src="subtitle.url"
+            :srclang="subtitle.language"
+            :label="subtitle.label"
+            :data-subtitle-id="subtitle.id"
+            :default="subtitle.forced || subtitle.id === selectedSubtitleId"
+          >
+        </video>
+        <DanmakuOverlay
+          v-if="props.danmaku"
+          :state="props.danmaku"
+          :current-time="currentTime"
+        />
+      </div>
       <SubtitleTrackPanel
         :tracks="subtitleTracks"
         :enabled="subtitleEnabled"

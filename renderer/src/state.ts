@@ -5,6 +5,7 @@ import type { PlaybackMediaEvent } from "../../src/desktop/playback.js";
 import type { HistoryResumeCandidate, HistoryUiState } from "../../src/history/history-types.js";
 import type { FavoriteItem, FavoritesUiState } from "../../src/favorites/favorites-types.js";
 import type { FollowItem, FollowUiState } from "../../src/follow/follow-types.js";
+import type { CacheUiState } from "../../src/cache/cache-types.js";
 
 export type ImportStatus =
   | "empty"
@@ -265,6 +266,7 @@ export interface RendererState {
   favoriteDetail: FavoriteItem | null;
   follow: FollowUiState;
   followDetail: FollowItem | null;
+  cache: CacheUiState;
   error: ErrorState;
 }
 
@@ -294,6 +296,7 @@ export interface ApiSpiderState {
   favoriteDetail?: FavoriteItem | null;
   follow?: FollowUiState;
   followDetail?: FollowItem | null;
+  cache?: CacheUiState;
 }
 
 export interface RendererEnvelope {
@@ -353,6 +356,7 @@ export function createRendererState(): RendererState {
     favoriteDetail: null,
     follow: { items: [], checking: false, updateCount: 0 },
     followDetail: null,
+    cache: { totalBytes: 0, maxBytes: 0, entries: 0, byType: [] },
     error: { error: null },
   };
 }
@@ -413,6 +417,7 @@ export function applyRendererEnvelope(
     favoriteDetail: state.favoriteDetail ? { ...state.favoriteDetail } : null,
     follow: cloneFollowState(state.follow ?? current.follow),
     followDetail: state.followDetail ? { ...state.followDetail } : null,
+    cache: cloneCacheState(state.cache ?? current.cache),
     error: { error: toAppError(stateError) },
   };
 }
@@ -539,6 +544,15 @@ function cloneFollowState(state: FollowUiState): FollowUiState {
     checking: state.checking,
     updateCount: state.updateCount,
     items: state.items.map((item) => ({ ...item })),
+  };
+}
+
+function cloneCacheState(state: CacheUiState): CacheUiState {
+  return {
+    totalBytes: state.totalBytes,
+    maxBytes: state.maxBytes,
+    entries: state.entries,
+    byType: state.byType.map((item) => ({ ...item })),
   };
 }
 

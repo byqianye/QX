@@ -18,8 +18,9 @@ import type {
 import type { SpiderResponse } from "../src/spider/rpc.js";
 import type { SubtitleTrack } from "../src/subtitles.js";
 import { runPackagedE2e } from "../src/electron/e2e-runner.js";
-import { FavoritesRepository, FollowRepository, HistoryRepository, PlaybackProgressRepository, SettingsRepository } from "../src/data/repositories.js";
+import { CacheRepository, FavoritesRepository, FollowRepository, HistoryRepository, PlaybackProgressRepository, SettingsRepository } from "../src/data/repositories.js";
 import { SqliteDataLayer } from "../src/data/sqlite.js";
+import { CacheService } from "../src/cache/cache-service.js";
 import { FavoritesService } from "../src/favorites/favorites-service.js";
 import { FollowService } from "../src/follow/follow-service.js";
 import { HistoryProgressService } from "../src/history/history-progress.js";
@@ -109,6 +110,10 @@ describe("packaged Electron E2E flow", () => {
       createSession: (_source, _config, site) => new SessionFixture(site.api ?? "csp_Douban"),
     });
     const dataServices = createHistoryService(resources, directory);
+    const cache = new CacheService({
+      root: join(directory, "cache"),
+      repository: new CacheRepository(dataServices.layer),
+    });
     const uiServer = new DesktopSpiderUiServer({
       importer,
       history: dataServices.service,
@@ -122,6 +127,7 @@ describe("packaged Electron E2E flow", () => {
         follow: new FollowRepository(dataServices.layer),
         history: new HistoryRepository(dataServices.layer),
       }),
+      cache,
       playbackProxyOrigins: ["http://127.0.0.1:43123"],
       parserCandidates: [
         {
@@ -174,6 +180,7 @@ describe("packaged Electron E2E flow", () => {
       verifyHistory: true,
       verifyFavorites: true,
       verifyFollow: true,
+      verifyCache: true,
       verifyAggregateSearch: true,
       verifyFakeMpv: true,
       fakeMpv: async () => true,
@@ -203,6 +210,7 @@ describe("packaged Electron E2E flow", () => {
         historyRestart: true,
         favorites: true,
         follow: true,
+        cache: true,
         fakeMpvExit: true,
         proxyCleanup: true,
         snifferCleanup: true,

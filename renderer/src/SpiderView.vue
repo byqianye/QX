@@ -11,6 +11,7 @@ import FilterPanel from "./FilterPanel.vue";
 import FavoritesView from "./FavoritesView.vue";
 import FollowView from "./FollowView.vue";
 import HistoryView from "./HistoryView.vue";
+import CacheManagement from "./CacheManagement.vue";
 import MediaGrid from "./MediaGrid.vue";
 import PlaybackSelector from "./PlaybackSelector.vue";
 import PlaybackHealthPanel from "./PlaybackHealthPanel.vue";
@@ -82,6 +83,8 @@ const emit = defineEmits<{
   followMarkUnwatched: [identity: string];
   followToggle: [];
   followAndFavorite: [];
+  cacheRefresh: [];
+  cacheClear: [scope: "expired" | "images" | "search" | "all"];
 }>();
 
 const view = ref<"browse" | "history" | "favorites" | "follow" | "settings">(props.initialNavigation === "settings"
@@ -379,6 +382,12 @@ function navigationFromPage(page: string): RendererNavigation {
           <SettingsSection title="隐私" description="凭据、Cookie、完整播放地址和本机路径不在界面回显。">
             <div class="settings-row"><span>renderer 数据边界</span><strong>仅 typed IPC</strong></div>
           </SettingsSection>
+          <CacheManagement
+            :state="props.state.cache"
+            :pending="props.pending"
+            @refresh="emit('cacheRefresh')"
+            @clear="emit('cacheClear', $event)"
+          />
         </template>
 
         <FavoritesView

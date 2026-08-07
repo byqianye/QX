@@ -566,6 +566,13 @@ export class HealthRepository {
 export class CacheRepository {
   public constructor(private readonly db: SqliteDataLayer) {}
 
+  public get(cacheKey: string): CacheEntryRecord | null {
+    const row = this.db.prepare(
+      "SELECT * FROM cache_entries WHERE cache_key = ?",
+    ).get(cacheKey);
+    return row ? cacheFromRow(row) : null;
+  }
+
   public upsert(record: CacheEntryRecord): void {
     try {
       this.db.prepare(`
@@ -605,6 +612,24 @@ export class CacheRepository {
       ? this.db.prepare("SELECT * FROM cache_entries ORDER BY accessed_at DESC").all()
       : this.db.prepare("SELECT * FROM cache_entries WHERE type = ? ORDER BY accessed_at DESC").all(type);
     return rows.map(cacheFromRow);
+  }
+
+  public touch(cacheKey: string, accessedAt: number): void {
+    try {
+      this.db.prepare(
+        "UPDATE cache_entries SET accessed_at = ? WHERE cache_key = ?",
+      ).run(accessedAt, cacheKey);
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public delete(cacheKey: string): void {
+    try {
+      this.db.prepare("DELETE FROM cache_entries WHERE cache_key = ?").run(cacheKey);
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
   }
 
   public clearCategory(type: string): void {

@@ -25,9 +25,10 @@ import {
   type SnifferViolation,
 } from "../src/electron/isolated-sniffer.js";
 import type { SpiderResponse } from "../src/spider/rpc.js";
-import { HistoryRepository, PlaybackProgressRepository, SettingsRepository } from "../src/data/repositories.js";
+import { CacheRepository, HistoryRepository, PlaybackProgressRepository, SettingsRepository } from "../src/data/repositories.js";
 import { SqliteDataLayer } from "../src/data/sqlite.js";
 import { HistoryProgressService } from "../src/history/history-progress.js";
+import { CacheService } from "../src/cache/cache-service.js";
 
 describe("desktop Spider UI", () => {
   const servers: DesktopSpiderUiServer[] = [];
@@ -503,6 +504,39 @@ describe("desktop Spider UI", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("javascript");
     expect(await response.text()).toContain("Hls");
+  });
+
+  it("exposes cache state and category clearing through the local API", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "qx-desktop-cache-"));
+    historyDirectories.push(directory);
+    const layer = SqliteDataLayer.create(join(directory, "qx-yingshi.db"));
+    historyLayers.push(layer);
+    const cache = new CacheService({
+      root: join(directory, "cache"),
+      repository: new CacheRepository(layer),
+    });
+    await cache.put({ type: "search", key: "fixture", bytes: Buffer.from("cached") });
+    const ui = new DesktopSpiderUiController({ session: new FixtureSession(), cache });
+    const server = new DesktopSpiderUiServer({
+      ui,
+      siteKey: "douban",
+      ext: "fixture-endpoint",
+      cache,
+    });
+    servers.push(server);
+    await server.start();
+
+    const refreshed = await post(server.url, "/api/cache/refresh");
+    expect(refreshed.state?.cache).toMatchObject({ entries: 1 });
+    const cleared = await post(server.url, "/api/cache/clear", { scope: "search" });
+    expect(cleared.state?.cache).toMatchObject({ entries: 0, totalBytes: 0 });
+    const rejected = await fetch(new URL("/api/cache/clear", server.url), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope: "history" }),
+    });
+    expect(rejected.status).toBe(400);
+    expect(await rejected.text()).toContain("CACHE_CLEAR_SCOPE_INVALID");
   });
 
   function createHistoryService(): HistoryProgressService {

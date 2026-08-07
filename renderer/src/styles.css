@@ -315,6 +315,10 @@ p { margin-bottom: 12px; }
 .settings-section { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; margin-bottom: 16px; padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
 .settings-section > .settings-row { grid-column: 1 / -1; width: 100%; }
 .settings-section h2 { margin-bottom: 4px; }
+.cache-management { grid-template-columns: minmax(0, 1fr) minmax(220px, 320px); }
+.cache-summary, .cache-breakdown { display: grid; gap: 0; min-width: 0; }
+.cache-breakdown, .cache-actions { grid-column: 1 / -1; }
+@media (max-width: 760px) { .cache-management { grid-template-columns: 1fr; } }
 
 .history-page { display: grid; gap: 20px; }
 .history-toolbar { display: grid; grid-template-columns: minmax(240px, 1fr) repeat(3, minmax(130px, 180px)); gap: 12px; align-items: end; }

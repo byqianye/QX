@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:http";
 import { createHash } from "node:crypto";
 import {
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -131,6 +132,7 @@ try {
   assertPersistedHistoryPrivacy(userData);
   assertPersistedFavoritesPrivacy(userData);
   assertPersistedFollowPrivacy(userData);
+  assertPersistedCacheRoot(userData);
 
   const second = await runPackagedExecutable(executable, {
     QX_ELECTRON_E2E: "1",
@@ -159,6 +161,7 @@ try {
   assertPersistedHistoryPrivacy(userData);
   assertPersistedFavoritesPrivacy(userData);
   assertPersistedFollowPrivacy(userData);
+  assertPersistedCacheRoot(userData);
 
   console.log(JSON.stringify({
     probe: "packaged-electron-e2e",
@@ -283,6 +286,12 @@ function assertPersistedFollowPrivacy(userDataPath: string): void {
     }
   } finally {
     database.close();
+  }
+}
+
+function assertPersistedCacheRoot(userDataPath: string): void {
+  if (!existsSync(join(userDataPath, "cache")) || !existsSync(join(userDataPath, "qx-yingshi.db"))) {
+    throw new Error("Packaged E2E cache root or user database was not preserved");
   }
 }
 

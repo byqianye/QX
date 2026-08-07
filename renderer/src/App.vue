@@ -307,6 +307,8 @@ function play(line: number, episode: number, resumeMode?: HistoryResumeMode): vo
       @follow-mark-unwatched="post('follow-mark-unwatched', '/api/follow/mark-unwatched', { identity: $event })"
       @follow-toggle="post('follow-toggle-detail', '/api/follow/toggle-detail')"
       @follow-and-favorite="post('follow-and-favorite-detail', '/api/follow/favorite-detail')"
+      @cache-refresh="post('cache-refresh', '/api/cache/refresh')"
+      @cache-clear="post('cache-clear', '/api/cache/clear', { scope: $event })"
     />
   </div>
 </template>

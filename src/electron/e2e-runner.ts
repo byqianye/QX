@@ -21,6 +21,7 @@ export interface PackagedE2eOptions {
   verifyHistory?: boolean;
   verifyFavorites?: boolean;
   verifyFollow?: boolean;
+  verifyCache?: boolean;
   expectedFavoriteId?: string;
   expectedFollowIdentity?: string;
   verifyParserFallback?: boolean;
@@ -81,6 +82,7 @@ export interface PackagedE2eChecks {
   favoritesRestart?: boolean;
   follow?: boolean;
   followRestart?: boolean;
+  cache?: boolean;
 }
 
 export interface PackagedE2eResult {
@@ -197,6 +199,14 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       || (doubanErrorHtml.includes('data-testid="error-state"')
         && doubanErrorHtml.includes('data-testid="error-diagnostic"')
         && doubanErrorHtml.includes('data-action="copy-diagnostic"'));
+
+    if (options.verifyCache) {
+      const refreshedCache = await post(options.baseUrl, "/api/cache/refresh");
+      const clearedCache = await post(options.baseUrl, "/api/cache/clear", { scope: "all" });
+      checks.cache = validCacheState(refreshedCache.state?.cache)
+        && validCacheState(clearedCache.state?.cache)
+        && clearedCache.state?.cache?.entries === 0;
+    }
 
     if (options.playback) {
       const playbackImport = await load(options.baseUrl, options.playback.configJson);
@@ -610,6 +620,19 @@ function emptyChecks(): PackagedE2eChecks {
   };
 }
 
+function validCacheState(value: UiState["cache"]): value is NonNullable<UiState["cache"]> {
+  return isRecord(value)
+    && typeof value.totalBytes === "number"
+    && typeof value.maxBytes === "number"
+    && typeof value.entries === "number"
+    && Array.isArray(value.byType)
+    && value.byType.length >= 11
+    && value.byType.every((item) => isRecord(item)
+      && typeof item.type === "string"
+      && typeof item.count === "number"
+      && typeof item.bytes === "number");
+}
+
 function followItem(state: UiState | null, identity: string | null): Record<string, unknown> | null {
   if (!state || !identity || !state.follow) return null;
   const item = state.follow.items.find((candidate) => candidate.identity === identity);
@@ -682,6 +705,12 @@ interface UiState {
     updateCount: number;
   };
   followDetail?: { identity?: string } | null;
+  cache?: {
+    totalBytes: number;
+    maxBytes: number;
+    entries: number;
+    byType: readonly { type: string; count: number; bytes: number }[];
+  };
 }
 
 function playerSourceUrl(state: UiState | null): string | null {

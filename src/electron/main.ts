@@ -37,6 +37,7 @@ import {
   type SqliteDataLayer,
 } from "../data/sqlite.js";
 import {
+  CacheRepository,
   FavoritesRepository,
   FollowRepository,
   HistoryRepository,
@@ -46,6 +47,7 @@ import {
 import { FavoritesService } from "../favorites/favorites-service.js";
 import { HistoryProgressService } from "../history/history-progress.js";
 import { FollowService } from "../follow/follow-service.js";
+import { CacheService } from "../cache/cache-service.js";
 import {
   IsolatedSniffer,
   type IsolatedSnifferPlatform,
@@ -92,6 +94,7 @@ let configHistoryStore: ConfigHistoryStore | undefined;
 let historyProgressService: HistoryProgressService | undefined;
 let favoritesService: FavoritesService | undefined;
 let followService: FollowService | undefined;
+let cacheService: CacheService | undefined;
 let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
 
 function getDesktopStateStore(): DesktopStateStorePort {
@@ -120,8 +123,13 @@ function getFollowService(): FollowService {
   if (!followService) throw new Error("Follow service is unavailable");
   return followService;
 }
+function getCacheService(): CacheService {
+  initializeDataLayer();
+  if (!cacheService) throw new Error("Cache service is unavailable");
+  return cacheService;
+}
 function initializeDataLayer(): void {
-  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService) return;
+  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService) return;
   const directories = new DataDirectoryResolver(app.getPath("userData")).resolve();
   const opened = openSqliteDataLayer(directories.database);
   dataLayer = opened.layer;
@@ -158,6 +166,10 @@ function initializeDataLayer(): void {
     db: opened.layer,
     follow: new FollowRepository(opened.layer),
     history: new HistoryRepository(opened.layer),
+  });
+  cacheService = new CacheService({
+    root: directories.cache,
+    repository: new CacheRepository(opened.layer),
   });
 }
 
@@ -220,6 +232,7 @@ function createShell(): DesktopShellRuntime {
         history: getHistoryProgressService(),
         favorites: getFavoritesService(),
         follow: getFollowService(),
+        cache: getCacheService(),
         onPlayerOpen: openPlayerWindow,
         onPlayerAttach: closePlayerWindow,
         onPlayerStop: closePlayerWindow,
@@ -479,6 +492,7 @@ function closeDataLayer(): void {
   historyProgressService = undefined;
   favoritesService = undefined;
   followService = undefined;
+  cacheService = undefined;
   const current = dataLayer;
   dataLayer = undefined;
   if (!current) return;
@@ -727,6 +741,7 @@ async function runE2e(baseUrl: string): Promise<void> {
       verifyHistory: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifyFavorites: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifyFollow: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
+      verifyCache: true,
       ...(process.env.QX_E2E_EXPECTED_FAVORITE_ID
         ? { expectedFavoriteId: process.env.QX_E2E_EXPECTED_FAVORITE_ID }
         : {}),

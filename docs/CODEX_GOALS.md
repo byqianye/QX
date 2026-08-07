@@ -870,6 +870,45 @@ npm run electron:e2e:package
 checkpoint: complete G53 follow updates
 ```
 
+## G54（已完成）
+
+### 目标
+
+正式管理非敏感、可再生缓存，并把容量、过期、LRU、安全路径和 Settings
+Storage / Cache UI 接入同一套 CacheService。
+
+### 范围
+
+- poster、backdrop、source config、home/category、search、detail、subtitle、EPG
+  placeholder、parser metadata、temporary。
+- 统一 hash + metadata cache key；文件只允许位于 cache root，拒绝 traversal 与
+  symlink/junction escape。
+- 独立 TTL、expired-first + LRU 容量清理、in-use lease 保护、图片 MIME/签名/大小
+  校验、下载失败 placeholder、并发重复请求去重。
+- Cache UI 只清理可再生缓存，不触碰 history、favorites、follow、settings 或数据库。
+- Authorization、Cookie、LocalProxy token、临时媒体 URL、sniff private state 和
+  mpv IPC 不进入缓存。
+
+### 验收与验证
+
+- `tests/cache.test.ts` 覆盖 put/get、TTL、expired、LRU、size、duplicate、traversal、
+  MIME、download failure、concurrent、category/all clear、restart、用户数据保护和
+  symlink 安全。
+- `tests/desktop-ui.test.ts`、`tests/vue-renderer.test.ts` 覆盖 API 与 Settings UI。
+- `tests/electron-e2e.test.ts` 与 packaged E2E 覆盖缓存状态 API、清理和 packaged cache
+  root / user database 保留。
+- `docs/spike-54-cache-management.md` 记录设计边界与风险。
+
+### 状态
+
+已完成。缓存元数据复用 SQLite `cache_entries`，用户数据不随缓存清理删除。
+
+### 检查点
+
+```text
+checkpoint: complete G54 cache management
+```
+
 DEX-1 ~ DEX-5（实验支线）
 
 - DEX-1：Android Emulator 探针

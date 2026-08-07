@@ -211,12 +211,22 @@ describe("Vue renderer", () => {
 
     expect(wrapper.get('[data-testid="desktop-spider-ui"]').attributes("data-theme")).toBe("dark");
     expect(wrapper.findAll('[data-testid="settings-section"]')).toHaveLength(6);
+    expect(wrapper.get('[data-testid="cache-management"]')).toBeTruthy();
     expect((wrapper.get("#search-key").element as HTMLInputElement).value).toBe("蜘蛛侠");
     expect(wrapper.get('[data-testid="diagnostic-panel"]').text()).toContain("STATE_PERSISTENCE_CORRUPT");
 
     await wrapper.get('[data-action="theme-mode"]').setValue("light");
     await flushPromises();
     expect((fetchMock.mock.calls as unknown as Array<[string]>).some(([path]) => path === "/api/view-state")).toBe(true);
+    await wrapper.get('[data-action="cache-refresh"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-action="cache-clear-all"]').trigger("click");
+    await flushPromises();
+    expect(fetchMock).toHaveBeenCalledWith("/api/cache/refresh", expect.objectContaining({ method: "POST" }));
+    expect(fetchMock).toHaveBeenCalledWith("/api/cache/clear", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ scope: "all" }),
+    }));
     wrapper.unmount();
   });
 
@@ -811,6 +821,7 @@ function readyEnvelope(): RendererEnvelope {
       detail: null,
       playbackCatalog: null,
       playbackSelection: null,
+      cache: { totalBytes: 0, maxBytes: 512 * 1024 * 1024, entries: 0, byType: [] },
     },
   };
 }

@@ -15,3 +15,12 @@ aria2 只监听 `127.0.0.1`，每个 backend 使用随机高端口和 32-byte RP
 `npm run aria2:smoke` 使用包内 aria2 与本地媒体 fixture 完成真实 HTTP 下载，并验证目标文件非空；本次通过，下载 1546 bytes。
 
 测试仍覆盖 executable 解析优先级、参数数组、shell 禁用、secret 不泄露和进程退出清理。G71 不声称提供第三方影视源发现、DRM 解密或 Android DEX 兼容。
+## Size report
+
+Measured Windows x64 bundled media runtimes:
+
+| Component | Bytes |
+| --- | ---: |
+| mpv | 120,205,564 |
+| aria2 | 5,754,502 |
+| mpv + aria2 | 125,960,066 |

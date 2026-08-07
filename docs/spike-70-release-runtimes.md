@@ -41,3 +41,18 @@ npm run python:smoke
 ```
 
 结果：manifest/完整性测试通过；packaged first/restart E2E 通过；无系统 JDK 验证通过；关闭包内 JRE 时明确返回 `BUNDLED_JRE_MISSING`。
+## Size report
+
+Measured from the Windows x64 release build:
+
+| Component | Bytes |
+| --- | ---: |
+| Minimal bundled JRE | 32,199,101 |
+| Bundled CPython | 22,501,604 |
+| Bundled mpv | 120,205,564 |
+| Bundled aria2 | 5,754,502 |
+| `dist/electron-runtime` total | 180,700,729 |
+| Portable packaged directory | 2,356,785,019 |
+| NSIS setup artifact | 171,227,010 |
+
+The portable directory includes the packaged application tree; the setup artifact is the user-facing compressed installer.

@@ -1,6 +1,8 @@
 {
   "name": "qx-yingshi",
   "version": "0.1.0",
+  "description": "桌面端用户自有媒体与直播内容播放器",
+  "author": "QX影视",
   "private": true,
   "main": "dist/electron/src/electron/main.js",
   "type": "module",

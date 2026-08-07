@@ -1,6 +1,7 @@
-import { randomBytes, randomInt, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
+import { createServer } from "node:net";
 import { join } from "node:path";
 
 import type { DownloadBackendKind, DownloadStatus } from "./download-types.js";
@@ -237,7 +238,7 @@ export class Aria2Backend implements DownloadBackend {
   private readonly executablePath: string | null;
   private readonly spawnProcess: Aria2Spawn;
   private readonly fetchImpl: typeof fetch;
-  private readonly rpcPort: number;
+  private rpcPort: number;
   private readonly rpcSecret: string;
   private readonly requestTimeoutMs: number;
   private readonly shutdownTimeoutMs: number;
@@ -252,7 +253,7 @@ export class Aria2Backend implements DownloadBackend {
     this.available = this.executablePath !== null;
     this.spawnProcess = options.spawnProcess ?? defaultAria2Spawn;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
-    this.rpcPort = positiveInteger(options.rpcPort, randomInt(30_000, 60_000));
+    this.rpcPort = positiveInteger(options.rpcPort, 0);
     this.rpcSecret = options.rpcSecret ?? randomBytes(32).toString("hex");
     this.requestTimeoutMs = positiveInteger(options.requestTimeoutMs, 5_000);
     this.shutdownTimeoutMs = positiveInteger(options.shutdownTimeoutMs, 1_000);
@@ -400,6 +401,7 @@ export class Aria2Backend implements DownloadBackend {
     }
     if (this.startPromise) return this.startPromise;
     this.startPromise = Promise.resolve().then(async () => {
+      if (this.rpcPort === 0) this.rpcPort = await findAvailableRpcPort();
       const process = this.spawnProcess(this.executablePath!, [
         "--enable-rpc=true",
         "--rpc-listen-all=false",
@@ -546,6 +548,18 @@ function numberOrNull(value: unknown): number | null {
 
 function positiveInteger(value: number | undefined, fallback: number): number {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function findAvailableRpcPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen({ host: "127.0.0.1", port: 0 }, () => {
+      const address = server.address();
+      const port = typeof address === "object" && address !== null ? address.port : 0;
+      server.close((error) => error ? reject(error) : resolve(port));
+    });
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

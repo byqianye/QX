@@ -116,3 +116,10 @@ function validateRequiredBundledRuntimes(
 function resolveBundledRuntime(resourcesDirectory: string, id: BundledRuntimeId): boolean {
   return validateBundledRuntime(resourcesDirectory, id, false) === "ready";
 }
+
+export function sanitizedPackagedPythonEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const clean = { ...environment };
+  for (const name of ["PYTHONHOME", "PYTHONPATH", "PYTHONUSERBASE", "VIRTUAL_ENV"]) delete clean[name];
+  clean.PYTHONNOUSERSITE = "1";
+  return clean;
+}

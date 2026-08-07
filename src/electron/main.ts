@@ -27,7 +27,7 @@ import {
   type PackagedE2eResult,
 } from "./e2e-runner.js";
 import { runFakeMpvExitProbe } from "./fake-mpv-probe.js";
-import { resolveElectronRuntime } from "./runtime.js";
+import { resolveElectronRuntime, sanitizedPackagedPythonEnvironment } from "./runtime.js";
 import { DesktopShellRuntime } from "./shell-runtime.js";
 import { DataDirectoryResolver, DataStorageService, type DataDirectoryMode } from "../data/data-directory.js";
 import {
@@ -473,7 +473,7 @@ function createShell(): DesktopShellRuntime {
               spiderJar: runtime.spiderJar,
               spiderClass: runtime.spiderClass,
               pythonExecutable: runtime.pythonExecutable ?? (app.isPackaged ? "" : process.env.QX_PYTHON ?? "python"),
-              ...(app.isPackaged ? { pythonEnvironment: packagedPythonEnvironment() } : {}),
+              ...(app.isPackaged ? { pythonEnvironment: sanitizedPackagedPythonEnvironment(process.env) } : {}),
               ...(jellyfinConfig ? { jellyfinConfig } : {}),
               requestTimeoutMs: REQUEST_TIMEOUT_MS,
               startupTimeoutMs: STARTUP_TIMEOUT_MS,
@@ -799,13 +799,6 @@ function forceExternalJavaDisabled(): boolean {
 
 function forceBundledJreDisabled(): boolean {
   return process.env.QX_ELECTRON_FORCE_NO_BUNDLED_JRE === "1";
-}
-
-function packagedPythonEnvironment(): NodeJS.ProcessEnv {
-  const environment = { ...process.env };
-  for (const name of ["PYTHONHOME", "PYTHONPATH", "PYTHONUSERBASE", "VIRTUAL_ENV"]) delete environment[name];
-  environment.PYTHONNOUSERSITE = "1";
-  return environment;
 }
 
 async function closeShell(closeData = false): Promise<void> {

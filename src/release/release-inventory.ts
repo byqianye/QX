@@ -12,7 +12,7 @@ const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"))
   devDependencies?: Record<string, string>;
 };
 const lock = JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8")) as {
-  packages?: Record<string, { version?: string; resolved?: string } | undefined>;
+  packages?: Record<string, { version?: string; resolved?: string; license?: string } | undefined>;
 };
 const runtimeManifest = join(root, "dist", "electron-runtime", "runtime-manifest.json");
 
@@ -20,6 +20,43 @@ if (!existsSync(runtimeManifest)) throw new Error("Build the bundled runtime bef
 
 await mkdir(output, { recursive: true });
 await copyFile(runtimeManifest, join(output, "runtime-manifest.json"));
+const runtime = JSON.parse(readFileSync(runtimeManifest, "utf8")) as {
+  runtimes: Record<string, {
+    bundled: boolean;
+    version: string;
+    license: string;
+    source: string;
+    archiveSha256: string;
+    licenseFiles: readonly string[];
+  }>;
+};
+const npmComponents = Object.entries(lock.packages ?? {})
+  .filter(([path, value]) => path.startsWith("node_modules/") && value?.version)
+  .map(([path, value]) => {
+    const name = path.slice("node_modules/".length);
+    const production = packageJson.dependencies?.[name] !== undefined;
+    const development = packageJson.devDependencies?.[name] !== undefined;
+    return {
+      type: "library",
+      name,
+      version: value!.version,
+      scope: production ? "required" : development ? "development" : "optional",
+      ...(value!.resolved ? { purl: `pkg:npm/${encodeURIComponent(name)}@${value!.version}` } : {}),
+      ...(value!.license
+        ? { licenses: [{ license: { id: value!.license } }] }
+        : { properties: [{ name: "qx:licenseStatus", value: "unknown-until-legal-review" }] }),
+    };
+  });
+const runtimeComponents = Object.entries(runtime.runtimes).map(([id, value]) => ({
+  type: "file",
+  name: `qx-runtime-${id}`,
+  version: value.version,
+  scope: value.bundled ? "required" : "optional",
+  hashes: [{ alg: "SHA-256", content: value.archiveSha256 }],
+  licenses: [{ license: { id: value.license } }],
+  externalReferences: [{ type: "distribution", url: value.source }],
+  properties: value.licenseFiles.map((path) => ({ name: "qx:licenseFile", value: path })),
+}));
 await writeFile(join(output, "sbom.cdx.json"), `${JSON.stringify({
   bomFormat: "CycloneDX",
   specVersion: "1.5",
@@ -31,18 +68,7 @@ await writeFile(join(output, "sbom.cdx.json"), `${JSON.stringify({
       version: packageJson.version,
     },
   },
-  components: Object.entries(lock.packages ?? {})
-    .filter(([path, value]) => path.startsWith("node_modules/") && value?.version)
-    .map(([path, value]) => {
-      const name = path.slice("node_modules/".length);
-      return {
-        type: "library",
-        name,
-        version: value!.version,
-        scope: packageJson.dependencies?.[name] ? "required" : "optional",
-        ...(value!.resolved ? { purl: `pkg:npm/${name.replace(/^@/, "").replace("/", "%2F")}@${value!.version}` } : {}),
-      };
-    }),
+  components: [...npmComponents, ...runtimeComponents],
 }, null, 2)}\n`, "utf8");
 
 const notices = [

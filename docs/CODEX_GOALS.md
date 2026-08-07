@@ -1683,6 +1683,14 @@ first/restart E2E passes with `liveFailoverEpgContinuity=true`.
 
 - G69 checkpoint `71cad93`
 
+### Scope
+
+- 修复 packaged first/restart E2E 的 Smart Channel failover EPG continuity，并固化 R70 发布基线。
+
+### Acceptance
+
+- `liveFailoverEpgContinuity=true`，且完整测试与 packaged E2E 通过。
+
 ### Verification commands
 
 ```powershell
@@ -1719,6 +1727,14 @@ Completed. Release-mode packaging copies all four fixed runtimes, writes executa
 
 - R70 checkpoint `4d42fd4`
 
+### Scope
+
+- 固定并打包 Windows x64 的 JRE、CPython、mpv、aria2，启动链拒绝缺失或篡改的 bundled runtime。
+
+### Acceptance
+
+- release-mode manifest 含四项 runtime、来源归档 hash 与可执行文件 hash；发布启动不回退到宿主机运行时。
+
 ### Verification commands
 
 ```powershell
@@ -1752,6 +1768,14 @@ Completed. Bundled path resolution and explicit override tests pass; mpv real IP
 ### Dependency
 
 - G70
+
+### Scope
+
+- 固定 mpv/aria2 的包内路径、启动参数、localhost RPC、随机 secret/port 和退出清理。
+
+### Acceptance
+
+- bundled path 单测、真实 mpv IPC smoke 和真实 aria2 localhost 下载 smoke 全部通过。
 
 ### Verification commands
 
@@ -1787,6 +1811,14 @@ Completed for the automatable installer scope. `electron-builder` NSIS output wa
 
 - G71
 
+### Scope
+
+- 生成 per-user NSIS 安装器、快捷方式、升级迁移和默认保留用户数据的卸载选项；portable 包保持不变。
+
+### Acceptance
+
+- 安装器构建成功，未声明文件关联，用户数据删除组件默认未勾选。
+
 ### Verification commands
 
 ```powershell
@@ -1821,6 +1853,20 @@ Blocked at `g73_open_design_review_required`: the required Open Design transport
 
 - G72
 
+### Scope
+
+- 通过 Open Design 复核 icon、brand、startup/about 和 bundle 视觉一致性。
+
+### Acceptance
+
+- Open Design review 有可追溯结果后，才允许标记视觉验收通过；当前不宣称通过。
+
+### Verification commands
+
+```powershell
+npm run electron:installer:win
+```
+
 ### Documentation
 
 - `docs/spike-73-brand-bundle.md`
@@ -1839,6 +1885,14 @@ Completed for the automatable material-generation scope. `release:inventory` emi
 ### Dependency
 
 - G73 engineering bundle check; G73 visual review remains pending
+
+### Scope
+
+- 生成 runtime manifest 副本、第三方 notices、许可证路径、CycloneDX SBOM、依赖清单和脱敏构建元数据。
+
+### Acceptance
+
+- `release:inventory` 成功生成全部材料，SBOM 包含 npm 依赖和四项 bundled runtime，元数据不含 secrets。
 
 ### Verification commands
 
@@ -1867,6 +1921,14 @@ Completed for the automated audit scope. Production dependency and full dependen
 
 - G74
 
+### Scope
+
+- 执行依赖漏洞、凭据、runtime hash、release fallback、进程参数和 localhost RPC 边界审计。
+
+### Acceptance
+
+- 无未解决 Critical/High 漏洞或硬编码凭据；审计证据写入安全审查文档。
+
 ### Verification commands
 
 ```powershell
@@ -1879,6 +1941,7 @@ npm run electron:e2e:package
 ### Documentation
 
 - `docs/spike-75-security-audit.md`
+- `docs/security/release-security-review.md`
 - `verification/G75/README.md`
 
 ## G76 (blocked external validation)
@@ -1894,6 +1957,21 @@ Blocked at `blocked_external_clean_windows_validation`. Local automatable checks
 ### Dependency
 
 - G75
+
+### Scope
+
+- 在无宿主 Node/JDK/Python/mpv/aria2 的 clean Windows 环境执行首次安装、运行时、升级、卸载、portable 隔离及进程/端口清理验证。
+
+### Acceptance
+
+- clean Windows 全矩阵通过并保留可复核证据；当前因缺少真实 VM 保持 blocked。
+
+### Verification commands
+
+```powershell
+Get-Command VBoxManage,vmrun,docker,Get-VM -ErrorAction SilentlyContinue
+npm run electron:e2e:package
+```
 
 ### Documentation
 
@@ -1912,6 +1990,27 @@ G77 and G78 remain gated and cannot be marked RC_READY or release_candidate_read
 
 Blocked by G76. Local packaged fixture matrix and real mpv/aria2 smokes are recorded, but G77 is not `RC_READY`.
 
+### Dependency
+
+- G76 clean Windows validation
+
+### Scope
+
+- 执行 RC-only full regression matrix，覆盖真实 bundled runtimes、性能、子进程、端口清理和隐藏 skip。
+
+### Acceptance
+
+- 全矩阵通过且无隐藏 skip，才可标记 `RC_READY`；当前不标记。
+
+### Verification commands
+
+```powershell
+npm test -- --maxWorkers=1 --minWorkers=1 --reporter=dot
+npm run electron:e2e:package
+npm run mpv:smoke
+npm run aria2:smoke
+```
+
 ### Documentation
 
 - `docs/spike-77-release-candidate-regression.md`
@@ -1926,6 +2025,27 @@ Blocked by G76. Local packaged fixture matrix and real mpv/aria2 smokes are reco
 ### Status
 
 Not ready. Blocked by `g73_open_design_review_required` and `blocked_external_clean_windows_validation`; no stable production claim is made.
+
+### Dependency
+
+- G73 Open Design review
+- G76 clean Windows validation
+
+### Scope
+
+- 复核候选 artifact、版本一致性、hash、文档和本地 release commit，不自动 push。
+
+### Acceptance
+
+- G73、G76、G77 全部通过后，才可生成候选版本记录；当前不生成 release commit。
+
+### Verification commands
+
+```powershell
+npm run electron:installer:win
+npm run release:inventory
+git diff --check
+```
 
 ### Documentation
 

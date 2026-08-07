@@ -228,7 +228,6 @@ describe("G64 download manager", () => {
       executablePath: "aria2c.exe",
       exists: () => true,
       rpcSecret: "test-secret",
-      rpcPort: 18_765,
       spawnProcess: (_file, args, options) => {
         calls.push({ args, shell: options.shell });
         const listeners = new Set<() => void>();
@@ -260,6 +259,10 @@ describe("G64 download manager", () => {
     await cleanBackend.add({ url: "https://media.example.test/files/second.mp4", targetDirectory: targetPath, filename: "second.mp4" });
     await cleanBackend.shutdown();
     expect(processes[1]?.killed).toBe(false);
+    const autoPort = calls.filter((call) => call.args.length > 0)[1]?.args
+      .find((arg) => arg.startsWith("--rpc-listen-port="));
+    expect(autoPort).toMatch(/^--rpc-listen-port=\d+$/);
+    expect(autoPort).not.toBe("--rpc-listen-port=0");
     expect(added).toMatchObject({ backendId: "gid-1", status: "starting" });
     expect(status).toMatchObject({ status: "downloading", totalBytes: 100, completedBytes: 12, speed: 8 });
     expect(calls.some((call) => call.shell === false)).toBe(true);

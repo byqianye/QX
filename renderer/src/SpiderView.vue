@@ -25,6 +25,7 @@ import SourceSwitcher from "./SourceSwitcher.vue";
 import TopSearchBar from "./TopSearchBar.vue";
 import PlaybackDebugPanel from "./PlaybackDebugPanel.vue";
 import DanmakuSettingsPanel from "./DanmakuSettingsPanel.vue";
+import PushSettingsPanel from "./PushSettingsPanel.vue";
 import { PlaybackDebugTimeline } from "./playback-debug.js";
 import { displaySource } from "./safe-display.js";
 import type {
@@ -155,6 +156,11 @@ const emit = defineEmits<{
   downloadRetry: [taskId: string];
   downloadRemove: [taskId: string];
   downloadOpenFolder: [targetDirectoryId: string];
+  pushSettings: [patch: { enabled: boolean; port: number; confirmationPolicy: "ask" | "allow-trusted-local"; conflictMode: "replace" | "queue" | "reject" }];
+  pushConfirm: [id: string];
+  pushReject: [id: string];
+  pushCancel: [id: string];
+  pushClear: [];
 }>();
 
 const view = ref<"browse" | "history" | "favorites" | "follow" | "settings" | "live" | "local" | "downloads">(props.initialNavigation === "settings"
@@ -536,6 +542,15 @@ function navigationFromPage(page: string): RendererNavigation {
             @load="emit('danmakuLoad', $event)"
             @clear="emit('danmakuClear')"
             @settings="emit('danmakuSettings', $event)"
+          />
+          <PushSettingsPanel
+            :state="props.state.push"
+            :pending="props.pending"
+            @settings="emit('pushSettings', $event)"
+            @confirm="emit('pushConfirm', $event)"
+            @reject="emit('pushReject', $event)"
+            @cancel="emit('pushCancel', $event)"
+            @clear="emit('pushClear')"
           />
           <SettingsSection title="诊断与日志" description="只展示主进程返回的脱敏诊断，不在 renderer 读取日志文件或凭据。">
             <DiagnosticPanel

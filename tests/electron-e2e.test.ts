@@ -228,7 +228,7 @@ describe("packaged Electron E2E flow", () => {
         snifferCleanup: true,
       },
     });
-  });
+  }, 20_000);
 });
 
 function createHistoryService(

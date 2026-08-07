@@ -61,6 +61,8 @@ import { EpgService } from "../epg/epg-service.js";
 import { DanmakuService } from "../danmaku/danmaku-service.js";
 import { LocalMediaService } from "../local-media/local-media-service.js";
 import { DownloadService, createDownloadBackend } from "../downloads/download-service.js";
+import { PushService, PushServiceError } from "../push/push-service.js";
+import type { PushRequest } from "../push/push-types.js";
 import {
   IsolatedSniffer,
   type IsolatedSnifferPlatform,
@@ -84,6 +86,7 @@ const PLAYBACK_RULES = playbackRulesEnvironment("QX_PLAYBACK_RULES_JSON");
 const PLAYBACK_FALLBACK_MODE = playbackFallbackModeEnvironment("QX_PLAYBACK_FALLBACK_MODE");
 const PLAYBACK_FALLBACK_MAX_ATTEMPTS = numberEnvironment("QX_PLAYBACK_FALLBACK_MAX_ATTEMPTS", 4);
 const PLAYBACK_FALLBACK_TIMEOUT_MS = numberEnvironment("QX_PLAYBACK_FALLBACK_TIMEOUT_MS", 30_000);
+const PUSH_TRUSTED_LOCAL_ORIGINS = listEnvironment("QX_PUSH_TRUSTED_LOCAL_ORIGINS");
 const LIVE_FAILOVER_MODE = liveFailoverModeEnvironment("QX_LIVE_FAILOVER_MODE");
 const LIVE_FAILOVER_MAX_ATTEMPTS = numberEnvironment("QX_LIVE_FAILOVER_MAX_ATTEMPTS", 3);
 const LIVE_FAILOVER_TIMEOUT_MS = numberEnvironment("QX_LIVE_FAILOVER_TIMEOUT_MS", 30_000);
@@ -120,6 +123,7 @@ let epgMatchingService: EpgMatchingService | undefined;
 let danmakuService: DanmakuService | undefined;
 let localMediaService: LocalMediaService | undefined;
 let downloadService: DownloadService | undefined;
+let pushService: PushService | undefined;
 let dataStorageService: DataStorageService | undefined;
 let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -191,7 +195,7 @@ function getDataStorageService(): DataStorageService {
   return dataStorageService;
 }
 function initializeDataLayer(): void {
-  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService && livePlaybackService && smartChannelService && epgService && epgMatchingService && danmakuService && localMediaService && downloadService) return;
+  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService && livePlaybackService && smartChannelService && epgService && epgMatchingService && danmakuService && localMediaService && downloadService && pushService) return;
   const dataStorage = getDataStorageService();
   const directories = dataStorage.prepare();
   const opened = openSqliteDataLayer(directories.database);
@@ -282,6 +286,17 @@ function initializeDataLayer(): void {
     db: opened.layer,
     backend: createDownloadBackend(),
   });
+  pushService = new PushService({
+    settings: new SettingsRepository(opened.layer),
+    ...(PUSH_TRUSTED_LOCAL_ORIGINS.length > 0 ? { trustedLocalOrigins: PUSH_TRUSTED_LOCAL_ORIGINS } : {}),
+    playback: {
+      getActiveSession: () => uiServer?.pushPlaybackSession() ?? null,
+      play: async (request: PushRequest) => {
+        if (!uiServer) throw new PushServiceError("PUSH_PLAYBACK_UNAVAILABLE", "桌面播放服务尚未启动。");
+        return uiServer.replacePush(request);
+      },
+    },
+  });
 }
 
 function createShell(): DesktopShellRuntime {
@@ -348,6 +363,7 @@ function createShell(): DesktopShellRuntime {
         danmaku: getDanmakuService(),
         localMedia: getLocalMediaService(),
         ...(downloadService ? { downloads: downloadService } : {}),
+        ...(pushService ? { push: pushService } : {}),
         live: getLiveSourceService(),
         ...(livePlaybackService ? { livePlayback: livePlaybackService } : {}),
         ...(smartChannelService ? { smartChannels: smartChannelService } : {}),
@@ -640,6 +656,7 @@ async function closeShell(closeData = false): Promise<void> {
 }
 
 async function closeDataLayer(): Promise<void> {
+  await pushService?.close().catch(() => undefined);
   await downloadService?.close().catch(() => undefined);
   await livePlaybackService?.close();
   epgService?.close();
@@ -658,6 +675,7 @@ async function closeDataLayer(): Promise<void> {
   danmakuService = undefined;
   localMediaService = undefined;
   downloadService = undefined;
+  pushService = undefined;
   dataStorageService = undefined;
   const current = dataLayer;
   dataLayer = undefined;
@@ -992,6 +1010,8 @@ async function runE2e(baseUrl: string): Promise<void> {
       ...(process.env.QX_E2E_LOCAL_MEDIA_FILE ? { localMediaFile: process.env.QX_E2E_LOCAL_MEDIA_FILE } : {}),
       verifyDownloads: Boolean(process.env.QX_E2E_DOWNLOAD_DIR),
       ...(process.env.QX_E2E_DOWNLOAD_DIR ? { downloadDirectory: process.env.QX_E2E_DOWNLOAD_DIR } : {}),
+      verifyPush: Boolean(process.env.QX_E2E_PUSH_URL),
+      ...(process.env.QX_E2E_PUSH_URL ? { pushUrl: process.env.QX_E2E_PUSH_URL } : {}),
       ...(process.env.QX_E2E_HLS_MASTER_URL ? { hlsMasterUrl: process.env.QX_E2E_HLS_MASTER_URL } : {}),
       ...(process.env.QX_E2E_HLS_CHILD_URL ? { hlsChildUrl: process.env.QX_E2E_HLS_CHILD_URL } : {}),
       verifySniffer: ISOLATED_SNIFFER_ENABLED,

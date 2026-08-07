@@ -1394,6 +1394,59 @@ npm run electron:e2e:package
 checkpoint: complete G64 download manager
 ```
 
+## G65 (completed)
+
+### Goal
+
+建立统一 `PushRequest` / `PushService`，支持 `push://` parser、localhost-only
+endpoint、URL/DNS/private/origin/redirect/header security、显式确认、Replace/
+Queue/Reject 冲突策略，并复用既有点播与直播 Playback Session。
+
+### Status
+
+Completed. G65 只监听 `127.0.0.1`，默认 Ask；设置持久化到现有 SQLite
+`settings` 表。URL 投送强制进入现有 LocalProxy，LAN、DLNA、Web Console 和
+PIN/session 鉴权分别留给 G66—G68。
+
+### Dependency
+
+- G64 checkpoint `e0b1288`: `checkpoint: complete G64 download manager`
+
+### Scope and acceptance
+
+- `url`、`source-item`、`local-file`、`live-channel`、`fixture` 五类 typed request
+  和 `push://` parser 通过 validation 后才可投送。
+- endpoint 仅绑定回环地址；请求头白名单拒绝 Host、Connection、Content-Length、
+  Proxy-*、Authorization、Cookie 和 CR/LF 注入。
+- HTTP/HTTPS、凭据、DNS、private/loopback/link-local、origin 和 redirect 边界有稳定测试；
+  LocalProxy 继续执行实际媒体重定向安全校验。
+- 未知 Push 必须显式 Play/Reject；冲突策略不产生多个播放器，队列可取消并在停止后消费。
+- Settings 显示启用、端口、确认策略、最近 Push、清理和 G68 LAN 占位；重启、关闭清理、
+  renderer、build/package 和 packaged E2E 覆盖。
+
+### Verification commands
+
+```powershell
+git diff --check
+npm run typecheck
+npm test
+npm run renderer:build
+npm run electron:build
+npm run electron:package:win
+npm run electron:e2e:package
+```
+
+### Documentation
+
+- `docs/spike-65-push-playback.md`
+- `docs/design/open-design/stage-5/cast-spec.md`
+
+### Checkpoint
+
+```text
+checkpoint: complete G65 push playback
+```
+
 ## Stage 4 (completed)
 
 直播与 EPG 闭环已完成：授权 M3U/TXT 导入、Live 浏览与播放、XMLTV、EPG

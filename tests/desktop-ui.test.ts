@@ -119,6 +119,20 @@ describe("desktop Spider UI", () => {
     expect(renderDesktopSpiderUi(ui.state)).not.toMatch(/data-testid="play-button"[^>]*disabled/);
   });
 
+  it("plays a Push source-item only through the selected source", async () => {
+    const fixture = new FixtureSession("source-a", "csp_PlayableFixture", true);
+    const ui = new DesktopSpiderUiController({ session: fixture });
+    fixture.confirmImport();
+    await ui.open("playable", "fixture-endpoint");
+
+    await ui.playPushSourceItem({ sourceId: "source-a", contentId: "headered", flag: "default" });
+    expect(fixture.calls).toContain("player:default:headered:");
+    await expect(ui.playPushSourceItem({ sourceId: "source-b", contentId: "headered", flag: "default" })).rejects.toMatchObject({
+      code: "PUSH_SOURCE_UNAVAILABLE",
+    });
+    await ui.close();
+  });
+
   it("routes a headered URL through a controlled LocalProxy session", async () => {
     const fixture = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
     const ui = new DesktopSpiderUiController({

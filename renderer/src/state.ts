@@ -15,6 +15,8 @@ import { EMPTY_LOCAL_MEDIA_UI_STATE } from "../../src/local-media/local-media-ty
 import type { LocalMediaUiState } from "../../src/local-media/local-media-types.js";
 import { EMPTY_DOWNLOAD_UI_STATE } from "../../src/downloads/download-types.js";
 import type { DownloadUiState } from "../../src/downloads/download-types.js";
+import { EMPTY_PUSH_UI_STATE } from "../../src/push/push-types.js";
+import type { PushUiState } from "../../src/push/push-types.js";
 
 export type ImportStatus =
   | "empty"
@@ -280,6 +282,7 @@ export interface RendererState {
   danmaku: DanmakuUiState;
   localMedia: LocalMediaUiState;
   downloads: DownloadUiState;
+  push: PushUiState;
   live: LiveUiState;
   error: ErrorState;
 }
@@ -316,6 +319,7 @@ export interface ApiSpiderState {
   live?: LiveUiState;
   localMedia?: LocalMediaUiState;
   downloads?: DownloadUiState;
+  push?: PushUiState;
 }
 
 export interface RendererEnvelope {
@@ -325,6 +329,7 @@ export interface RendererEnvelope {
   live?: LiveUiState | null;
   localMedia?: LocalMediaUiState | null;
   downloads?: DownloadUiState | null;
+  push?: PushUiState | null;
   error?: string;
   errorCode?: string;
 }
@@ -383,6 +388,7 @@ export function createRendererState(): RendererState {
     danmaku: cloneDanmakuState(EMPTY_DANMAKU_UI_STATE),
     localMedia: cloneLocalMediaState(EMPTY_LOCAL_MEDIA_UI_STATE),
     downloads: cloneDownloadState(EMPTY_DOWNLOAD_UI_STATE),
+    push: clonePushState(EMPTY_PUSH_UI_STATE),
     live: cloneLiveUiState(EMPTY_LIVE_UI_STATE),
     error: { error: null },
   };
@@ -409,6 +415,11 @@ export function applyRendererEnvelope(
     : state?.downloads
       ? cloneDownloadState(state.downloads)
       : current.downloads;
+  const push = envelope.push
+    ? clonePushState(envelope.push)
+    : state?.push
+      ? clonePushState(state.push)
+      : current.push;
   const envelopeError = envelope.error
     ? { code: envelope.errorCode ?? "RENDERER_REQUEST_ERROR", message: envelope.error }
     : null;
@@ -421,6 +432,7 @@ export function applyRendererEnvelope(
       live,
       localMedia,
       downloads,
+      push,
       error: {
         error: toAppError(nextError) ?? current.error.error,
       },
@@ -467,6 +479,7 @@ export function applyRendererEnvelope(
     danmaku: cloneDanmakuState(state.danmaku ?? current.danmaku),
     localMedia,
     downloads,
+    push,
     live,
     error: { error: toAppError(stateError) },
   };
@@ -590,6 +603,16 @@ function cloneLiveUiState(value: LiveUiState): LiveUiState {
       memberIds: [...suggestion.memberIds],
     })),
     activeSmartChannel: value.activeSmartChannel ? { ...value.activeSmartChannel } : null,
+  };
+}
+
+function clonePushState(value: PushUiState): PushUiState {
+  return {
+    ...value,
+    pending: value.pending.map((item) => ({ ...item })),
+    recent: value.recent.map((item) => ({ ...item, error: item.error ? { ...item.error } : null })),
+    activeSession: value.activeSession ? { ...value.activeSession } : null,
+    error: value.error ? { ...value.error } : null,
   };
 }
 

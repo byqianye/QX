@@ -47,6 +47,8 @@ export interface PackagedE2eOptions {
   localMediaFile?: string;
   verifyDownloads?: boolean;
   downloadDirectory?: string;
+  verifyPush?: boolean;
+  pushUrl?: string;
   fakeMpv?: () => Promise<boolean>;
   verifySniffer?: boolean;
   sniff?: () => Promise<SniffedMedia>;
@@ -86,6 +88,8 @@ export interface PackagedE2eChecks {
   localMediaRestart?: boolean;
   downloads?: boolean;
   downloadsRestart?: boolean;
+  push?: boolean;
+  pushRestart?: boolean;
   hlsTopology?: boolean;
   aggregateSearch?: boolean;
   proxyCleanup?: boolean;
@@ -676,6 +680,73 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       const playbackReady = await confirmIfNeeded(options.baseUrl, playbackImport.import.status);
       const playbackOpened = await post(options.baseUrl, "/api/open");
       const playbackHome = await post(options.baseUrl, "/api/home");
+      if (options.verifyPush) {
+        if (!options.pushUrl) throw new Error("Packaged Push E2E URL is not configured");
+        const beforePush = options.freshTrust
+          ? (await post(options.baseUrl, "/api/push/settings", {
+            enabled: true,
+            port: 0,
+            confirmationPolicy: "ask",
+            conflictMode: "replace",
+          })).state?.push
+          : playbackHome.state?.push ?? playbackHome.push;
+        if (!options.freshTrust) {
+          checks.pushRestart = beforePush?.listening === true
+            && beforePush.endpoint?.startsWith("http://127.0.0.1:") === true;
+        } else if (beforePush?.endpoint) {
+          const pushed = await postPush(beforePush.endpoint, {
+            uri: `push://url?url=${encodeURIComponent(options.pushUrl)}&title=Packaged%20Push`,
+          });
+          const confirmationId = isRecord(pushed.preview) && typeof pushed.preview.id === "string"
+            ? pushed.preview.id
+            : null;
+          const confirmed = confirmationId
+            ? await post(options.baseUrl, "/api/push/confirm", { id: confirmationId })
+            : null;
+          const pushState = confirmed?.state?.push ?? confirmed?.push;
+          const rejectedPush = await postPush(beforePush.endpoint, {
+            uri: `push://url?url=${encodeURIComponent(options.pushUrl)}&title=Packaged%20Reject`,
+          });
+          const rejectedId = isRecord(rejectedPush.preview) && typeof rejectedPush.preview.id === "string"
+            ? rejectedPush.preview.id
+            : null;
+          const rejected = rejectedId
+            ? await postPush(pushActionEndpoint(beforePush.endpoint, "confirm"), { id: rejectedId, decision: "play", mode: "reject" }, true)
+            : null;
+          const rejectedState = await post(options.baseUrl, "/api/push/refresh");
+          await post(options.baseUrl, "/api/push/settings", { conflictMode: "queue" });
+          const queuedPush = await postPush(beforePush.endpoint, {
+            uri: `push://url?url=${encodeURIComponent(options.pushUrl)}&title=Packaged%20Queue`,
+          });
+          const queuedId = isRecord(queuedPush.preview) && typeof queuedPush.preview.id === "string"
+            ? queuedPush.preview.id
+            : null;
+          const queued = queuedId
+            ? await postPush(pushActionEndpoint(beforePush.endpoint, "confirm"), { id: queuedId, decision: "play", mode: "queue" })
+            : null;
+          const cancelled = queuedId
+            ? await postPush(pushActionEndpoint(beforePush.endpoint, "cancel"), { id: queuedId })
+            : null;
+          const queuedRecent = isRecord(queued?.recent) ? queued.recent : null;
+          const cancelledRecent = isRecord(cancelled?.recent) ? cancelled.recent : null;
+          const queuedState = await post(options.baseUrl, "/api/push/refresh");
+          checks.push = pushed.kind === "confirmation-required"
+            && confirmationId !== null
+            && confirmed?.state?.playbackSession?.id !== undefined
+            && confirmed.state.player?.source?.url?.includes("/__qx_playback/") === true
+            && pushState?.recent[0]?.status === "accepted"
+            && !JSON.stringify(pushState?.recent[0]).includes(options.pushUrl)
+            && rejectedId !== null
+            && rejected?._status === 409
+            && rejectedState.state?.push?.recent.some((item) => item.status === "rejected") === true
+            && queuedId !== null
+            && queuedRecent?.status === "queued"
+            && cancelledRecent?.status === "cancelled"
+            && queuedState.state?.push?.recent.some((item) => item.status === "cancelled") === true;
+          await post(options.baseUrl, "/api/push/settings", { conflictMode: "replace" });
+          await post(options.baseUrl, "/api/player/stop");
+        }
+      }
       const playbackDetail = await post(options.baseUrl, "/api/detail", { vodId: "fixture:movie-1" });
       if (options.verifyHistory) {
         checks.historyRestart = options.freshTrust
@@ -1024,7 +1095,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
           && (!options.readWindowHtml || localHtml.includes('data-testid="local-media-page"'));
         checks.localMediaRestart = options.freshTrust
           ? true
-          : beforeLocal?.sourceType === "local" && beforeLocal.position === 3;
+          : (openedLocal.state?.history?.items.find((item) => item.sourceType === "local") ?? beforeLocal)?.position === 3;
         void options.localMediaFile;
       }
       if (options.verifyDownloads) {
@@ -1172,7 +1243,29 @@ async function post(
     import: value.import as unknown as ImportState,
     state: isRecord(value.state) ? value.state as unknown as UiState : null,
     ...(isRecord(value.downloads) ? { downloads: value.downloads as unknown as DownloadState } : {}),
+    ...(isRecord(value.push) ? { push: value.push as unknown as PushState } : {}),
   };
+}
+
+async function postPush(
+  endpoint: string,
+  body: Record<string, unknown>,
+  allowFailure = false,
+): Promise<Record<string, unknown>> {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const value: unknown = await response.json();
+  if (!isRecord(value) || (!response.ok && !allowFailure)) {
+    throw new Error(`Packaged Push request failed: ${response.status}`);
+  }
+  return { ...value, _status: response.status };
+}
+
+function pushActionEndpoint(endpoint: string, action: "confirm" | "cancel"): string {
+  return endpoint.endsWith("/push") ? `${endpoint}/${action}` : `${endpoint}/push/${action}`;
 }
 
 async function importLiveFailoverSource(baseUrl: string, name: string, location: string): Promise<UiEnvelope | null> {
@@ -1253,6 +1346,7 @@ async function getState(baseUrl: string): Promise<UiEnvelope> {
     import: value.import as unknown as ImportState,
     state: isRecord(value.state) ? value.state as unknown as UiState : null,
     ...(isRecord(value.downloads) ? { downloads: value.downloads as unknown as DownloadState } : {}),
+    ...(isRecord(value.push) ? { push: value.push as unknown as PushState } : {}),
   };
 }
 
@@ -1318,6 +1412,7 @@ interface UiEnvelope {
   import: ImportState;
   state: UiState | null;
   downloads?: DownloadState;
+  push?: PushState;
 }
 
 interface ImportState {
@@ -1339,6 +1434,15 @@ interface DownloadState {
   backend?: string;
   aria2Available?: boolean;
   error?: { code: string; message: string } | null;
+}
+
+interface PushState {
+  enabled: boolean;
+  configuredPort: number;
+  port: number | null;
+  listening: boolean;
+  endpoint: string | null;
+  recent: readonly { status: string }[];
 }
 
 interface UiState {
@@ -1399,6 +1503,7 @@ interface UiState {
     }[];
   };
   downloads?: DownloadState;
+  push?: PushState;
   historyResume?: { position: number } | null;
   favoriteDetail?: { favoriteId?: string; groupId?: string | null } | null;
   favorites?: {

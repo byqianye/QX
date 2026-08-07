@@ -120,6 +120,8 @@ import { EMPTY_LOCAL_MEDIA_UI_STATE, type LocalMediaUiState } from "../local-med
 import { DownloadError } from "../downloads/download-backend.js";
 import { DownloadService, DownloadServiceError } from "../downloads/download-service.js";
 import { EMPTY_DOWNLOAD_UI_STATE, type DownloadUiState } from "../downloads/download-types.js";
+import { PushService, PushServiceError } from "../push/push-service.js";
+import type { PushPlaybackSessionSnapshot, PushRequest, PushSourceReference, PushUrlRequest } from "../push/push-types.js";
 import {
   EMPTY_LIVE_UI_STATE,
   isLiveSourceType,
@@ -276,6 +278,7 @@ export interface DesktopSpiderUiOptions {
   danmaku?: DanmakuService;
   localMedia?: LocalMediaService;
   downloads?: DownloadService;
+  onPlaybackComplete?: () => void | Promise<void>;
 }
 
 export class DesktopSpiderUiController {
@@ -316,6 +319,7 @@ export class DesktopSpiderUiController {
   private readonly danmakuService: DanmakuService | undefined;
   private readonly localMediaService: LocalMediaService | undefined;
   private readonly downloadService: DownloadService | undefined;
+  private onPlaybackComplete: (() => void | Promise<void>) | undefined;
   private historyResume: HistoryResumeCandidate | null = null;
   private pendingResumeSeconds = 0;
 
@@ -330,6 +334,7 @@ export class DesktopSpiderUiController {
     this.danmakuService = options.danmaku;
     this.localMediaService = options.localMedia;
     this.downloadService = options.downloads;
+    this.onPlaybackComplete = options.onPlaybackComplete;
     this.parserCandidates = options.parserCandidates?.map(cloneParserCandidate) ?? [];
     this.sniffer = options.sniffer;
     this.parserAllowedOrigins = options.parserAllowedOrigins ?? [];
@@ -718,6 +723,65 @@ export class DesktopSpiderUiController {
     return this.state;
   }
 
+  public async playPushUrl(request: PushUrlRequest): Promise<DesktopSpiderUiState> {
+    await this.stopPlayer();
+    this.currentPlaybackRequest = null;
+    this.fallbackCoordinator.cancel("切换到 Push 媒体");
+    this.page = "home";
+    this.detailItem = null;
+    this.clearPlaybackCatalog();
+    this.playbackSelection = null;
+    this.localStatus = null;
+    this.localError = null;
+    this.parseState = {
+      status: "succeeded",
+      parserId: "push-url",
+      attempts: [],
+      error: null,
+    };
+    const playbackSessionId = randomUUID();
+    const mediaSource = await this.createMediaProxy(
+      { url: request.url, headers: request.headers ?? {} },
+      playbackSessionId,
+    );
+    const loaded = this.playerController.load(mediaSource);
+    if (loaded.error) {
+      await this.releasePlaybackProxy();
+      throw new PushServiceError(loaded.error.code, loaded.error.message);
+    }
+    const source = this.playerController.state.source;
+    if (!source) {
+      await this.releasePlaybackProxy();
+      throw new PushServiceError("PUSH_PLAYBACK_FAILED", "Push 媒体地址未能加载。");
+    }
+    this.playbackSession = {
+      id: playbackSessionId,
+      host: "embedded",
+      lineIndex: null,
+      episodeIndex: null,
+      lineName: "Push",
+      episodeName: request.title?.trim() || "外部媒体",
+      media: {
+        detailId: null,
+        title: request.title?.trim() || "外部媒体",
+        url: source.url,
+      },
+    };
+    return this.state;
+  }
+
+  public async playPushSourceItem(reference: PushSourceReference): Promise<DesktopSpiderUiState> {
+    const currentSourceId = sourceIdForHistory(this.session.view.source);
+    if (reference.sourceId && reference.sourceId !== currentSourceId && reference.sourceId !== this.session.view.source) {
+      throw new PushServiceError("PUSH_SOURCE_UNAVAILABLE", "Push 来源与当前来源不匹配。", undefined);
+    }
+    return this.player(reference.flag ?? "default", reference.episodeId ?? reference.contentId);
+  }
+
+  public setPlaybackCompleteHandler(handler: (() => void | Promise<void>) | undefined): void {
+    this.onPlaybackComplete = handler;
+  }
+
   public setAggregateSearch(snapshot: AggregateSearchSnapshot): DesktopSpiderUiState {
     this.page = "search";
     this.aggregateSearchValue = snapshot;
@@ -783,6 +847,7 @@ export class DesktopSpiderUiController {
 
   public syncPlayerState(patch: PlayerMediaSync): DesktopSpiderUiState {
     this.playerController.syncMedia(patch);
+    if (patch.event?.type === "completion") this.playerController.markEnded();
     this.historyService?.sync(patch);
     if (patch.currentTime !== undefined && Number.isFinite(patch.currentTime)) {
       this.danmakuService?.sync(patch.currentTime * 1_000, patch.event?.type, patch.status);
@@ -1162,6 +1227,7 @@ export class DesktopSpiderUiController {
         break;
       case "completion":
         tracker.recordCompletion(event.at);
+        void this.onPlaybackComplete?.();
         break;
       case "user-pause":
         tracker.recordUserPause(event.at);
@@ -1480,6 +1546,7 @@ export interface DesktopSpiderUiServerOptions {
   danmaku?: DanmakuService;
   localMedia?: LocalMediaService;
   downloads?: DownloadService;
+  push?: PushService;
   live?: LiveSourceService;
   livePlayback?: LivePlaybackService;
   smartChannels?: SmartChannelService;
@@ -1522,6 +1589,7 @@ export class DesktopSpiderUiServer {
   private readonly danmakuService: DanmakuService | undefined;
   private readonly localMediaService: LocalMediaService | undefined;
   private readonly downloadService: DownloadService | undefined;
+  private readonly pushService: PushService | undefined;
   private readonly liveService: LiveSourceService | undefined;
   private readonly livePlayback: LivePlaybackService | undefined;
   private readonly smartChannels: SmartChannelService | undefined;
@@ -1576,6 +1644,8 @@ export class DesktopSpiderUiServer {
     this.danmakuService = options.danmaku;
     this.localMediaService = options.localMedia;
     this.downloadService = options.downloads;
+    this.pushService = options.push;
+    this.directUi?.setPlaybackCompleteHandler(() => this.pushService?.drainQueue());
     this.liveService = options.live;
     this.livePlayback = options.livePlayback;
     this.smartChannels = options.smartChannels;
@@ -1621,9 +1691,16 @@ export class DesktopSpiderUiServer {
     });
     const address = this.server.address() as AddressInfo;
     this.boundUrl = `http://${this.host}:${address.port}/`;
+    try {
+      await this.pushService?.start();
+    } catch (error) {
+      await this.close();
+      throw error;
+    }
   }
 
   public async close(): Promise<void> {
+    await this.pushService?.close();
     await this.livePlayback?.stop();
     this.epgService?.close();
     this.epgMatching?.close();
@@ -1642,6 +1719,64 @@ export class DesktopSpiderUiServer {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());
     });
+  }
+
+  public pushPlaybackSession(): PushPlaybackSessionSnapshot | null {
+    const live = this.livePlayback?.uiState(EMPTY_LIVE_UI_STATE).session;
+    if (live && live.state !== "stopped") {
+      return {
+        id: live.sessionId,
+        kind: "live",
+        title: live.channelId,
+        state: "active",
+      };
+    }
+    const ui = this.playbackUi();
+    if (ui && ["ended", "stopped", "error"].includes(ui.state.player.status)) return null;
+    const session = ui?.state.playbackSession;
+    if (!session) return null;
+    return {
+      id: session.id,
+      kind: "vod",
+      title: session.media.title,
+      state: "active",
+    };
+  }
+
+  public async replacePush(request: PushRequest): Promise<PushPlaybackSessionSnapshot> {
+    await this.livePlayback?.stop();
+    const current = this.playbackUi();
+    await current?.stopPlayer();
+    if (request.type === "url" || request.type === "fixture") {
+      if (request.type === "fixture" && !request.url) {
+        throw new PushServiceError("PUSH_FIXTURE_UNAVAILABLE", "Push fixture 没有可播放地址。");
+      }
+      const ui = this.activeUi();
+      if (!ui) throw new PushServiceError("PUSH_PLAYBACK_UNAVAILABLE", "当前没有可用的点播播放会话。");
+      await ui.playPushUrl({
+        type: "url",
+        url: request.url ?? "",
+        requestedBy: request.requestedBy,
+        ...(request.title ? { title: request.title } : {}),
+        ...(request.headers ? { headers: { ...request.headers } } : {}),
+      });
+    } else if (request.type === "source-item") {
+      const ui = this.activeUi();
+      if (!ui) throw new PushServiceError("PUSH_PLAYBACK_UNAVAILABLE", "当前没有可用的点播播放会话。");
+      const reference = request.sourceReference;
+      await ui.playPushSourceItem(reference);
+    } else if (request.type === "local-file") {
+      const ui = this.activeUi();
+      if (!ui) throw new PushServiceError("PUSH_PLAYBACK_UNAVAILABLE", "当前没有可用的点播播放会话。");
+      await ui.playLocalMedia(request.localFileReference.itemId, this.url);
+    } else {
+      const reference = request.sourceReference;
+      if (!this.livePlayback) throw new PushServiceError("PUSH_LIVE_UNAVAILABLE", "直播播放服务不可用。");
+      await this.livePlayback.selectChannel(reference.channelId, reference.streamId);
+    }
+    const session = this.pushPlaybackSession();
+    if (!session) throw new PushServiceError("PUSH_PLAYBACK_FAILED", "Push 播放会话未能建立。");
+    return session;
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -1681,6 +1816,11 @@ export class DesktopSpiderUiServer {
       }
 
       const body = await readJson(request);
+      if (url.pathname.startsWith("/api/push/")) {
+        await this.handlePushRequest(url.pathname, body);
+        this.writeCurrentState(response);
+        return;
+      }
       if (url.pathname.startsWith("/api/downloads/")) {
         await this.handleDownloadRequest(url.pathname, body);
         this.writeCurrentState(response);
@@ -2003,6 +2143,7 @@ export class DesktopSpiderUiServer {
         case "/api/player/stop":
           await (this.playbackUi() ?? ui).stopPlayer();
           await this.onPlayerStop?.();
+          await this.pushService?.drainQueue();
           break;
         case "/api/player/fallback/cancel":
           (this.playbackUi() ?? ui).cancelFallback();
@@ -2071,6 +2212,8 @@ export class DesktopSpiderUiServer {
         ? error.code
         : error instanceof DownloadServiceError || error instanceof DownloadError
           ? error.code
+        : error instanceof PushServiceError
+          ? error.code
         : error instanceof LocalMediaError
           ? error.code
         : error instanceof LivePlaybackError
@@ -2088,6 +2231,7 @@ export class DesktopSpiderUiServer {
         import: this.importer?.state ?? null,
         state: ui?.state ?? null,
         ...(this.liveService || this.livePlayback ? { live: this.liveUiState() } : {}),
+        ...(this.pushService ? { push: this.pushService.uiState() } : {}),
       }, 400);
     }
   }
@@ -2128,6 +2272,54 @@ export class DesktopSpiderUiServer {
     } else {
       throw new DownloadServiceError("DOWNLOAD_OPERATION_INVALID", "下载请求不存在。");
     }
+  }
+
+  private async handlePushRequest(pathname: string, body: Record<string, unknown>): Promise<void> {
+    const service = this.pushService;
+    if (!service) throw new PushServiceError("PUSH_UNAVAILABLE", "Push 服务不可用。");
+    if (pathname === "/api/push/settings") {
+      const patch: {
+        enabled?: boolean;
+        port?: number;
+        confirmationPolicy?: "ask" | "allow-trusted-local";
+        conflictMode?: "replace" | "queue" | "reject";
+      } = {};
+      if (typeof body.enabled === "boolean") patch.enabled = body.enabled;
+      if (typeof body.port === "number") patch.port = body.port;
+      if (body.confirmationPolicy === "ask" || body.confirmationPolicy === "allow-trusted-local") {
+        patch.confirmationPolicy = body.confirmationPolicy;
+      }
+      if (body.conflictMode === "replace" || body.conflictMode === "queue" || body.conflictMode === "reject") {
+        patch.conflictMode = body.conflictMode;
+      }
+      await service.configure(patch);
+      return;
+    }
+    if (pathname === "/api/push/confirm") {
+      const mode = body.mode === "replace" || body.mode === "queue" || body.mode === "reject"
+        ? body.mode
+        : undefined;
+      if (mode) await service.confirm(stringValue(body.id, ""), "play", mode);
+      else await service.confirm(stringValue(body.id, ""), "play");
+      return;
+    }
+    if (pathname === "/api/push/reject") {
+      await service.confirm(stringValue(body.id, ""), "reject");
+      return;
+    }
+    if (pathname === "/api/push/cancel") {
+      service.cancel(stringValue(body.id, ""));
+      return;
+    }
+    if (pathname === "/api/push/clear") {
+      service.clearRecent();
+      return;
+    }
+    if (pathname === "/api/push/refresh") {
+      await service.drainQueue();
+      return;
+    }
+    throw new PushServiceError("PUSH_ROUTE_NOT_FOUND", "Push 请求不存在。");
   }
 
   private async handleLocalMediaRequest(pathname: string, body: Record<string, unknown>): Promise<void> {
@@ -2473,6 +2665,7 @@ export class DesktopSpiderUiServer {
     if (pathname === "/api/live/stop") {
       await playback.stop();
       smart?.stop();
+      await this.pushService?.drainQueue();
       return;
     }
     if (pathname === "/api/live/sync") {
@@ -2571,6 +2764,7 @@ export class DesktopSpiderUiServer {
     if (!this.importedUi) {
       this.importedUi = new DesktopSpiderUiController({
         session,
+        onPlaybackComplete: () => this.pushService?.drainQueue(),
         ...(this.playbackProxyOrigins ? { playbackProxyOrigins: this.playbackProxyOrigins } : {}),
         ...(this.parserCandidates ? { parserCandidates: this.parserCandidates } : {}),
         ...(this.parserAllowedOrigins ? { parserAllowedOrigins: this.parserAllowedOrigins } : {}),
@@ -2626,8 +2820,9 @@ export class DesktopSpiderUiServer {
     const live = this.liveUiState();
     const localMedia = this.localMediaService?.uiState(this.boundUrl);
     const downloads = this.downloadService?.uiState();
+    const push = this.pushService?.uiState();
     const state = visibleState
-      ? { ...visibleState, live, ...(localMedia ? { localMedia } : {}), ...(downloads ? { downloads } : {}) }
+      ? { ...visibleState, live, ...(localMedia ? { localMedia } : {}), ...(downloads ? { downloads } : {}), ...(push ? { push } : {}) }
       : null;
     if (this.importer) {
       writeJson(response, {
@@ -2636,6 +2831,7 @@ export class DesktopSpiderUiServer {
         live,
         ...(localMedia ? { localMedia } : {}),
         ...(downloads ? { downloads } : {}),
+        ...(push ? { push } : {}),
         ...(persistence ? { persistence } : {}),
       });
     } else {
@@ -2644,6 +2840,7 @@ export class DesktopSpiderUiServer {
         live,
         ...(localMedia ? { localMedia } : {}),
         ...(downloads ? { downloads } : {}),
+        ...(push ? { push } : {}),
         ...(persistence ? { persistence } : {}),
       });
     }

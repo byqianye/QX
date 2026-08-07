@@ -874,6 +874,52 @@ describe("Vue renderer", () => {
     browse.unmount();
   });
 
+  it("renders localhost Push settings, explicit confirmation, and LAN boundary", async () => {
+    const envelope = readyEnvelope();
+    envelope.state = {
+      ...envelope.state!,
+      push: {
+        ...createRendererState().push,
+        enabled: true,
+        listening: true,
+        configuredPort: 0,
+        port: 43123,
+        endpoint: "http://127.0.0.1:43123/push",
+        pending: [{
+          id: "push-confirm-1",
+          type: "url",
+          title: "Fixture Push",
+          targetHost: "media.example.test",
+          requestedBy: "localhost",
+          createdAt: 1,
+        }],
+        recent: [{
+          id: "push-confirm-1",
+          type: "url",
+          title: "Fixture Push",
+          status: "pending-confirmation",
+          requestedBy: "localhost",
+          createdAt: 1,
+          sessionId: null,
+          error: null,
+        }],
+      },
+    };
+    const state = applyRendererEnvelope(createRendererState(), envelope);
+    const wrapper = mount(SpiderView, {
+      props: { state, pending: null, lineIndex: 0, order: "forward", initialNavigation: "settings" },
+    });
+
+    expect(wrapper.get('[data-testid="push-settings"]').text()).toContain("127.0.0.1:43123/push");
+    expect(wrapper.get('[data-testid="push-pending-list"]').text()).toContain("Fixture Push");
+    expect(wrapper.text()).toContain("Requires G68 LAN Control");
+    await wrapper.get('[data-action="push-confirm-push-confirm-1"]').trigger("click");
+    expect(wrapper.emitted("pushConfirm")).toEqual([["push-confirm-1"]]);
+    await wrapper.get('[data-action="push-clear"]').trigger("click");
+    expect(wrapper.emitted("pushClear")).toHaveLength(1);
+    wrapper.unmount();
+  });
+
   it("renders favorites, group actions, source availability, and detail favorite controls", async () => {
     const envelope = readyEnvelope();
     envelope.state = {

@@ -422,6 +422,11 @@ function playLocal(itemId: string, resumeMode?: HistoryResumeMode): void {
       @download-retry="post('download-retry', '/api/downloads/retry', { taskId: $event })"
       @download-remove="post('download-remove', '/api/downloads/remove', { taskId: $event })"
       @download-open-folder="post('download-open-folder', '/api/downloads/open-folder', { targetDirectoryId: $event })"
+      @push-settings="post('push-settings', '/api/push/settings', $event)"
+      @push-confirm="post('push-confirm', '/api/push/confirm', { id: $event })"
+      @push-reject="post('push-reject', '/api/push/reject', { id: $event })"
+      @push-cancel="post('push-cancel', '/api/push/cancel', { id: $event })"
+      @push-clear="post('push-clear', '/api/push/clear')"
     />
   </div>
 </template>

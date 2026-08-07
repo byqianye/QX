@@ -25,6 +25,7 @@ import {
   type LiveUiState,
   type LivePreviewUiState,
 } from "./live-types.js";
+import { EMPTY_EPG_UI_STATE } from "../epg/epg-types.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
@@ -97,6 +98,7 @@ export class LiveSourceService {
       catalog: buildLiveCatalog(this.repository),
       session: null,
       player: null,
+      epg: EMPTY_EPG_UI_STATE,
     };
   }
 

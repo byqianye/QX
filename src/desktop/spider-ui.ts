@@ -104,6 +104,8 @@ import {
   LiveSourceService,
 } from "../live/live-service.js";
 import { LivePlaybackError, LivePlaybackService } from "../live/live-playback.js";
+import { EpgSourceError, EpgService } from "../epg/epg-service.js";
+import { isEpgSourceType, type EpgSourceImportInput } from "../epg/epg-types.js";
 import {
   EMPTY_LIVE_UI_STATE,
   isLiveSourceType,
@@ -1359,6 +1361,7 @@ export interface DesktopSpiderUiServerOptions {
   storage?: DataStorageService;
   live?: LiveSourceService;
   livePlayback?: LivePlaybackService;
+  epg?: EpgService;
   onStorageOpen?: () => void | Promise<void>;
   onStorageSwitch?: (mode: StorageMode) => void;
 }
@@ -1391,6 +1394,7 @@ export class DesktopSpiderUiServer {
   private readonly storageService: DataStorageService | undefined;
   private readonly liveService: LiveSourceService | undefined;
   private readonly livePlayback: LivePlaybackService | undefined;
+  private readonly epgService: EpgService | undefined;
   private readonly onStorageOpen: (() => void | Promise<void>) | undefined;
   private readonly onStorageSwitch: ((mode: StorageMode) => void) | undefined;
   private server: Server | undefined;
@@ -1435,6 +1439,7 @@ export class DesktopSpiderUiServer {
     this.storageService = options.storage;
     this.liveService = options.live;
     this.livePlayback = options.livePlayback;
+    this.epgService = options.epg;
     this.onStorageOpen = options.onStorageOpen;
     this.onStorageSwitch = options.onStorageSwitch;
   }
@@ -1475,6 +1480,7 @@ export class DesktopSpiderUiServer {
 
   public async close(): Promise<void> {
     await this.livePlayback?.stop();
+    this.epgService?.close();
     if (this.importer) {
       await this.releaseImportedUiResources();
       await this.importer.close();
@@ -1525,6 +1531,11 @@ export class DesktopSpiderUiServer {
       }
 
       const body = await readJson(request);
+      if (url.pathname.startsWith("/api/epg/")) {
+        await this.handleEpgRequest(url.pathname, body);
+        this.writeCurrentState(response);
+        return;
+      }
       if (url.pathname.startsWith("/api/live/")) {
         await this.handleLiveRequest(url.pathname, body);
         this.writeCurrentState(response);
@@ -1895,6 +1906,8 @@ export class DesktopSpiderUiServer {
         ? error.code
         : error instanceof LivePlaybackError
           ? error.code
+          : error instanceof EpgSourceError
+            ? error.code
         : errorCodeFromMessage(message);
       writeJson(response, {
         error: message,
@@ -1960,6 +1973,36 @@ export class DesktopSpiderUiServer {
     throw new LiveSourceError("LIVE_ROUTE_NOT_FOUND", "直播源请求不存在。");
   }
 
+  private async handleEpgRequest(pathname: string, body: Record<string, unknown>): Promise<void> {
+    const epg = this.epgService;
+    if (!epg) throw new EpgSourceError("EPG_SOURCE_FAILED", "EPG 服务不可用。");
+    if (pathname === "/api/epg/source/preview") {
+      await epg.previewSource(epgInputFromRequest(body));
+      return;
+    }
+    if (pathname === "/api/epg/source/apply") {
+      await epg.applyPreview(stringValue(body.previewId, ""));
+      return;
+    }
+    if (pathname === "/api/epg/source/refresh") {
+      await epg.refreshSource(stringValue(body.sourceId, ""));
+      return;
+    }
+    if (pathname === "/api/epg/source/toggle") {
+      epg.setSourceEnabled(stringValue(body.sourceId, ""), booleanValue(body.enabled, false));
+      return;
+    }
+    if (pathname === "/api/epg/source/remove") {
+      epg.removeSource(stringValue(body.sourceId, ""));
+      return;
+    }
+    if (pathname === "/api/epg/preview/clear") {
+      epg.clearPreview();
+      return;
+    }
+    throw new EpgSourceError("EPG_SOURCE_FAILED", "EPG 请求不存在。");
+  }
+
   private activeUi(): DesktopSpiderUiController | undefined {
     if (!this.importer) return this.directUi;
     const session = this.importer.session;
@@ -2008,7 +2051,8 @@ export class DesktopSpiderUiServer {
 
   private liveUiState() {
     const base = this.liveService?.uiState() ?? EMPTY_LIVE_UI_STATE;
-    return this.livePlayback?.uiState(base) ?? base;
+    const withPlayback = this.livePlayback?.uiState(base) ?? base;
+    return { ...withPlayback, epg: this.epgService?.uiState() ?? withPlayback.epg };
   }
 
   private writeCurrentState(response: ServerResponse): void {
@@ -2503,6 +2547,35 @@ function liveInputFromRequest(body: Record<string, unknown>): LiveSourceImportIn
   if (type !== "m3u-file" && type !== "txt-file") {
     throw new LiveSourceError("LIVE_SOURCE_TYPE_INVALID", "直播源类型无效。");
   }
+  return {
+    name,
+    type,
+    fileName,
+    ...(content === undefined ? {} : { content }),
+    ...(filePath ? { filePath } : {}),
+    ...(location ? { location } : {}),
+    ...(sourceId ? { sourceId } : {}),
+  };
+}
+
+function epgInputFromRequest(body: Record<string, unknown>): EpgSourceImportInput {
+  const name = stringValue(body.name, "").trim();
+  const type = body.type;
+  if (!isEpgSourceType(type)) throw new EpgSourceError("EPG_SOURCE_FAILED", "EPG 格式无效。");
+  const sourceId = typeof body.sourceId === "string" && body.sourceId.trim() ? body.sourceId.trim() : null;
+  if (type === "xmltv-url") {
+    const location = stringValue(body.location, "").trim();
+    if (!location) throw new EpgSourceError("EPG_SOURCE_FAILED", "EPG URL 不能为空。");
+    return { name, type, location, ...(sourceId ? { sourceId } : {}) };
+  }
+  const content = typeof body.content === "string" ? body.content : undefined;
+  const location = typeof body.location === "string" && body.location.trim() ? body.location.trim() : undefined;
+  if (type === "fixture") {
+    if (content === undefined) throw new EpgSourceError("EPG_SOURCE_FAILED", "EPG fixture 内容无效。");
+    return { name, type, content, ...(location ? { location } : {}), ...(sourceId ? { sourceId } : {}) };
+  }
+  const fileName = stringValue(body.fileName, "epg.xml");
+  const filePath = typeof body.filePath === "string" && body.filePath.trim() ? body.filePath.trim() : undefined;
   return {
     name,
     type,

@@ -494,6 +494,8 @@ describe("Vue renderer", () => {
     expect(wrapper.get('[data-testid="detail-drawer"]').text()).toContain("导演");
     await wrapper.get('[data-action="settings"]').trigger("click");
     expect(wrapper.findAll('[data-testid="settings-section"]').length).toBeGreaterThanOrEqual(5);
+    expect(wrapper.get('[data-testid="epg-sources"]')).toBeTruthy();
+    expect(wrapper.get('[data-action="epg-source-preview"]')).toBeTruthy();
     expect(wrapper.find('[data-testid="media-grid"]').exists()).toBe(false);
     const themeMode = wrapper.get('[data-action="theme-mode"]');
     await themeMode.setValue("dark");

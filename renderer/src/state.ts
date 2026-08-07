@@ -477,6 +477,21 @@ function cloneLiveUiState(value: LiveUiState): LiveUiState {
           error: value.player.error ? { ...value.player.error } : null,
         }
       : null,
+    epg: {
+      sources: value.epg.sources.map((source) => ({ ...source })),
+      preview: value.epg.preview
+        ? {
+            ...value.epg.preview,
+            source: { ...value.epg.preview.source },
+            channelNames: [...value.epg.preview.channelNames],
+            issues: value.epg.preview.issues.map((issue) => ({ ...issue })),
+            stats: { ...value.epg.preview.stats },
+          }
+        : null,
+      loading: value.epg.loading,
+      error: value.epg.error ? { ...value.epg.error } : null,
+      retention: { ...value.epg.retention },
+    },
   };
 }
 

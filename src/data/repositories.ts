@@ -7,6 +7,11 @@ import type {
   LiveRecentRecord,
   LiveSourceRecord,
 } from "../live/live-types.js";
+import type {
+  EpgChannelRecord,
+  EpgProgrammeRecord,
+  EpgSourceRecord,
+} from "../epg/epg-types.js";
 
 export interface HistoryRecord {
   identity: string;
@@ -742,6 +747,180 @@ export class LiveRepository {
   }
 }
 
+export class EpgRepository {
+  public constructor(private readonly db: SqliteDataLayer) {}
+
+  public upsertSource(record: EpgSourceRecord): void {
+    try {
+      this.db.prepare(`
+        INSERT INTO epg_sources(
+          id, name, type, location, enabled, last_updated_at, last_success_at,
+          last_error, etag, last_modified, content_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          type = excluded.type,
+          location = excluded.location,
+          enabled = excluded.enabled,
+          last_updated_at = excluded.last_updated_at,
+          last_success_at = excluded.last_success_at,
+          last_error = excluded.last_error,
+          etag = excluded.etag,
+          last_modified = excluded.last_modified,
+          content_hash = excluded.content_hash
+      `).run(
+        record.id,
+        record.name,
+        record.type,
+        record.location,
+        record.enabled ? 1 : 0,
+        record.lastUpdatedAt,
+        record.lastSuccessAt,
+        record.lastError,
+        record.etag,
+        record.lastModified,
+        record.contentHash,
+      );
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public saveSourceContent(
+    record: EpgSourceRecord,
+    channels: readonly EpgChannelRecord[],
+    programmes: readonly EpgProgrammeRecord[],
+  ): void {
+    try {
+      this.db.transaction(() => {
+        this.upsertSource(record);
+        this.db.prepare("DELETE FROM epg_programmes WHERE source_id = ?").run(record.id);
+        this.db.prepare("DELETE FROM epg_channels WHERE source_id = ?").run(record.id);
+        const channelInsert = this.db.prepare(`
+          INSERT INTO epg_channels(
+            id, source_id, external_id, display_name, display_names_json, normalized_name, icon
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const channel of channels) {
+          channelInsert.run(
+            channel.id,
+            channel.sourceId,
+            channel.externalId,
+            channel.displayName,
+            serializeJson(channel.displayNames),
+            channel.normalizedName,
+            channel.icon,
+          );
+        }
+        const programmeInsert = this.db.prepare(`
+          INSERT INTO epg_programmes(
+            id, source_id, channel_id, start_at, end_at, title, sub_title,
+            description, categories_json, icon
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const programme of programmes) {
+          programmeInsert.run(
+            programme.id,
+            programme.sourceId,
+            programme.channelId,
+            programme.startAt,
+            programme.endAt,
+            programme.title,
+            programme.subTitle,
+            programme.description,
+            serializeJson(programme.categories),
+            programme.icon,
+          );
+        }
+      });
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public getSource(id: string): EpgSourceRecord | null {
+    const row = this.db.prepare("SELECT * FROM epg_sources WHERE id = ?").get(id);
+    return row ? epgSourceFromRow(row) : null;
+  }
+
+  public listSources(): readonly EpgSourceRecord[] {
+    return this.db.prepare(
+      "SELECT * FROM epg_sources ORDER BY name COLLATE NOCASE, id",
+    ).all().map(epgSourceFromRow);
+  }
+
+  public getChannels(sourceId: string): readonly EpgChannelRecord[] {
+    return this.db.prepare(
+      "SELECT * FROM epg_channels WHERE source_id = ? ORDER BY display_name COLLATE NOCASE, id",
+    ).all(sourceId).map(epgChannelFromRow);
+  }
+
+  public getProgrammes(sourceId: string): readonly EpgProgrammeRecord[] {
+    return this.db.prepare(
+      "SELECT * FROM epg_programmes WHERE source_id = ? ORDER BY channel_id, start_at, id",
+    ).all(sourceId).map(epgProgrammeFromRow);
+  }
+
+  public listProgrammes(
+    channelId: string,
+    fromAt = Number.MIN_SAFE_INTEGER,
+    toAt = Number.MAX_SAFE_INTEGER,
+  ): readonly EpgProgrammeRecord[] {
+    return this.db.prepare(`
+      SELECT * FROM epg_programmes
+      WHERE channel_id = ? AND end_at > ? AND start_at < ?
+      ORDER BY start_at, end_at, id
+    `).all(channelId, fromAt, toAt).map(epgProgrammeFromRow);
+  }
+
+  public currentProgramme(channelId: string, at: number): EpgProgrammeRecord | null {
+    const row = this.db.prepare(`
+      SELECT * FROM epg_programmes
+      WHERE channel_id = ? AND start_at <= ? AND end_at > ?
+      ORDER BY start_at DESC, end_at, id
+      LIMIT 1
+    `).get(channelId, at, at);
+    return row ? epgProgrammeFromRow(row) : null;
+  }
+
+  public nextProgramme(channelId: string, at: number): EpgProgrammeRecord | null {
+    const current = this.currentProgramme(channelId, at);
+    const boundary = current?.endAt ?? at;
+    const row = this.db.prepare(`
+      SELECT * FROM epg_programmes
+      WHERE channel_id = ? AND start_at >= ?
+      ORDER BY start_at, end_at, id
+      LIMIT 1
+    `).get(channelId, boundary);
+    return row ? epgProgrammeFromRow(row) : null;
+  }
+
+  public sourceProgrammeCount(sourceId: string): number {
+    const row = this.db.prepare(
+      "SELECT COUNT(*) AS count FROM epg_programmes WHERE source_id = ?",
+    ).get(sourceId) as { count?: unknown } | undefined;
+    return typeof row?.count === "number" ? row.count : 0;
+  }
+
+  public pruneProgrammes(now: number, retention: { pastRetentionMs: number; futureRetentionMs: number }): void {
+    try {
+      this.db.prepare(
+        "DELETE FROM epg_programmes WHERE end_at < ? OR start_at > ?",
+      ).run(now - retention.pastRetentionMs, now + retention.futureRetentionMs);
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public deleteSource(id: string): void {
+    try {
+      this.db.prepare("DELETE FROM epg_sources WHERE id = ?").run(id);
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+}
+
 export class CacheRepository {
   public constructor(private readonly db: SqliteDataLayer) {}
 
@@ -953,6 +1132,57 @@ function liveRecentFromRow(row: Record<string, unknown>): LiveRecentRecord {
     sourceId: stringValue(row.source_id),
     lastPlayedAt: numberValue(row.last_played_at),
     lastStreamId: nullableString(row.last_stream_id),
+  };
+}
+
+function epgSourceFromRow(row: Record<string, unknown>): EpgSourceRecord {
+  return {
+    id: stringValue(row.id),
+    name: stringValue(row.name),
+    type: stringValue(row.type) as EpgSourceRecord["type"],
+    location: stringValue(row.location),
+    enabled: booleanValue(row.enabled),
+    lastUpdatedAt: nullableNumber(row.last_updated_at),
+    lastSuccessAt: nullableNumber(row.last_success_at),
+    lastError: nullableString(row.last_error),
+    etag: nullableString(row.etag),
+    lastModified: nullableString(row.last_modified),
+    contentHash: nullableString(row.content_hash),
+  };
+}
+
+function epgChannelFromRow(row: Record<string, unknown>): EpgChannelRecord {
+  const displayNames = parseJsonRow(row, "display_names_json");
+  if (!Array.isArray(displayNames) || displayNames.some((value) => typeof value !== "string")) {
+    throw databaseError("DATABASE_CORRUPT");
+  }
+  return {
+    id: stringValue(row.id),
+    sourceId: stringValue(row.source_id),
+    externalId: stringValue(row.external_id),
+    displayName: stringValue(row.display_name),
+    displayNames: displayNames as string[],
+    normalizedName: stringValue(row.normalized_name),
+    icon: nullableString(row.icon),
+  };
+}
+
+function epgProgrammeFromRow(row: Record<string, unknown>): EpgProgrammeRecord {
+  const categories = parseJsonRow(row, "categories_json");
+  if (!Array.isArray(categories) || categories.some((value) => typeof value !== "string")) {
+    throw databaseError("DATABASE_CORRUPT");
+  }
+  return {
+    id: stringValue(row.id),
+    sourceId: stringValue(row.source_id),
+    channelId: stringValue(row.channel_id),
+    startAt: numberValue(row.start_at),
+    endAt: numberValue(row.end_at),
+    title: stringValue(row.title),
+    subTitle: nullableString(row.sub_title),
+    description: nullableString(row.description),
+    categories: categories as string[],
+    icon: nullableString(row.icon),
   };
 }
 

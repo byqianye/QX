@@ -120,6 +120,7 @@ try {
     QX_E2E_HLS_CHILD_URL: mediaFixture.hlsChildUrl,
     QX_E2E_LIVE_URL: mediaFixture.liveUrl,
     QX_E2E_LIVE_PLAYBACK_URL: mediaFixture.livePlaybackUrl,
+    QX_E2E_EPG_URL: mediaFixture.epgUrl,
     QX_E2E_FAKE_MPV: "1",
     QX_SNIFF_ENABLED: "1",
     QX_E2E_SNIFF_URL: mediaFixture.sniffUrl,
@@ -135,6 +136,7 @@ try {
   assertPersistedFavoritesPrivacy(userData);
   assertPersistedFollowPrivacy(userData);
   assertPersistedLivePrivacy(userData);
+  assertPersistedEpgPrivacy(userData);
   assertPersistedCacheRoot(userData);
 
   const second = await runPackagedExecutable(executable, {
@@ -154,6 +156,7 @@ try {
     QX_E2E_HLS_CHILD_URL: mediaFixture.hlsChildUrl,
     QX_E2E_LIVE_URL: mediaFixture.liveUrl,
     QX_E2E_LIVE_PLAYBACK_URL: mediaFixture.livePlaybackUrl,
+    QX_E2E_EPG_URL: mediaFixture.epgUrl,
     QX_E2E_FAKE_MPV: "1",
     QX_SNIFF_ENABLED: "1",
     QX_E2E_SNIFF_URL: mediaFixture.sniffUrl,
@@ -167,6 +170,7 @@ try {
   assertPersistedFavoritesPrivacy(userData);
   assertPersistedFollowPrivacy(userData);
   assertPersistedLivePrivacy(userData);
+  assertPersistedEpgPrivacy(userData);
   assertPersistedCacheRoot(userData);
 
   console.log(JSON.stringify({
@@ -314,6 +318,30 @@ function assertPersistedLivePrivacy(userDataPath: string): void {
     const serialized = JSON.stringify({ sources, channels, streams, recent });
     if (/token|cookie|authorization|bearer|api[_-]?key|password|secret/i.test(serialized)) {
       throw new Error("Packaged E2E live source privacy contract failed");
+    }
+  } finally {
+    database.close();
+  }
+}
+
+function assertPersistedEpgPrivacy(userDataPath: string): void {
+  const database = new DatabaseSync(join(userDataPath, "qx-yingshi.db"), { readOnly: true });
+  try {
+    const sources = database.prepare(
+      "SELECT id, name, type, location, enabled, last_error, etag, last_modified, content_hash FROM epg_sources",
+    ).all();
+    const channels = database.prepare(
+      "SELECT id, source_id, external_id, display_name, display_names_json, normalized_name, icon FROM epg_channels",
+    ).all();
+    const programmes = database.prepare(
+      "SELECT id, source_id, channel_id, start_at, end_at, title, sub_title, description, categories_json, icon FROM epg_programmes",
+    ).all();
+    if (sources.length === 0 || channels.length === 0 || programmes.length === 0) {
+      throw new Error("Packaged E2E EPG rows were not persisted");
+    }
+    const serialized = JSON.stringify({ sources, channels, programmes });
+    if (/token|cookie|authorization|bearer|api[_-]?key|password|secret/i.test(serialized)) {
+      throw new Error("Packaged E2E EPG privacy contract failed");
     }
   } finally {
     database.close();

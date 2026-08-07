@@ -9,7 +9,7 @@ import {
   type DatabaseErrorCode,
 } from "./errors.js";
 
-export const SUPPORTED_SCHEMA_VERSION = 5;
+export const SUPPORTED_SCHEMA_VERSION = 6;
 
 interface Migration {
   version: number;
@@ -259,6 +259,68 @@ const migrations: readonly Migration[] = [
         ON live_recent(last_played_at DESC, channel_id);
       CREATE INDEX live_recent_source
         ON live_recent(source_id, last_played_at DESC);
+    `,
+  },
+  {
+    version: 6,
+    name: "xmltv-epg",
+    sql: `
+      CREATE TABLE epg_sources (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        location TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        last_updated_at INTEGER,
+        last_success_at INTEGER,
+        last_error TEXT,
+        etag TEXT,
+        last_modified TEXT,
+        content_hash TEXT
+      ) STRICT;
+
+      CREATE INDEX epg_sources_enabled_updated
+        ON epg_sources(enabled, last_updated_at);
+
+      CREATE TABLE epg_channels (
+        id TEXT PRIMARY KEY NOT NULL,
+        source_id TEXT NOT NULL,
+        external_id TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        display_names_json TEXT NOT NULL,
+        normalized_name TEXT NOT NULL,
+        icon TEXT,
+        FOREIGN KEY (source_id) REFERENCES epg_sources(id) ON DELETE CASCADE,
+        UNIQUE(source_id, external_id)
+      ) STRICT;
+
+      CREATE INDEX epg_channels_source_external
+        ON epg_channels(source_id, external_id);
+      CREATE INDEX epg_channels_source_name
+        ON epg_channels(source_id, normalized_name);
+
+      CREATE TABLE epg_programmes (
+        id TEXT PRIMARY KEY NOT NULL,
+        source_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        start_at INTEGER NOT NULL,
+        end_at INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        sub_title TEXT,
+        description TEXT,
+        categories_json TEXT NOT NULL,
+        icon TEXT,
+        FOREIGN KEY (source_id) REFERENCES epg_sources(id) ON DELETE CASCADE,
+        FOREIGN KEY (channel_id) REFERENCES epg_channels(id) ON DELETE CASCADE,
+        CHECK (end_at > start_at)
+      ) STRICT;
+
+      CREATE INDEX epg_programmes_channel_start
+        ON epg_programmes(channel_id, start_at);
+      CREATE INDEX epg_programmes_channel_end
+        ON epg_programmes(channel_id, end_at);
+      CREATE INDEX epg_programmes_channel_window
+        ON epg_programmes(channel_id, start_at, end_at);
     `,
   },
 ];

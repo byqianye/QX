@@ -32,6 +32,7 @@ export interface MediaFixtureServer {
   readonly parserFailureUrl: string;
   readonly liveUrl: string;
   readonly livePlaybackUrl: string;
+  readonly epgUrl: string;
   readonly doubanEndpoint: string;
   readonly subtitleVttUrl: string;
   readonly subtitleSrtUrl: string;
@@ -81,6 +82,9 @@ export function createMediaFixtureServer(host = "127.0.0.1"): MediaFixtureServer
     },
     get livePlaybackUrl() {
       return `${resource.baseUrl}/live/playback.m3u`;
+    },
+    get epgUrl() {
+      return `${resource.baseUrl}/epg/guide.xml`;
     },
     get doubanEndpoint() {
       return `${resource.baseUrl}/api/v2/subject_collection/subject_real_time_hotest/items`;
@@ -146,6 +150,17 @@ async function handleRequest(
       fixture.mp4Url,
       "",
     ].join("\n"), "application/x-mpegurl; charset=utf-8");
+    return;
+  }
+
+  if (url.pathname === "/epg/guide.xml") {
+    const etag = "\"g58-epg-v1\"";
+    if (request.headers["if-none-match"] === etag) {
+      response.writeHead(304, { etag, "access-control-allow-origin": "*" });
+      response.end();
+      return;
+    }
+    serveEpgFixture(request, response, etag);
     return;
   }
 
@@ -651,6 +666,28 @@ function serveText(
   response.writeHead(200, {
     "content-type": contentType,
     "content-length": body.length,
+    "access-control-allow-origin": "*",
+  });
+  if (request.method === "HEAD") response.end();
+  else response.end(body);
+}
+
+function serveEpgFixture(request: IncomingMessage, response: ServerResponse, etag: string): void {
+  const body = Buffer.from([
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+    "<tv generator-info-name=\"QX G58 fixture\">",
+    "<channel id=\"fixture-news\"><display-name>Fixture 新闻</display-name></channel>",
+    "<channel id=\"fixture-movie\"><display-name>Fixture 电影</display-name></channel>",
+    "<programme channel=\"fixture-news\" start=\"20260807120000 +0000\" stop=\"20260807130000 +0000\"><title>Fixture News Current</title><category>News</category></programme>",
+    "<programme channel=\"fixture-news\" start=\"20260807130000 +0000\" stop=\"20260807140000 +0000\"><title>Fixture News Next</title></programme>",
+    "<programme channel=\"fixture-movie\" start=\"20260807120000 +0000\" stop=\"20260807140000 +0000\"><title>Fixture Movie Current</title></programme>",
+    "</tv>",
+  ].join(""), "utf8");
+  response.writeHead(200, {
+    "content-type": "application/xml; charset=utf-8",
+    "content-length": body.length,
+    etag,
+    "last-modified": "Wed, 07 Aug 2026 12:00:00 GMT",
     "access-control-allow-origin": "*",
   });
   if (request.method === "HEAD") response.end();

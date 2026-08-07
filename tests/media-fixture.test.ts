@@ -74,6 +74,16 @@ describe("local media fixture server", () => {
     expect((await fetch(`${fixture.baseUrl}/live/channel-e-line2.m3u8`)).status).toBe(200);
   });
 
+  it("serves XMLTV with validators for EPG refresh tests", async () => {
+    const first = await fetch(fixture.epgUrl);
+    expect(first.status).toBe(200);
+    expect(first.headers.get("content-type")).toContain("application/xml");
+    expect(first.headers.get("etag")).toBe('"g58-epg-v1"');
+    expect(await first.text()).toContain("Fixture News Current");
+    const notModified = await fetch(fixture.epgUrl, { headers: { "if-none-match": '"g58-epg-v1"' } });
+    expect(notModified.status).toBe(304);
+  });
+
   it("returns deterministic playerContent results for MP4, HLS and headered cases", async () => {
     const mp4 = await fetch(`${fixture.playerUrl}?id=direct-mp4`);
     const hls = await fetch(`${fixture.playerUrl}?id=direct-hls`);

@@ -14,6 +14,7 @@ import HistoryView from "./HistoryView.vue";
 import CacheManagement from "./CacheManagement.vue";
 import StorageManagement from "./StorageManagement.vue";
 import LiveSourcesView from "./LiveSourcesView.vue";
+import EpgSourcesView from "./EpgSourcesView.vue";
 import MediaGrid from "./MediaGrid.vue";
 import PlaybackSelector from "./PlaybackSelector.vue";
 import PlaybackHealthPanel from "./PlaybackHealthPanel.vue";
@@ -100,6 +101,12 @@ const emit = defineEmits<{
   liveLine: [streamId: string];
   liveStop: [];
   liveSync: [value: PlayerMediaSync];
+  epgPreview: [input: Record<string, unknown>];
+  epgApply: [previewId: string];
+  epgRefresh: [sourceId: string];
+  epgToggle: [payload: { sourceId: string; enabled: boolean }];
+  epgRemove: [sourceId: string];
+  epgClear: [];
 }>();
 
 const view = ref<"browse" | "history" | "favorites" | "follow" | "settings" | "live">(props.initialNavigation === "settings"
@@ -432,6 +439,16 @@ function navigationFromPage(page: string): RendererNavigation {
             @refresh="emit('storageRefresh')"
             @open="emit('storageOpen')"
             @switch="emit('storageSwitch', $event)"
+          />
+          <EpgSourcesView
+            :state="props.state.live.epg"
+            :pending="props.pending"
+            @preview="emit('epgPreview', $event)"
+            @apply="emit('epgApply', $event)"
+            @refresh="emit('epgRefresh', $event)"
+            @toggle="emit('epgToggle', $event)"
+            @remove="emit('epgRemove', $event)"
+            @clear="emit('epgClear')"
           />
         </template>
 

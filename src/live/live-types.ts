@@ -1,3 +1,6 @@
+import type { PlaybackState } from "../desktop/playback.js";
+import type { EpgUiState } from "../epg/epg-types.js";
+
 export const LIVE_SOURCE_TYPES = [
   "m3u-url",
   "m3u-file",
@@ -183,6 +186,7 @@ export interface LiveUiState {
   catalog: LiveCatalogUiState;
   session: LivePlaybackSessionUiState | null;
   player: PlaybackState | null;
+  epg: EpgUiState;
 }
 
 export type LiveSourceImportInput =
@@ -226,5 +230,11 @@ export const EMPTY_LIVE_UI_STATE: LiveUiState = {
   catalog: { groups: [], channels: [], recent: [] },
   session: null,
   player: null,
+  epg: {
+    sources: [],
+    preview: null,
+    loading: false,
+    error: null,
+    retention: { pastRetentionMs: 6 * 60 * 60 * 1000, futureRetentionMs: 7 * 24 * 60 * 60 * 1000 },
+  },
 };
-import type { PlaybackState } from "../desktop/playback.js";

@@ -27,6 +27,8 @@ export interface PackagedE2eOptions {
   liveUrl?: string;
   verifyLivePlayback?: boolean;
   livePlaybackUrl?: string;
+  verifyEpg?: boolean;
+  epgUrl?: string;
   expectedFavoriteId?: string;
   expectedFollowIdentity?: string;
   verifyParserFallback?: boolean;
@@ -97,6 +99,9 @@ export interface PackagedE2eChecks {
   liveLineSwitch?: boolean;
   livePlaybackRestart?: boolean;
   liveRecent?: boolean;
+  epgImport?: boolean;
+  epgRestart?: boolean;
+  epgRefresh?: boolean;
 }
 
 export interface PackagedE2eResult {
@@ -268,6 +273,42 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
         && playbackApplied?.state?.live?.sources.some((source) => source.name === "Packaged G57 Live" && source.channelCount === 5) === true
         && playbackSource?.enabled === true;
       await post(options.baseUrl, "/api/live/stop");
+    }
+    if (options.verifyEpg) {
+      if (!options.epgUrl) throw new Error("Packaged EPG E2E URL is not configured");
+      const beforeEpg = await getState(options.baseUrl);
+      const existingEpg = beforeEpg.state?.live?.epg?.sources.find((source) => source.name === "Packaged G58 EPG");
+      if (!options.freshTrust) {
+        checks.epgRestart = existingEpg?.enabled === true
+          && existingEpg.channelCount === 2
+          && existingEpg.programmeCount === 3
+          && existingEpg.lastError === null;
+      }
+      const epgPreview = await post(options.baseUrl, "/api/epg/source/preview", {
+        name: "Packaged G58 EPG",
+        type: "xmltv-url",
+        location: options.epgUrl,
+        ...(existingEpg ? { sourceId: existingEpg.id } : {}),
+      });
+      const epgPreviewState = epgPreview.state?.live?.epg?.preview;
+      const epgApplied = epgPreviewState
+        ? await post(options.baseUrl, "/api/epg/source/apply", { previewId: epgPreviewState.id })
+        : null;
+      const epgSource = epgApplied?.state?.live?.epg?.sources.find((source) => source.name === "Packaged G58 EPG");
+      const epgRefreshed = epgSource
+        ? await post(options.baseUrl, "/api/epg/source/refresh", { sourceId: epgSource.id })
+        : null;
+      const refreshedEpgSource = epgRefreshed?.state?.live?.epg?.sources.find((source) => source.name === "Packaged G58 EPG");
+      checks.epgImport = epgPreviewState?.stats.channelCount === 2
+        && epgPreviewState.stats.programmeCount === 3
+        && epgPreviewState.stats.invalidCount === 0
+        && epgSource?.enabled === true
+        && epgSource.channelCount === 2
+        && epgSource.programmeCount === 3
+        && epgSource.lastError === null;
+      checks.epgRefresh = refreshedEpgSource?.channelCount === 2
+        && refreshedEpgSource.programmeCount === 3
+        && refreshedEpgSource.lastError === null;
     }
     const opened = await post(options.baseUrl, "/api/open");
     const search = await post(options.baseUrl, "/api/search", {
@@ -907,6 +948,24 @@ interface UiState {
         headers?: Record<string, unknown>;
       } | null;
     } | null;
+    epg?: {
+      sources: readonly {
+        id: string;
+        name: string;
+        enabled: boolean;
+        channelCount: number;
+        programmeCount: number;
+        lastError: string | null;
+      }[];
+      preview: {
+        id: string;
+        stats: {
+          channelCount: number;
+          programmeCount: number;
+          invalidCount: number;
+        };
+      } | null;
+    };
   };
 }
 

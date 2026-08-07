@@ -1032,6 +1032,43 @@ git diff --check
 checkpoint: complete G57 live playback
 ```
 
+## G58（已完成）
+
+### 目标
+
+在 G57 的直播数据与 UI API 之上建立 XMLTV EPG 来源、流式解析、SQLite 持久化、刷新与设置管理能力。
+
+### 状态
+
+已完成。G58 的 parser、schema v6、批量事务写入、retention、ETag/304、last-known-good、EPG Settings API/renderer、媒体 fixture 和 packaged first/restart E2E 均已通过验证。
+
+### 依赖
+
+- G57 checkpoint `c4a4828`：`checkpoint: complete G57 live playback`
+
+### 范围与验收
+
+- 支持 `xmltv-url`、`xmltv-file`、`fixture`；SAX 流式解析 channel/programme/title/sub-title/desc/category/icon。
+- 禁止 DTD/external entity/XXE；限制压缩前、解压后、文本、频道、节目与请求时间；错误归类为 `EPG_PARSE_FAILED`、`EPG_SOURCE_FAILED`、`EPG_TOO_LARGE`、`EPG_XML_UNSAFE`。
+- XMLTV 时间统一为 UTC；缺少时区按明确文档政策解释为 UTC；SQLite v6 增加 `epg_sources`、`epg_channels`、`epg_programmes` 及窗口查询索引。
+- 预览不写库；确认使用 prepared statement + 单事务替换一个来源；保留当前/未来节目，清理过期节目；刷新支持 ETag/Last-Modified/304 和 last-known-good。
+- Settings 提供 URL/file 添加、预览、确认、启停、刷新、删除、计数、最近成功和错误状态；renderer 不接触 SQLite、raw XML 或请求头。
+- 定向/全量测试、renderer/Electron build、Windows 打包、packaged first/restart E2E 和进程清理通过。
+
+### 文档与验证
+
+- `docs/spike-58-xmltv-epg.md`
+- `docs/design/open-design/live-tv/epg-settings-spec.md`
+- `tests/epg.test.ts`
+- `tests/epg-ui.test.ts`
+- `tests/media-fixture.test.ts`
+
+### checkpoint
+
+```text
+checkpoint: complete G58 XMLTV EPG
+```
+
 DEX-1 ~ DEX-5（实验支线）
 
 - DEX-1：Android Emulator 探针

@@ -364,6 +364,12 @@ function play(line: number, episode: number, resumeMode?: HistoryResumeMode): vo
       @live-line="switchLiveLine"
       @live-stop="stopLive"
       @live-sync="syncLive"
+      @epg-preview="post('epg-preview', '/api/epg/source/preview', $event)"
+      @epg-apply="post('epg-apply', '/api/epg/source/apply', { previewId: $event })"
+      @epg-refresh="post('epg-refresh', '/api/epg/source/refresh', { sourceId: $event })"
+      @epg-toggle="post('epg-toggle', '/api/epg/source/toggle', { sourceId: $event.sourceId, enabled: $event.enabled })"
+      @epg-remove="post('epg-remove', '/api/epg/source/remove', { sourceId: $event })"
+      @epg-clear="post('epg-clear', '/api/epg/preview/clear')"
     />
   </div>
 </template>

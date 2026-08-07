@@ -760,6 +760,60 @@ npm run electron:e2e:package
 checkpoint: complete G51 history and progress
 ```
 
+## G52（已完成）
+
+### 目标
+
+建立来源/内容身份稳定的收藏闭环：SQLite 持久化收藏与分组，提供收藏/取消收藏、分组管理、排序、搜索、详情页状态和源不可用提示，并接入 Electron 主进程、正式 Favorites 页面与 packaged E2E。
+
+### 状态
+
+已完成。收藏服务、schema v2 迁移、分组与排序 transaction、Favorites 页面、详情按钮、来源不可用提示、重启持久化和 packaged E2E 均已验证；审查发现的问题已修复。
+
+### 依赖
+
+- G50 SQLite 数据层与 repository 边界
+- G51 稳定 source/vod 身份、History 页面与 Open Design 数据特性规范
+- Electron 主进程生命周期和现有 Renderer API envelope
+
+### 范围
+
+- 收藏主键为 `sourceId + vodId`；相同标题但不同 source 独立保存；不保存临时播放 URL、Proxy token、Cookie 或 Authorization。
+- 默认分组与自定义分组：创建、改名、排序、移动；删除非空分组必须明确选择移入默认分组或删除其中收藏，默认分组不可删除。
+- 手动排序、收藏时间、标题、最近观看排序；手动排序通过 SQLite transaction 写入。
+- Sidebar 正式 Favorites 路由；Grid/List、分组侧栏、搜索、来源标记、移动、上下移、详情、取消收藏；详情页显示收藏/已收藏并支持移动分组。
+- 当前来源不可用时保留收藏，明确显示不可用，并允许删除或按标题搜索其他来源；不自动替换来源。
+
+### 验收标准
+
+- `tests/favorites.test.ts` 覆盖重复收藏、取消、同标题不同源、分组生命周期、非空分组删除决策、事务排序、最近观看排序、源不可用、隐私和重启持久化。
+- `tests/vue-renderer.test.ts` 覆盖正式 Favorites 页面、分组/收藏操作事件、Sidebar 路由和详情页收藏控件。
+- `tests/electron-e2e.test.ts` 与 packaged E2E 覆盖收藏写入、分组移动、详情打开、重启保留和 SQLite 隐私行审计。
+- SQLite schema migration、主进程服务生命周期、Renderer 数据边界和现有全量回归保持通过。
+
+### 验证命令
+
+```powershell
+npm run typecheck
+npx vitest run tests/favorites.test.ts tests/vue-renderer.test.ts tests/electron-e2e.test.ts
+npm test
+npm run renderer:build
+npm run electron:build
+npm run electron:e2e:package
+```
+
+### 文档
+
+- `docs/spike-52-favorites.md`
+- `docs/design/open-design/data-features/favorites-extension.md`
+- `docs/design/open-design/data-features/favorites-page-spec.md`
+
+### checkpoint
+
+```text
+checkpoint: complete G52 favorites
+```
+
 DEX-1 ~ DEX-5（实验支线）
 
 - DEX-1：Android Emulator 探针

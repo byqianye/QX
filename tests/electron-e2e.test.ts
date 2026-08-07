@@ -18,8 +18,9 @@ import type {
 import type { SpiderResponse } from "../src/spider/rpc.js";
 import type { SubtitleTrack } from "../src/subtitles.js";
 import { runPackagedE2e } from "../src/electron/e2e-runner.js";
-import { HistoryRepository, PlaybackProgressRepository, SettingsRepository } from "../src/data/repositories.js";
+import { FavoritesRepository, HistoryRepository, PlaybackProgressRepository, SettingsRepository } from "../src/data/repositories.js";
 import { SqliteDataLayer } from "../src/data/sqlite.js";
+import { FavoritesService } from "../src/favorites/favorites-service.js";
 import { HistoryProgressService } from "../src/history/history-progress.js";
 
 describe("packaged Electron E2E flow", () => {
@@ -106,9 +107,15 @@ describe("packaged Electron E2E flow", () => {
       trustStore: new ImportTrustStore(),
       createSession: (_source, _config, site) => new SessionFixture(site.api ?? "csp_Douban"),
     });
+    const dataServices = createHistoryService(resources, directory);
     const uiServer = new DesktopSpiderUiServer({
       importer,
-      history: createHistoryService(resources, directory),
+      history: dataServices.service,
+      favorites: new FavoritesService({
+        db: dataServices.layer,
+        favorites: new FavoritesRepository(dataServices.layer),
+        history: new HistoryRepository(dataServices.layer),
+      }),
       playbackProxyOrigins: ["http://127.0.0.1:43123"],
       parserCandidates: [
         {
@@ -159,6 +166,7 @@ describe("packaged Electron E2E flow", () => {
       verifyParserFallback: true,
       verifyPlaybackFallback: true,
       verifyHistory: true,
+      verifyFavorites: true,
       verifyAggregateSearch: true,
       verifyFakeMpv: true,
       fakeMpv: async () => true,
@@ -186,6 +194,7 @@ describe("packaged Electron E2E flow", () => {
         playbackFallback: true,
         history: true,
         historyRestart: true,
+        favorites: true,
         fakeMpvExit: true,
         proxyCleanup: true,
         snifferCleanup: true,
@@ -197,15 +206,18 @@ describe("packaged Electron E2E flow", () => {
 function createHistoryService(
   resources: Array<{ close(): Promise<void> }>,
   directory: string,
-): HistoryProgressService {
+): { service: HistoryProgressService; layer: SqliteDataLayer } {
   const layer = SqliteDataLayer.create(join(directory, "history-e2e.db"));
   resources.push({ close: async () => { layer.close(); } });
-  return new HistoryProgressService({
-    db: layer,
-    history: new HistoryRepository(layer),
-    progress: new PlaybackProgressRepository(layer),
-    settings: new SettingsRepository(layer),
-  });
+  return {
+    service: new HistoryProgressService({
+      db: layer,
+      history: new HistoryRepository(layer),
+      progress: new PlaybackProgressRepository(layer),
+      settings: new SettingsRepository(layer),
+    }),
+    layer,
+  };
 }
 
 async function startConfigServer(config: string): Promise<ServerResource> {

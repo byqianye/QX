@@ -70,7 +70,16 @@ import {
   createHistoryContext,
   HistoryProgressService,
   sourceIdForHistory,
+  sourceDisplayNameForHistory,
 } from "../history/history-progress.js";
+import {
+  EMPTY_FAVORITES_UI_STATE,
+  type FavoriteContentInput,
+  type FavoriteGroupDeleteMode,
+  type FavoriteItem,
+  type FavoritesUiState,
+} from "../favorites/favorites-types.js";
+import { FavoritesService } from "../favorites/favorites-service.js";
 
 const require = createRequire(import.meta.url);
 
@@ -179,6 +188,8 @@ export interface DesktopSpiderUiState {
   fallback: PlaybackFallbackState;
   history: HistoryUiState;
   historyResume: HistoryResumeCandidate | null;
+  favorites: FavoritesUiState;
+  favoriteDetail: FavoriteItem | null;
 }
 
 export interface DesktopSpiderUiOptions {
@@ -194,6 +205,7 @@ export interface DesktopSpiderUiOptions {
   playbackFallbackMaxAttempts?: number;
   playbackFallbackTimeoutMs?: number;
   history?: HistoryProgressService;
+  favorites?: FavoritesService;
 }
 
 export class DesktopSpiderUiController {
@@ -227,6 +239,7 @@ export class DesktopSpiderUiController {
   private readonly fallbackRequests = new Map<string, PlaybackRequest>();
   private pendingFallback: Promise<void> | null = null;
   private readonly historyService: HistoryProgressService | undefined;
+  private readonly favoritesService: FavoritesService | undefined;
   private historyResume: HistoryResumeCandidate | null = null;
   private pendingResumeSeconds = 0;
 
@@ -234,6 +247,7 @@ export class DesktopSpiderUiController {
     this.session = options.session;
     this.createSession = options.createSession;
     this.historyService = options.history;
+    this.favoritesService = options.favorites;
     this.parserCandidates = options.parserCandidates?.map(cloneParserCandidate) ?? [];
     this.sniffer = options.sniffer;
     this.parserAllowedOrigins = options.parserAllowedOrigins ?? [];
@@ -287,6 +301,61 @@ export class DesktopSpiderUiController {
       fallback: this.fallbackCoordinator.state,
       history: this.historyService?.uiState() ?? EMPTY_HISTORY_UI_STATE,
       historyResume: this.historyResume ? { ...this.historyResume } : null,
+      favorites: this.favoritesService?.uiState(sourceIdForHistory(view.source)) ?? EMPTY_FAVORITES_UI_STATE,
+      favoriteDetail: this.favoriteForDetail(),
+    };
+  }
+
+  public toggleFavorite(): DesktopSpiderUiState {
+    const favoriteService = this.favoritesService;
+    const input = this.favoriteInputForDetail();
+    if (!favoriteService || !input) {
+      this.localError = { code: "FAVORITE_DETAIL_REQUIRED", message: "请先打开一个媒体详情。" };
+      return this.state;
+    }
+    favoriteService.toggle(input);
+    return this.state;
+  }
+
+  public moveFavorite(groupId: string): DesktopSpiderUiState {
+    const favorite = this.favoriteForDetail();
+    if (!this.favoritesService || !favorite) {
+      this.localError = { code: "FAVORITE_NOT_FOUND", message: "当前详情尚未收藏。" };
+      return this.state;
+    }
+    this.favoritesService.move(favorite.favoriteId, groupId);
+    return this.state;
+  }
+
+  private favoriteForDetail(): FavoriteItem | null {
+    const input = this.favoriteInputForDetail();
+    if (!input || !this.favoritesService) return null;
+    const record = this.favoritesService.findByContent(input.sourceId, input.vodId);
+    if (!record) return null;
+    return this.favoritesService.uiState(input.sourceId).items
+      .find((item) => item.favoriteId === record.favoriteId) ?? null;
+  }
+
+  private favoriteInputForDetail(): FavoriteContentInput | null {
+    const vodId = optionalString(this.detailItem?.vod_id);
+    if (!vodId) return null;
+    const view = this.session.view;
+    const title = optionalString(this.detailItem?.vod_name) ?? vodId;
+    const metadata = {
+      area: optionalString(this.detailItem?.vod_area),
+      director: optionalString(this.detailItem?.vod_director),
+      actor: optionalString(this.detailItem?.vod_actor),
+      remarks: optionalString(this.detailItem?.vod_remarks),
+    };
+    return {
+      sourceId: sourceIdForHistory(view.source),
+      vodId,
+      title,
+      poster: optionalString(this.detailItem?.vod_pic),
+      year: optionalString(this.detailItem?.vod_year),
+      category: optionalString(this.detailItem?.vod_class),
+      sourceName: sourceDisplayNameForHistory(view.source),
+      metadata,
     };
   }
 
@@ -1126,6 +1195,7 @@ export interface DesktopSpiderUiServerOptions {
   playbackFallbackMaxAttempts?: number;
   playbackFallbackTimeoutMs?: number;
   history?: HistoryProgressService;
+  favorites?: FavoritesService;
 }
 
 export class DesktopSpiderUiServer {
@@ -1150,6 +1220,7 @@ export class DesktopSpiderUiServer {
   private readonly playbackFallbackMaxAttempts: number | undefined;
   private readonly playbackFallbackTimeoutMs: number | undefined;
   private readonly historyService: HistoryProgressService | undefined;
+  private readonly favoritesService: FavoritesService | undefined;
   private server: Server | undefined;
   private boundUrl: string | undefined;
   private boundSession: DesktopSpiderSessionPort | undefined;
@@ -1186,6 +1257,7 @@ export class DesktopSpiderUiServer {
     this.playbackFallbackMaxAttempts = options.playbackFallbackMaxAttempts;
     this.playbackFallbackTimeoutMs = options.playbackFallbackTimeoutMs;
     this.historyService = options.history;
+    this.favoritesService = options.favorites;
   }
 
   public get url(): string {
@@ -1362,6 +1434,50 @@ export class DesktopSpiderUiServer {
           if (!ui) throw new Error("HISTORY_SOURCE_SWITCH_REQUIRED");
           if (sourceIdForHistory(ui.state.source) !== item.sourceId) {
             throw new Error("HISTORY_SOURCE_SWITCH_REQUIRED");
+          }
+          await ui.detail(item.vodId);
+        } else {
+          writeJson(response, { error: "Not found" }, 404);
+          return;
+        }
+        this.writeCurrentState(response);
+        return;
+      }
+
+      if (url.pathname.startsWith("/api/favorites/")) {
+        const favoritesService = this.favoritesService;
+        if (!favoritesService) throw new Error("FAVORITES_UNAVAILABLE");
+        if (url.pathname === "/api/favorites/toggle-detail") {
+          const ui = this.activeUi();
+          if (!ui) throw new Error("FAVORITE_DETAIL_REQUIRED");
+          ui.toggleFavorite();
+        } else if (url.pathname === "/api/favorites/move-detail") {
+          const ui = this.activeUi();
+          if (!ui) throw new Error("FAVORITE_DETAIL_REQUIRED");
+          ui.moveFavorite(stringValue(body.groupId, ""));
+        } else if (url.pathname === "/api/favorites/delete") {
+          favoritesService.delete(stringValue(body.favoriteId, ""));
+        } else if (url.pathname === "/api/favorites/move") {
+          favoritesService.move(stringValue(body.favoriteId, ""), stringValue(body.groupId, ""));
+        } else if (url.pathname === "/api/favorites/reorder") {
+          favoritesService.reorder(stringValue(body.groupId, ""), stringList(body.favoriteIds));
+        } else if (url.pathname === "/api/favorites/group/create") {
+          favoritesService.createGroup(stringValue(body.name, ""));
+        } else if (url.pathname === "/api/favorites/group/rename") {
+          favoritesService.renameGroup(stringValue(body.groupId, ""), stringValue(body.name, ""));
+        } else if (url.pathname === "/api/favorites/group/reorder") {
+          favoritesService.reorderGroups(stringList(body.groupIds));
+        } else if (url.pathname === "/api/favorites/group/delete") {
+          const disposition = body.disposition === "default" || body.disposition === "delete"
+            ? body.disposition
+            : undefined;
+          favoritesService.deleteGroup(stringValue(body.groupId, ""), disposition);
+        } else if (url.pathname === "/api/favorites/open") {
+          const item = favoritesService.get(stringValue(body.favoriteId, ""));
+          if (!item) throw new Error("FAVORITE_NOT_FOUND");
+          const ui = this.activeUi();
+          if (!ui || sourceIdForHistory(ui.state.source) !== item.sourceId) {
+            throw new Error("FAVORITE_SOURCE_SWITCH_REQUIRED");
           }
           await ui.detail(item.vodId);
         } else {
@@ -1550,6 +1666,7 @@ export class DesktopSpiderUiServer {
         ...(this.playbackFallbackMaxAttempts ? { playbackFallbackMaxAttempts: this.playbackFallbackMaxAttempts } : {}),
         ...(this.playbackFallbackTimeoutMs ? { playbackFallbackTimeoutMs: this.playbackFallbackTimeoutMs } : {}),
         ...(this.historyService ? { history: this.historyService } : {}),
+        ...(this.favoritesService ? { favorites: this.favoritesService } : {}),
       });
       this.importedUiBySession.set(session, this.importedUi);
     }
@@ -2232,11 +2349,13 @@ function isThemeMode(value: unknown): value is "system" | "light" | "dark" {
   return value === "system" || value === "light" || value === "dark";
 }
 
-function isNavigation(value: unknown): value is "home" | "category" | "search" | "detail" | "settings" {
+function isNavigation(value: unknown): value is "home" | "category" | "search" | "detail" | "history" | "favorites" | "settings" {
   return value === "home"
     || value === "category"
     || value === "search"
     || value === "detail"
+    || value === "history"
+    || value === "favorites"
     || value === "settings";
 }
 

@@ -8,6 +8,7 @@ import DiagnosticPanel from "./DiagnosticPanel.vue";
 import EmbeddedPlayer from "./EmbeddedPlayer.vue";
 import ErrorState from "./ErrorState.vue";
 import FilterPanel from "./FilterPanel.vue";
+import FavoritesView from "./FavoritesView.vue";
 import HistoryView from "./HistoryView.vue";
 import MediaGrid from "./MediaGrid.vue";
 import PlaybackSelector from "./PlaybackSelector.vue";
@@ -63,11 +64,22 @@ const emit = defineEmits<{
   historyDeleteProgress: [identity: string];
   historyClear: [identities: string[]];
   historyPause: [paused: boolean];
+  favoriteToggle: [];
+  favoriteMoveDetail: [groupId: string];
+  favoriteOpen: [favoriteId: string];
+  favoriteDelete: [favoriteId: string];
+  favoriteMove: [payload: { favoriteId: string; groupId: string }];
+  favoriteReorder: [payload: { groupId: string; favoriteIds: string[] }];
+  favoriteCreateGroup: [name: string];
+  favoriteRenameGroup: [payload: { groupId: string; name: string }];
+  favoriteDeleteGroup: [payload: { groupId: string; disposition?: "default" | "delete" }];
+  favoriteReorderGroups: [groupIds: string[]];
 }>();
 
-const view = ref<"browse" | "history" | "settings">(props.initialNavigation === "settings"
+const view = ref<"browse" | "history" | "favorites" | "settings">(props.initialNavigation === "settings"
   ? "settings"
-  : props.initialNavigation === "history" ? "history" : "browse");
+  : props.initialNavigation === "history" ? "history"
+    : props.initialNavigation === "favorites" ? "favorites" : "browse");
 const theme = ref<"system" | "light" | "dark">(props.initialTheme ?? "light");
 const systemTheme = ref<"light" | "dark">("light");
 const debugOpen = ref(false);
@@ -115,7 +127,7 @@ const selectedLine = computed(() => {
 
 const canStart = computed(() => props.state.spider.status === "idle"
   || (props.state.spider.status === "error" && !props.state.spider.sidecarRunning));
-const activePage = computed(() => view.value === "settings" || view.value === "history" ? view.value : props.state.browse.page);
+const activePage = computed(() => view.value === "settings" || view.value === "history" || view.value === "favorites" ? view.value : props.state.browse.page);
 const retryable = computed(() => props.state.error.error?.retryable === true);
 const hasPlayback = computed(() => props.state.detail.playbackCatalog !== null || props.state.playback.player.source !== null);
 const playerDetached = computed(() => props.state.playback.session?.host === "detached");
@@ -145,7 +157,7 @@ watch(
 );
 
 watch(() => props.state.browse.page, (page) => {
-  if (view.value === "history" && page === "detail") {
+  if ((view.value === "history" || view.value === "favorites") && page === "detail") {
     view.value = "browse";
     persistNavigation("detail");
   }
@@ -154,13 +166,13 @@ watch(() => props.state.browse.page, (page) => {
 watch(theme, () => {
   emit("viewState", {
     theme: theme.value,
-    navigation: view.value === "settings" || view.value === "history"
+    navigation: view.value === "settings" || view.value === "history" || view.value === "favorites"
       ? view.value
       : navigationFromPage(props.state.browse.page),
   });
 });
 
-function navigate(route: "home" | "category" | "history" | "settings"): void {
+function navigate(route: "home" | "category" | "history" | "favorites" | "settings"): void {
   if (route === "settings") {
     view.value = "settings";
     persistNavigation("settings");
@@ -169,6 +181,11 @@ function navigate(route: "home" | "category" | "history" | "settings"): void {
   if (route === "history") {
     view.value = "history";
     persistNavigation("history");
+    return;
+  }
+  if (route === "favorites") {
+    view.value = "favorites";
+    persistNavigation("favorites");
     return;
   }
   view.value = "browse";
@@ -288,8 +305,8 @@ function navigationFromPage(page: string): RendererNavigation {
       <div class="workspace-content">
         <header class="workspace-header">
           <div>
-            <span class="section-kicker">{{ view === "settings" ? "工作区设置" : view === "history" ? "播放历史" : "媒体工作台" }}</span>
-            <h1>{{ view === "settings" ? "设置" : view === "history" ? "History" : (props.state.spider.api ? displaySource(props.state.spider.api) : "QX 影视") }}</h1>
+            <span class="section-kicker">{{ view === "settings" ? "工作区设置" : view === "history" ? "播放历史" : view === "favorites" ? "收藏管理" : "媒体工作台" }}</span>
+            <h1>{{ view === "settings" ? "设置" : view === "history" ? "History" : view === "favorites" ? "Favorites" : (props.state.spider.api ? displaySource(props.state.spider.api) : "QX 影视") }}</h1>
             <p data-testid="status" class="workspace-status" :class="{ loading: props.state.browse.loading || props.pending !== null }">
               {{ statusLabels[props.state.spider.status] }}{{ props.state.browse.loading || props.pending !== null ? " · 加载中" : "" }}
             </p>
@@ -348,6 +365,20 @@ function navigationFromPage(page: string): RendererNavigation {
           </SettingsSection>
         </template>
 
+        <FavoritesView
+          v-else-if="view === 'favorites'"
+          :state="props.state.favorites"
+          :pending="props.pending"
+          @open="emit('favoriteOpen', $event)"
+          @delete="emit('favoriteDelete', $event)"
+          @move="emit('favoriteMove', $event)"
+          @reorder="emit('favoriteReorder', $event)"
+          @create-group="emit('favoriteCreateGroup', $event)"
+          @rename-group="emit('favoriteRenameGroup', $event)"
+          @delete-group="emit('favoriteDeleteGroup', $event)"
+          @reorder-groups="emit('favoriteReorderGroups', $event)"
+          @search="submitSearch"
+        />
         <HistoryView
           v-else-if="view === 'history'"
           :state="props.state.history"
@@ -388,8 +419,13 @@ function navigationFromPage(page: string): RendererNavigation {
             :detail="props.state.detail.detail"
             :can-play="props.state.detail.canPlay"
             :playback-label="props.state.playback.playback.label"
+            :favorite="props.state.favoriteDetail"
+            :favorite-groups="props.state.favorites.groups"
+            :favorite-pending="props.pending !== null"
             @close="emit('home')"
             @play="playFirstEpisode"
+            @favorite-toggle="emit('favoriteToggle')"
+            @favorite-move="emit('favoriteMoveDetail', $event)"
           />
 
           <section v-if="hasPlayback" class="playback-stage" data-testid="playback-stage">

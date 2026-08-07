@@ -19,6 +19,8 @@ export interface PackagedE2eOptions {
   verifyPlaybackHealth?: boolean;
   verifyPlaybackFallback?: boolean;
   verifyHistory?: boolean;
+  verifyFavorites?: boolean;
+  expectedFavoriteId?: string;
   verifyParserFallback?: boolean;
   verifySniffFallback?: boolean;
   verifyAggregateSearch?: boolean;
@@ -73,6 +75,8 @@ export interface PackagedE2eChecks {
   noBackgroundPlayer?: boolean;
   history?: boolean;
   historyRestart?: boolean;
+  favorites?: boolean;
+  favoritesRestart?: boolean;
 }
 
 export interface PackagedE2eResult {
@@ -80,6 +84,7 @@ export interface PackagedE2eResult {
   checks: PackagedE2eChecks;
   searchVodId: string | null;
   detailVodId: string | null;
+  favoriteId: string | null;
   sidecarPid: number | null;
   error?: string;
 }
@@ -88,6 +93,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
   const checks = emptyChecks();
   let searchVodId: string | null = null;
   let detailVodId: string | null = null;
+  let favoriteId: string | null = null;
   let sidecarPid: number | null = null;
 
   try {
@@ -195,6 +201,34 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       if (options.verifyHistory) {
         checks.historyRestart = options.freshTrust
           || playbackDetail.state?.historyResume?.position === 44;
+      }
+      if (options.verifyFavorites) {
+        const existingFavoriteId = playbackDetail.state?.favoriteDetail?.favoriteId;
+        if (options.expectedFavoriteId !== undefined) {
+          checks.favoritesRestart = existingFavoriteId === options.expectedFavoriteId;
+        }
+        if (typeof existingFavoriteId === "string") {
+          await post(options.baseUrl, "/api/favorites/delete", { favoriteId: existingFavoriteId });
+        }
+        const toggled = await post(options.baseUrl, "/api/favorites/toggle-detail");
+        favoriteId = toggled.state?.favoriteDetail?.favoriteId ?? null;
+        const existingGroup = toggled.state?.favorites?.groups.find((group) => group.name === "E2E 收藏");
+        const createdGroup = existingGroup
+          ? toggled
+          : await post(options.baseUrl, "/api/favorites/group/create", { name: "E2E 收藏" });
+        const group = createdGroup.state?.favorites?.groups.find((entry) => entry.name === "E2E 收藏");
+        const moved = typeof favoriteId === "string" && group
+          ? await post(options.baseUrl, "/api/favorites/move", { favoriteId, groupId: group.groupId })
+          : null;
+        const openedFavorite = typeof favoriteId === "string"
+          ? await post(options.baseUrl, "/api/favorites/open", { favoriteId })
+          : null;
+        checks.favorites = typeof favoriteId === "string"
+          && toggled.state?.favoriteDetail?.favoriteId === favoriteId
+          && group !== undefined
+          && moved?.state?.favoriteDetail?.groupId === group.groupId
+          && openedFavorite?.state?.page === "detail"
+          && openedFavorite.state?.detail?.vod_id === "fixture:movie-1";
       }
       const playbackDetailHtml = await readPage(options);
       const mp4 = await post(options.baseUrl, "/api/player", {
@@ -444,6 +478,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       checks,
       searchVodId,
       detailVodId,
+      favoriteId,
       sidecarPid,
     };
   } catch (error) {
@@ -452,6 +487,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       checks,
       searchVodId,
       detailVodId,
+      favoriteId,
       sidecarPid,
       error: errorMessage(error),
     };
@@ -582,6 +618,11 @@ interface UiState {
     paused: boolean;
   };
   historyResume?: { position: number } | null;
+  favoriteDetail?: { favoriteId?: string; groupId?: string | null } | null;
+  favorites?: {
+    items: readonly Record<string, unknown>[];
+    groups: readonly { groupId: string; name: string; count: number }[];
+  };
 }
 
 function playerSourceUrl(state: UiState | null): string | null {

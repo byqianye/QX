@@ -196,6 +196,9 @@ async function restorePage(): Promise<void> {
   } else if (candidate.navigation === "history") {
     restoreScroll(candidate.scrollTop);
     return;
+  } else if (candidate.navigation === "favorites") {
+    restoreScroll(candidate.scrollTop);
+    return;
   } else {
     await request("restore-home", () => api.post("/api/home"));
   }
@@ -283,6 +286,16 @@ function play(line: number, episode: number, resumeMode?: HistoryResumeMode): vo
       @history-delete-progress="post('history-delete-progress', '/api/history/delete-progress', { identity: $event })"
       @history-clear="post('history-clear', '/api/history/clear', { identities: $event })"
       @history-pause="post('history-pause', '/api/history/pause', { paused: $event })"
+      @favorite-toggle="post('favorite-toggle-detail', '/api/favorites/toggle-detail')"
+      @favorite-move-detail="post('favorite-move-detail', '/api/favorites/move-detail', { groupId: $event })"
+      @favorite-open="post('favorite-open', '/api/favorites/open', { favoriteId: $event })"
+      @favorite-delete="post('favorite-delete', '/api/favorites/delete', { favoriteId: $event })"
+      @favorite-move="post('favorite-move', '/api/favorites/move', { favoriteId: $event.favoriteId, groupId: $event.groupId })"
+      @favorite-reorder="post('favorite-reorder', '/api/favorites/reorder', { groupId: $event.groupId, favoriteIds: $event.favoriteIds })"
+      @favorite-create-group="post('favorite-create-group', '/api/favorites/group/create', { name: $event })"
+      @favorite-rename-group="post('favorite-rename-group', '/api/favorites/group/rename', { groupId: $event.groupId, name: $event.name })"
+      @favorite-delete-group="post('favorite-delete-group', '/api/favorites/group/delete', { groupId: $event.groupId, disposition: $event.disposition })"
+      @favorite-reorder-groups="post('favorite-reorder-groups', '/api/favorites/group/reorder', { groupIds: $event })"
     />
   </div>
 </template>

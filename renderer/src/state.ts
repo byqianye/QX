@@ -3,6 +3,7 @@ import type { SubtitleTrack } from "../../src/subtitles.js";
 import type { PlaybackFallbackState, PlaybackHealthSnapshot } from "../../src/health/playback-health.js";
 import type { PlaybackMediaEvent } from "../../src/desktop/playback.js";
 import type { HistoryResumeCandidate, HistoryUiState } from "../../src/history/history-types.js";
+import type { FavoriteItem, FavoritesUiState } from "../../src/favorites/favorites-types.js";
 
 export type ImportStatus =
   | "empty"
@@ -22,7 +23,7 @@ export type SpiderStatus =
   | "destroyed";
 
 export type RendererThemeMode = "system" | "light" | "dark";
-export type RendererNavigation = "home" | "category" | "search" | "detail" | "history" | "settings";
+export type RendererNavigation = "home" | "category" | "search" | "detail" | "history" | "favorites" | "settings";
 export type PlayerHostMode = "embedded" | "detached";
 export const PLAYBACK_RESTORE_MAX_DRIFT_SECONDS = 2;
 
@@ -259,6 +260,8 @@ export interface RendererState {
   playback: PlaybackState;
   history: HistoryUiState;
   historyResume: HistoryResumeCandidate | null;
+  favorites: FavoritesUiState;
+  favoriteDetail: FavoriteItem | null;
   error: ErrorState;
 }
 
@@ -284,6 +287,8 @@ export interface ApiSpiderState {
   fallback?: PlaybackFallbackState;
   history?: HistoryUiState;
   historyResume?: HistoryResumeCandidate | null;
+  favorites?: FavoritesUiState;
+  favoriteDetail?: FavoriteItem | null;
 }
 
 export interface RendererEnvelope {
@@ -339,6 +344,8 @@ export function createRendererState(): RendererState {
     },
     history: { items: [], paused: false },
     historyResume: null,
+    favorites: { items: [], groups: [], defaultGroupId: "default" },
+    favoriteDetail: null,
     error: { error: null },
   };
 }
@@ -395,6 +402,8 @@ export function applyRendererEnvelope(
     },
     history: cloneHistoryState(state.history ?? current.history),
     historyResume: state.historyResume ? { ...state.historyResume } : null,
+    favorites: cloneFavoritesState(state.favorites ?? current.favorites),
+    favoriteDetail: state.favoriteDetail ? { ...state.favoriteDetail } : null,
     error: { error: toAppError(stateError) },
   };
 }
@@ -504,6 +513,14 @@ function clonePlaybackFallback(state: PlaybackFallbackState): PlaybackFallbackSt
 function cloneHistoryState(state: HistoryUiState): HistoryUiState {
   return {
     paused: state.paused,
+    items: state.items.map((item) => ({ ...item })),
+  };
+}
+
+function cloneFavoritesState(state: FavoritesUiState): FavoritesUiState {
+  return {
+    defaultGroupId: state.defaultGroupId,
+    groups: state.groups.map((group) => ({ ...group })),
     items: state.items.map((item) => ({ ...item })),
   };
 }

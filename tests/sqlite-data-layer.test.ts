@@ -38,7 +38,7 @@ describe("SQLite data layer", () => {
     const opened = openSqliteDataLayer(paths.database);
     layers.push(opened.layer);
     expect(opened.diagnostic).toBeNull();
-    expect(opened.layer.schemaVersion).toBe(1);
+    expect(opened.layer.schemaVersion).toBe(2);
     const tables = opened.layer.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
     ).all().map((row) => row.name);
@@ -58,6 +58,11 @@ describe("SQLite data layer", () => {
       "cache_entries",
       "data_migrations",
     ]));
+    expect(opened.layer.prepare("PRAGMA table_info(favorites)").all().map((row) => row.name)).toEqual(expect.arrayContaining([
+      "year",
+      "category",
+      "source_name",
+    ]));
   });
 
   it("runs migrations once, uses prepared values, and rolls back transactions", () => {
@@ -71,7 +76,7 @@ describe("SQLite data layer", () => {
 
     const second = openSqliteDataLayer(path);
     layers.push(second.layer);
-    expect(second.layer.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toMatchObject({ count: 1 });
+    expect(second.layer.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toMatchObject({ count: 2 });
     const settings = new SettingsRepository(second.layer);
     const injectionLikeKey = "' OR 1=1; --";
     settings.set(injectionLikeKey, { value: "safe" });
@@ -82,6 +87,51 @@ describe("SQLite data layer", () => {
       throw new Error("intentional rollback");
     }), "DATABASE_WRITE_FAILED");
     expect(settings.get("rolled-back")).toBeNull();
+  });
+
+  it("migrates legacy ungrouped favorites into the default group", () => {
+    const directory = mkdtempSync(join(tmpdir(), "qx-data-favorites-migration-"));
+    directories.push(directory);
+    const path = join(directory, "qx-yingshi.db");
+    const legacy = new DatabaseSync(path);
+    legacy.exec(`
+      CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY NOT NULL, name TEXT NOT NULL, applied_at INTEGER NOT NULL) STRICT;
+      INSERT INTO schema_migrations(version, name, applied_at) VALUES (1, 'initial-data-layer', 1);
+      CREATE TABLE favorite_groups(
+        group_id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE favorites(
+        favorite_id TEXT PRIMARY KEY NOT NULL,
+        source_id TEXT NOT NULL,
+        vod_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        poster TEXT,
+        group_id TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        metadata_json TEXT,
+        added_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(source_id, vod_id),
+        FOREIGN KEY (group_id) REFERENCES favorite_groups(group_id) ON DELETE SET NULL
+      ) STRICT;
+    `);
+    legacy.prepare(`
+      INSERT INTO favorites(favorite_id, source_id, vod_id, title, group_id, sort_order, added_at, updated_at)
+      VALUES (?, ?, ?, ?, NULL, 0, ?, ?)
+    `).run("favorite-legacy", "source-a", "vod-a", "Legacy", 1, 1);
+    legacy.close();
+
+    const opened = openSqliteDataLayer(path);
+    layers.push(opened.layer);
+    expect(opened.layer.schemaVersion).toBe(2);
+    expect(opened.layer.prepare("SELECT group_id FROM favorites WHERE favorite_id = ?").get("favorite-legacy"))
+      .toMatchObject({ group_id: "default" });
+    expect(opened.layer.prepare("SELECT group_id FROM favorite_groups WHERE group_id = ?").get("default"))
+      .toMatchObject({ group_id: "default" });
   });
 
   it("reports a too-new database and keeps the original file untouched", () => {
@@ -97,7 +147,7 @@ describe("SQLite data layer", () => {
     layers.push(opened.layer);
     expect(opened).toMatchObject({ recovered: true, diagnostic: { code: "DATABASE_VERSION_TOO_NEW" } });
     expect(existsSync(path)).toBe(true);
-    expect(opened.layer.schemaVersion).toBe(1);
+    expect(opened.layer.schemaVersion).toBe(2);
   });
 
   it("rolls back a failed schema migration instead of recording a false version", () => {

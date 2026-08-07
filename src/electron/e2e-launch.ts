@@ -125,8 +125,10 @@ try {
   });
   const firstResultValue = readResult(firstResult);
   assertRun("first packaged E2E", first, firstResultValue);
+  const firstFavoriteId = stringValue(firstResultValue.favoriteId, "Packaged E2E did not return a favorite identity");
   assertPersistedDesktopState(userData, "douban");
   assertPersistedHistoryPrivacy(userData);
+  assertPersistedFavoritesPrivacy(userData);
 
   const second = await runPackagedExecutable(executable, {
     QX_ELECTRON_E2E: "1",
@@ -137,6 +139,7 @@ try {
     QX_E2E_RESULT_PATH: secondResult,
     QX_E2E_USER_DATA: userData,
     QX_E2E_PLAYBACK_CONFIG: playbackConfig,
+    QX_E2E_EXPECTED_FAVORITE_ID: firstFavoriteId,
     QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,
     QX_PLAYBACK_FALLBACK_MODE: "auto",
     QX_E2E_HLS_MASTER_URL: mediaFixture.hlsMasterUrl,
@@ -151,6 +154,7 @@ try {
   assertRun("restarted packaged E2E", second, secondResultValue);
   assertPersistedDesktopState(userData, "douban");
   assertPersistedHistoryPrivacy(userData);
+  assertPersistedFavoritesPrivacy(userData);
 
   console.log(JSON.stringify({
     probe: "packaged-electron-e2e",
@@ -179,6 +183,11 @@ async function startConfigServer(payload: string): Promise<string> {
 
 function readResult(path: string): Record<string, unknown> {
   return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+}
+
+function stringValue(value: unknown, message: string): string {
+  if (typeof value !== "string" || value.length === 0) throw new Error(message);
+  return value;
 }
 
 function assertRun(name: string, process: PackagedProcessResult, result: Record<string, unknown>): void {
@@ -229,6 +238,24 @@ function assertPersistedHistoryPrivacy(userDataPath: string): void {
     const serialized = JSON.stringify(rows);
     if (/https?:\/\/|token|cookie|authorization|bearer|__qx_playback/i.test(serialized)) {
       throw new Error("Packaged E2E history privacy contract failed");
+    }
+  } finally {
+    database.close();
+  }
+}
+
+function assertPersistedFavoritesPrivacy(userDataPath: string): void {
+  const database = new DatabaseSync(join(userDataPath, "qx-yingshi.db"), { readOnly: true });
+  try {
+    const rows = database.prepare(`
+      SELECT favorite_id, source_id, vod_id, title, poster, year, category,
+             source_name, group_id, sort_order, metadata_json, added_at, updated_at
+      FROM favorites
+    `).all();
+    if (rows.length === 0) throw new Error("Packaged E2E favorite row was not persisted");
+    const serialized = JSON.stringify(rows);
+    if (/token|cookie|authorization|bearer|__qx_playback|m3u8|\.mp4|\.mkv|\.webm|\.mpd|\/(?:live|stream|playback|playlist|session|proxy)(?:\/|["?])/i.test(serialized)) {
+      throw new Error("Packaged E2E favorites privacy contract failed");
     }
   } finally {
     database.close();

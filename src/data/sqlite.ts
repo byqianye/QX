@@ -9,7 +9,7 @@ import {
   type DatabaseErrorCode,
 } from "./errors.js";
 
-export const SUPPORTED_SCHEMA_VERSION = 1;
+export const SUPPORTED_SCHEMA_VERSION = 2;
 
 interface Migration {
   version: number;
@@ -160,6 +160,18 @@ const migrations: readonly Migration[] = [
         name TEXT PRIMARY KEY NOT NULL,
         completed_at INTEGER NOT NULL
       ) STRICT;
+    `,
+  },
+  {
+    version: 2,
+    name: "favorite-display-fields",
+    sql: `
+      ALTER TABLE favorites ADD COLUMN year TEXT;
+      ALTER TABLE favorites ADD COLUMN category TEXT;
+      ALTER TABLE favorites ADD COLUMN source_name TEXT;
+      INSERT OR IGNORE INTO favorite_groups(group_id, name, sort_order, created_at, updated_at)
+        VALUES ('default', '默认收藏', 0, 0, 0);
+      UPDATE favorites SET group_id = 'default' WHERE group_id IS NULL;
     `,
   },
 ];

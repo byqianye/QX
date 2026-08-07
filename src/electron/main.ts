@@ -37,10 +37,12 @@ import {
   type SqliteDataLayer,
 } from "../data/sqlite.js";
 import {
+  FavoritesRepository,
   HistoryRepository,
   PlaybackProgressRepository,
   SettingsRepository,
 } from "../data/repositories.js";
+import { FavoritesService } from "../favorites/favorites-service.js";
 import { HistoryProgressService } from "../history/history-progress.js";
 import {
   IsolatedSniffer,
@@ -86,6 +88,7 @@ let dataLayer: SqliteDataLayer | undefined;
 let desktopStateStore: DesktopStateStorePort | undefined;
 let configHistoryStore: ConfigHistoryStore | undefined;
 let historyProgressService: HistoryProgressService | undefined;
+let favoritesService: FavoritesService | undefined;
 let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
 
 function getDesktopStateStore(): DesktopStateStorePort {
@@ -104,8 +107,13 @@ function getHistoryProgressService(): HistoryProgressService {
   if (!historyProgressService) throw new Error("History progress service is unavailable");
   return historyProgressService;
 }
+function getFavoritesService(): FavoritesService {
+  initializeDataLayer();
+  if (!favoritesService) throw new Error("Favorites service is unavailable");
+  return favoritesService;
+}
 function initializeDataLayer(): void {
-  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService) return;
+  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService) return;
   const directories = new DataDirectoryResolver(app.getPath("userData")).resolve();
   const opened = openSqliteDataLayer(directories.database);
   dataLayer = opened.layer;
@@ -132,6 +140,11 @@ function initializeDataLayer(): void {
     history: new HistoryRepository(opened.layer),
     progress: new PlaybackProgressRepository(opened.layer),
     settings: new SettingsRepository(opened.layer),
+  });
+  favoritesService = new FavoritesService({
+    db: opened.layer,
+    favorites: new FavoritesRepository(opened.layer),
+    history: new HistoryRepository(opened.layer),
   });
 }
 
@@ -192,6 +205,7 @@ function createShell(): DesktopShellRuntime {
         rendererDirectory: join(app.getAppPath(), "dist", "renderer"),
         stateStore,
         history: getHistoryProgressService(),
+        favorites: getFavoritesService(),
         onPlayerOpen: openPlayerWindow,
         onPlayerAttach: closePlayerWindow,
         onPlayerStop: closePlayerWindow,
@@ -449,6 +463,7 @@ async function closeShell(closeData = false): Promise<void> {
 function closeDataLayer(): void {
   historyProgressService?.appClose();
   historyProgressService = undefined;
+  favoritesService = undefined;
   const current = dataLayer;
   dataLayer = undefined;
   if (!current) return;
@@ -695,6 +710,10 @@ async function runE2e(baseUrl: string): Promise<void> {
       verifyPlaybackHealth: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifyPlaybackFallback: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifyHistory: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
+      verifyFavorites: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
+      ...(process.env.QX_E2E_EXPECTED_FAVORITE_ID
+        ? { expectedFavoriteId: process.env.QX_E2E_EXPECTED_FAVORITE_ID }
+        : {}),
       verifyParserFallback: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifySniffFallback: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG) && ISOLATED_SNIFFER_ENABLED,
       verifyAggregateSearch: true,

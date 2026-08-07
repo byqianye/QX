@@ -466,11 +466,13 @@ describe("Vue renderer", () => {
     expect(wrapper.findAll('[data-od-id]').length).toBeGreaterThan(10);
     expect(wrapper.find('[data-play-url]').exists()).toBe(false);
     expect(wrapper.findAll('[data-diagnostic-step]').length).toBeGreaterThan(0);
-    expect(wrapper.findAll('[data-action$="-placeholder"]')).toHaveLength(4);
+    expect(wrapper.findAll('[data-action$="-placeholder"]')).toHaveLength(3);
     expect(wrapper.get('[data-action="history"]')).toBeTruthy();
+    expect(wrapper.get('[data-action="favorites"]')).toBeTruthy();
     expect(wrapper.get('[data-testid="detail-drawer"]').text()).toContain("导演");
     await wrapper.get('[data-action="settings"]').trigger("click");
     expect(wrapper.findAll('[data-testid="settings-section"]').length).toBeGreaterThanOrEqual(5);
+    expect(wrapper.find('[data-testid="media-grid"]').exists()).toBe(false);
     const themeMode = wrapper.get('[data-action="theme-mode"]');
     await themeMode.setValue("dark");
     expect(wrapper.get('[data-testid="desktop-spider-ui"]').attributes("data-theme")).toBe("dark");
@@ -575,6 +577,102 @@ describe("Vue renderer", () => {
     expect(browse.get('[data-action="history-beginning"]')).toBeTruthy();
     expect(browse.get('[data-action="history-delete-progress"]')).toBeTruthy();
     expect(browseState.playback.player.currentTime).toBe(0);
+    browse.unmount();
+  });
+
+  it("renders favorites, group actions, source availability, and detail favorite controls", async () => {
+    const envelope = readyEnvelope();
+    envelope.state = {
+      ...envelope.state!,
+      favorites: {
+        defaultGroupId: "default",
+        groups: [
+          { groupId: "default", name: "默认收藏", sortOrder: 0, createdAt: 1, updatedAt: 1, count: 2 },
+          { groupId: "group-1", name: "周末观看", sortOrder: 1, createdAt: 1, updatedAt: 1, count: 0 },
+        ],
+        items: [
+          {
+            favoriteId: "favorite-1",
+            sourceId: "source-a",
+            vodId: "vod-1",
+            title: "Fixture favorite",
+            poster: null,
+            year: "2026",
+            category: "电影",
+            sourceName: "Fixture source",
+            groupId: "default",
+            sortOrder: 0,
+            metadata: null,
+            addedAt: 1,
+            updatedAt: 1,
+            sourceAvailable: true,
+            recentWatchedAt: null,
+          },
+          {
+            favoriteId: "favorite-2",
+            sourceId: "source-b",
+            vodId: "vod-2",
+            title: "Unavailable favorite",
+            poster: null,
+            year: null,
+            category: null,
+            sourceName: "Other source",
+            groupId: "default",
+            sortOrder: 1,
+            metadata: null,
+            addedAt: 2,
+            updatedAt: 2,
+            sourceAvailable: false,
+            recentWatchedAt: null,
+          },
+        ],
+      },
+    };
+    const state = applyRendererEnvelope(createRendererState(), envelope);
+    const wrapper = mount(SpiderView, {
+      props: { state, pending: null, lineIndex: 0, order: "forward", initialNavigation: "favorites" },
+    });
+
+    expect(wrapper.get('[data-testid="favorites-page"]')).toBeTruthy();
+    expect(wrapper.get('[data-testid="favorites-list"]').text()).toContain("Fixture favorite");
+    await wrapper.get('[data-action="favorite-group-create"]').trigger("click");
+    expect(wrapper.emitted("favoriteCreateGroup")).toBeUndefined();
+    await wrapper.get('[data-testid="favorite-group-name"]').setValue("新分组");
+    await wrapper.get('[data-action="favorite-group-create"]').trigger("click");
+    expect(wrapper.emitted("favoriteCreateGroup")).toEqual([["新分组"]]);
+    await wrapper.get('[data-action="favorite-open"]').trigger("click");
+    expect(wrapper.emitted("favoriteOpen")).toEqual([["favorite-1"]]);
+    await wrapper.get('[data-action="favorite-move"]').setValue("group-1");
+    expect(wrapper.emitted("favoriteMove")).toEqual([[{ favoriteId: "favorite-1", groupId: "group-1" }]]);
+    await wrapper.findAll('.favorites-group-button')[1]!.trigger("click");
+    await wrapper.get('[aria-label="重命名分组"]').setValue("周末精选");
+    await wrapper.get('[data-action="favorite-group-rename"]').trigger("click");
+    expect(wrapper.emitted("favoriteRenameGroup")).toEqual([[{ groupId: "group-1", name: "周末精选" }]]);
+    await wrapper.get('[data-action="favorite-group-delete"]').trigger("click");
+    await wrapper.get('[data-action="favorite-confirm"]').trigger("click");
+    expect(wrapper.emitted("favoriteDeleteGroup")).toEqual([[{ groupId: "group-1", disposition: undefined }]]);
+    await wrapper.findAll('.favorites-group-button')[0]!.trigger("click");
+    await wrapper.get('[data-action="favorite-delete"]').trigger("click");
+    await wrapper.get('[data-action="favorite-confirm"]').trigger("click");
+    expect(wrapper.emitted("favoriteDelete")).toEqual([["favorite-1"]]);
+    await wrapper.get('[data-action="favorite-search"]').trigger("click");
+    expect(wrapper.emitted("search")).toEqual([["Unavailable favorite"]]);
+    expect(wrapper.find('[data-testid="favorites-page"]').exists()).toBe(false);
+    wrapper.unmount();
+
+    const browse = mount(SpiderView, {
+      props: {
+        state: applyRendererEnvelope(createRendererState(), {
+          ...envelope,
+          state: { ...envelope.state!, detail: { vod_id: "vod-1", vod_name: "Fixture favorite" }, favoriteDetail: state.favorites.items[0] ?? null },
+        }),
+        pending: null,
+        lineIndex: 0,
+        order: "forward",
+      },
+    });
+    await browse.get('[data-action="favorite-toggle-detail"]').trigger("click");
+    expect(browse.emitted("favoriteToggle")).toHaveLength(1);
     browse.unmount();
   });
 });

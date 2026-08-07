@@ -42,6 +42,9 @@ export interface FavoriteRecord {
   vodId: string;
   title: string;
   poster: string | null;
+  year: string | null;
+  category: string | null;
+  sourceName: string | null;
   groupId: string | null;
   sortOrder: number;
   metadata: unknown | null;
@@ -185,6 +188,13 @@ export class HistoryRepository {
     ).all(safeLimit).map(historyFromRow);
   }
 
+  public latestUpdatedAtForContent(sourceId: string, vodId: string): number | null {
+    const row = this.db.prepare(
+      "SELECT MAX(updated_at) AS updated_at FROM history WHERE source_id = ? AND vod_id = ?",
+    ).get(sourceId, vodId) as { updated_at?: unknown } | undefined;
+    return row?.updated_at === null || row?.updated_at === undefined ? null : numberValue(row.updated_at);
+  }
+
   public delete(identity: string): void {
     try {
       this.db.prepare("DELETE FROM history WHERE identity = ?").run(identity);
@@ -272,13 +282,16 @@ export class FavoritesRepository {
     try {
       this.db.prepare(`
         INSERT INTO favorites(
-          favorite_id, source_id, vod_id, title, poster, group_id, sort_order,
-          metadata_json, added_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          favorite_id, source_id, vod_id, title, poster, year, category, source_name,
+          group_id, sort_order, metadata_json, added_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(source_id, vod_id) DO UPDATE SET
           favorite_id = excluded.favorite_id,
           title = excluded.title,
           poster = excluded.poster,
+          year = excluded.year,
+          category = excluded.category,
+          source_name = excluded.source_name,
           group_id = excluded.group_id,
           sort_order = excluded.sort_order,
           metadata_json = excluded.metadata_json,
@@ -289,6 +302,9 @@ export class FavoritesRepository {
         record.vodId,
         record.title,
         record.poster,
+        record.year,
+        record.category,
+        record.sourceName,
         record.groupId,
         record.sortOrder,
         metadataJson,
@@ -307,6 +323,105 @@ export class FavoritesRepository {
     return rows.map(favoriteFromRow);
   }
 
+  public get(favoriteId: string): FavoriteRecord | null {
+    const row = this.db.prepare(
+      "SELECT * FROM favorites WHERE favorite_id = ?",
+    ).get(favoriteId);
+    return row ? favoriteFromRow(row) : null;
+  }
+
+  public findByContent(sourceId: string, vodId: string): FavoriteRecord | null {
+    const row = this.db.prepare(
+      "SELECT * FROM favorites WHERE source_id = ? AND vod_id = ?",
+    ).get(sourceId, vodId);
+    return row ? favoriteFromRow(row) : null;
+  }
+
+  public listGroups(): readonly FavoriteGroupRecord[] {
+    return this.db.prepare(
+      "SELECT * FROM favorite_groups ORDER BY sort_order, created_at",
+    ).all().map(favoriteGroupFromRow);
+  }
+
+  public getGroup(groupId: string): FavoriteGroupRecord | null {
+    const row = this.db.prepare(
+      "SELECT * FROM favorite_groups WHERE group_id = ?",
+    ).get(groupId);
+    return row ? favoriteGroupFromRow(row) : null;
+  }
+
+  public countByGroup(groupId: string): number {
+    const row = this.db.prepare(
+      "SELECT COUNT(*) AS count FROM favorites WHERE group_id = ?",
+    ).get(groupId) as { count?: unknown } | undefined;
+    return numberValue(row?.count);
+  }
+
+  public setGroup(
+    favoriteId: string,
+    groupId: string | null,
+    updatedAt = Date.now(),
+    sortOrder?: number,
+  ): void {
+    try {
+      if (sortOrder === undefined) {
+        this.db.prepare("UPDATE favorites SET group_id = ?, updated_at = ? WHERE favorite_id = ?")
+          .run(groupId, updatedAt, favoriteId);
+      } else {
+        this.db.prepare("UPDATE favorites SET group_id = ?, sort_order = ?, updated_at = ? WHERE favorite_id = ?")
+          .run(groupId, sortOrder, updatedAt, favoriteId);
+      }
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public renameGroup(groupId: string, name: string, updatedAt = Date.now()): void {
+    try {
+      this.db.prepare("UPDATE favorite_groups SET name = ?, updated_at = ? WHERE group_id = ?")
+        .run(name, updatedAt, groupId);
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public deleteByGroup(groupId: string): void {
+    try {
+      this.db.prepare("DELETE FROM favorites WHERE group_id = ?").run(groupId);
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public moveGroupContents(fromGroupId: string, toGroupId: string, updatedAt = Date.now()): void {
+    if (fromGroupId === toGroupId) return;
+    try {
+      this.db.transaction(() => {
+        const row = this.db.prepare(
+          "SELECT COALESCE(MAX(sort_order), -1) AS sort_order FROM favorites WHERE group_id = ?",
+        ).get(toGroupId) as { sort_order?: unknown } | undefined;
+        const start = numberValue(row?.sort_order) + 1;
+        const ids = this.db.prepare(
+          "SELECT favorite_id FROM favorites WHERE group_id = ? ORDER BY sort_order, added_at DESC, favorite_id",
+        ).all(fromGroupId).map((entry) => stringValue((entry as Record<string, unknown>).favorite_id));
+        const update = this.db.prepare(
+          "UPDATE favorites SET group_id = ?, sort_order = ?, updated_at = ? WHERE favorite_id = ?",
+        );
+        ids.forEach((favoriteId, index) => update.run(toGroupId, start + index, updatedAt, favoriteId));
+      });
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public deleteGroup(groupId: string): void {
+    try {
+      this.db.prepare("DELETE FROM favorite_groups WHERE group_id = ?").run(groupId);
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
   public delete(favoriteId: string): void {
     try {
       this.db.prepare("DELETE FROM favorites WHERE favorite_id = ?").run(favoriteId);
@@ -319,6 +434,20 @@ export class FavoritesRepository {
     this.db.transaction(() => {
       const update = this.db.prepare("UPDATE favorites SET sort_order = ? WHERE favorite_id = ?");
       favoriteIds.forEach((favoriteId, index) => update.run(index, favoriteId));
+    });
+  }
+
+  public reorderInGroup(groupId: string, favoriteIds: readonly string[]): void {
+    this.db.transaction(() => {
+      const update = this.db.prepare("UPDATE favorites SET sort_order = ? WHERE favorite_id = ? AND group_id = ?");
+      favoriteIds.forEach((favoriteId, index) => update.run(index, favoriteId, groupId));
+    });
+  }
+
+  public reorderGroups(groupIds: readonly string[]): void {
+    this.db.transaction(() => {
+      const update = this.db.prepare("UPDATE favorite_groups SET sort_order = ? WHERE group_id = ?");
+      groupIds.forEach((groupId, index) => update.run(index, groupId));
     });
   }
 }
@@ -499,6 +628,16 @@ function progressFromRow(row: Record<string, unknown>): PlaybackProgressRecord {
   };
 }
 
+function favoriteGroupFromRow(row: Record<string, unknown>): FavoriteGroupRecord {
+  return {
+    groupId: stringValue(row.group_id),
+    name: stringValue(row.name),
+    sortOrder: numberValue(row.sort_order),
+    createdAt: numberValue(row.created_at),
+    updatedAt: numberValue(row.updated_at),
+  };
+}
+
 function favoriteFromRow(row: Record<string, unknown>): FavoriteRecord {
   return {
     favoriteId: stringValue(row.favorite_id),
@@ -506,6 +645,9 @@ function favoriteFromRow(row: Record<string, unknown>): FavoriteRecord {
     vodId: stringValue(row.vod_id),
     title: stringValue(row.title),
     poster: nullableString(row.poster),
+    year: nullableString(row.year),
+    category: nullableString(row.category),
+    sourceName: nullableString(row.source_name),
     groupId: nullableString(row.group_id),
     sortOrder: numberValue(row.sort_order),
     metadata: row.metadata_json === null || row.metadata_json === undefined

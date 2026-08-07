@@ -1773,6 +1773,165 @@ npm run aria2:smoke
 checkpoint: complete G71 bundled media runtimes
 ```
 
+## G72 (completed)
+
+### Goal
+
+生成正式 Windows x64 NSIS 安装器，保持 portable 包不变，使用 per-user 安装、快捷方式、升级迁移和默认保留用户数据的卸载策略。
+
+### Status
+
+Completed for the automatable installer scope. `electron-builder` NSIS output was generated successfully. The installer is per-user, creates desktop/start-menu shortcuts, declares no file association, keeps user data by default, and exposes an unchecked optional uninstall component for deleting it.
+
+### Dependency
+
+- G71
+
+### Verification commands
+
+```powershell
+npm run typecheck
+npx vitest run tests/installer-config.test.ts --maxWorkers=1 --minWorkers=1 --reporter=dot
+npm run electron:installer:win
+```
+
+### Documentation
+
+- `build/installer.nsh`
+- `docs/spike-72-nsis-installer.md`
+- `verification/G72/README.md`
+
+### Checkpoint
+
+```text
+checkpoint: complete G72 NSIS installer
+```
+
+## G73 (review required)
+
+### Goal
+
+使用 Open Design 完成 icon、brand、startup/about 与 bundle 视觉复核，并记录 packaged artifact 分析。
+
+### Status
+
+Blocked at `g73_open_design_review_required`: the required Open Design transport is unavailable in this session. Engineering bundle checks are recorded, but no visual acceptance is claimed.
+
+### Dependency
+
+- G72
+
+### Documentation
+
+- `docs/spike-73-brand-bundle.md`
+- `verification/G73/README.md`
+
+## G74 (completed for material generation)
+
+### Goal
+
+生成发布包的第三方 notices、许可证路径、SBOM、runtime manifest 副本、依赖清单和不含 secrets 的构建元数据。
+
+### Status
+
+Completed for the automatable material-generation scope. `release:inventory` emits notices, CycloneDX 1.5 SBOM, runtime manifest and sanitized build metadata. Formal vulnerability/legal review remains in G75.
+
+### Dependency
+
+- G73 engineering bundle check; G73 visual review remains pending
+
+### Verification commands
+
+```powershell
+npm run typecheck
+npm run release:inventory
+```
+
+### Documentation
+
+- `src/release/release-inventory.ts`
+- `docs/spike-74-release-notices-sbom.md`
+- `verification/G74/README.md`
+
+## G75 (completed for automated audit)
+
+### Goal
+
+完成发布安全审计：依赖漏洞、凭据扫描、包内二进制 hash、发布模式 fallback、进程参数与 localhost RPC 边界。
+
+### Status
+
+Completed for the automated audit scope. Production dependency and full dependency audits report zero vulnerabilities at high severity; all four runtime entries are bundled and hashed; no hardcoded credentials were found. Code signing and clean-VM validation remain external gates.
+
+### Dependency
+
+- G74
+
+### Verification commands
+
+```powershell
+npm audit --audit-level=high
+npm audit --omit=dev --audit-level=high
+npm run typecheck
+npm run electron:e2e:package
+```
+
+### Documentation
+
+- `docs/spike-75-security-audit.md`
+- `verification/G75/README.md`
+
+## G76 (blocked external validation)
+
+### Goal
+
+在无 Node/JDK/Python/mpv/aria2 的真实 clean Windows 环境验证首次安装、运行时、升级、卸载、portable 隔离、子进程和端口清理。
+
+### Status
+
+Blocked at `blocked_external_clean_windows_validation`. Local automatable checks are complete, but this workspace cannot provide a pristine Windows VM; local packaged E2E must not be relabeled as clean-VM evidence.
+
+### Dependency
+
+- G75
+
+### Documentation
+
+- `docs/clean-windows-test-plan.md`
+- `verification/G76/README.md`
+
+G77 and G78 remain gated and cannot be marked RC_READY or release_candidate_ready until G76 is executed externally.
+
+## G77 (blocked)
+
+### Goal
+
+在 clean Windows 环境执行 RC-only full regression matrix，使用真实 bundled runtimes，验证性能、子进程、端口清理和无隐藏 skip。
+
+### Status
+
+Blocked by G76. Local packaged fixture matrix and real mpv/aria2 smokes are recorded, but G77 is not `RC_READY`.
+
+### Documentation
+
+- `docs/spike-77-release-candidate-regression.md`
+- `verification/G77/README.md`
+
+## G78 (not ready)
+
+### Goal
+
+完成候选版本 artifact、版本一致性、hash、文档和本地 release commit 复核，不自动 push。
+
+### Status
+
+Not ready. Blocked by `g73_open_design_review_required` and `blocked_external_clean_windows_validation`; no stable production claim is made.
+
+### Documentation
+
+- `docs/spike-78-release-candidate.md`
+- `verification/G78/README.md`
+
 ## Stage 4 (completed)
 
 直播与 EPG 闭环已完成：授权 M3U/TXT 导入、Live 浏览与播放、XMLTV、EPG

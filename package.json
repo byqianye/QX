@@ -21,6 +21,7 @@
     "electron:verify:no-jdk": "tsx src/electron/jdk-missing-launch.ts",
     "electron:verify:network-timeout": "tsx src/electron/network-timeout-launch.ts",
     "electron:acceptance": "npm run electron:e2e:package && npm run electron:verify:no-jdk && npm run electron:verify:network-timeout",
+    "python:smoke": "tsx src/electron/python-smoke.ts",
     "mpv:smoke": "tsx src/electron/mpv-smoke.ts",
     "aria2:smoke": "tsx src/electron/aria2-smoke.ts",
     "release:inventory": "tsx src/release/release-inventory.ts",

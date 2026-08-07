@@ -1721,7 +1721,7 @@ checkpoint: complete R70 release baseline
 
 ### Status
 
-Completed. Release-mode packaging copies all four fixed runtimes, writes executable hashes to `runtime-manifest.json`, rejects missing/tampered packaged runtimes, and keeps external Java/Python fallback development-only.
+Completed. Release-mode packaging copies all four fixed runtimes, writes executable hashes to `runtime-manifest.json`, emits the Python `requirements-lock.txt` policy file, passes a real bundled-Python RPC smoke, rejects missing/tampered packaged runtimes, and keeps external Java/Python fallback development-only.
 
 ### Dependency
 
@@ -1742,6 +1742,7 @@ npm run typecheck
 npx vitest run tests/runtime-manifest.test.ts tests/electron-shell.test.ts tests/diagnostics.test.ts --maxWorkers=1 --minWorkers=1 --reporter=dot
 npm run electron:e2e:package
 npm run electron:verify:no-jdk
+npm run python:smoke
 ```
 
 ### Documentation

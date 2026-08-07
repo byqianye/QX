@@ -12,7 +12,7 @@
 
 - installer-config tests：2 assertions passed；
 - NSIS build：passed；
-- generated setup artifact：171,226,155 bytes；
-- SHA-256：`89a1d8a1d17385b5080e156bc67f692217d1b3e052ea6b7aa2623cff581877cb`。
+- generated setup artifact：171,227,010 bytes；
+- SHA-256：`27E5C61224D21BDA54D306793691B8E9390D6FAE06471FBF69D8F50463A4C90F`。
 
 在 clean Windows VM 上的安装、升级、卸载交互验证属于 G76 外部验证门槛，本地构建成功不等价于该门槛已完成。

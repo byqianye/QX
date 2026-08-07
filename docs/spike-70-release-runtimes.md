@@ -7,7 +7,7 @@
 Windows x64 发布包固定携带四类运行时：
 
 - Eclipse Temurin 21.0.7+6 的 jlink 精简 JRE，仅包含 `java.base` 与 `java.net.http`；
-- CPython 3.12.10 Windows x64 embeddable，使用 `python312._pth` 隔离用户 site 与 pip；
+- CPython 3.12.10 Windows x64 embeddable，使用 `python312._pth` 隔离用户 site 与 pip；构建产物同时写出 `python/requirements-lock.txt`，明确声明标准库-only、无第三方 Python 包，且不接受宿主 `PYTHONPATH`、`PYTHONHOME`、`PYTHONUSERBASE`、`VIRTUAL_ENV`；
 - mpv 固定构建 `21277b0ccf`；
 - aria2 1.37.0 Windows x64。
 
@@ -37,6 +37,7 @@ $env:QX_TEMURIN_JDK = (Resolve-Path 'dist/release-assets/temurin-jdk/jdk-21.0.7+
 $env:QX_RELEASE_BUILD = '1'
 npm run electron:e2e:package
 npm run electron:verify:no-jdk
+npm run python:smoke
 ```
 
 结果：manifest/完整性测试通过；packaged first/restart E2E 通过；无系统 JDK 验证通过；关闭包内 JRE 时明确返回 `BUNDLED_JRE_MISSING`。

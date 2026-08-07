@@ -39,6 +39,7 @@ try {
   buildMinimalJre(buildJdk.javaExecutable, jreDirectory);
   assertRuntimeArchive("jre", process.env.QX_TEMURIN_ARCHIVE, "temurin21.zip");
   await copyBundledRuntime("python", join(outputDirectory, "python"), resolveAssetRoot("QX_PYTHON_RUNTIME", "python-runtime"), assertRuntimeArchive("python", process.env.QX_PYTHON_ARCHIVE, "python-3.12.10-embed-amd64.zip"));
+  await writePythonDependencyLock(join(outputDirectory, "python"));
   await copyBundledRuntime("mpv", join(outputDirectory, "mpv"), resolveAssetRoot("QX_MPV_RUNTIME", "mpv"), assertRuntimeArchive("mpv", process.env.QX_MPV_ARCHIVE, "mpv-x86_64-20260807-git-21277b0ccf.7z"));
   await copyBundledRuntime("aria2", join(outputDirectory, "aria2"), resolveAssetRoot("QX_ARIA2_RUNTIME", "aria2/aria2-1.37.0-win-64bit-build1"), assertRuntimeArchive("aria2", process.env.QX_ARIA2_ARCHIVE, "aria2-1.37.0-win-64bit-build1.zip"));
   const manifest = buildRuntimeManifest(outputDirectory);
@@ -141,6 +142,17 @@ async function copyBundledRuntime(id: BundledRuntimeId, destination: string, sou
   await rm(destination, { recursive: true, force: true });
   await mkdir(destination, { recursive: true });
   await cp(source, destination, { recursive: true });
+}
+
+async function writePythonDependencyLock(directory: string): Promise<void> {
+  if (!resolvePathExists(join(directory, "python.exe"))) return;
+  await writeFile(join(directory, "requirements-lock.txt"), [
+    "# QX影视 bundled CPython 3.12.10 embeddable runtime",
+    "# Dependency policy: standard library only; no third-party packages are bundled.",
+    "# Python embeddable isolation is enforced by python312._pth and PYTHONNOUSERSITE=1.",
+    "# pip, PYTHONPATH, PYTHONHOME, PYTHONUSERBASE and VIRTUAL_ENV are not release inputs.",
+    "",
+  ].join("\n"), "utf8");
 }
 
 function assertRuntimeArchive(id: BundledRuntimeId, configured: string | undefined, fallbackName: string): string | null {

@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
+import EmbeddedPlayer from "./EmbeddedPlayer.vue";
+import type { PlayerMediaSync, PlayerState } from "./state.js";
 import type { LiveSourceType, LiveUiState } from "../../src/live/live-types.js";
 
 const props = defineProps<{
@@ -15,6 +17,10 @@ const emit = defineEmits<{
   toggle: [payload: { sourceId: string; enabled: boolean }];
   remove: [sourceId: string];
   clear: [];
+  play: [channelId: string, streamId?: string];
+  line: [streamId: string];
+  stop: [];
+  sync: [value: PlayerMediaSync];
 }>();
 
 const name = ref("我的直播源");
@@ -24,6 +30,24 @@ const fileName = ref("");
 const fileContent = ref<string | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const localError = ref<string | null>(null);
+const selectedGroupId = ref("__all__");
+const focusedChannelIndex = ref(0);
+const channelWindow = ref(40);
+
+const filteredChannels = computed(() => {
+  if (selectedGroupId.value === "__all__") return props.state.catalog.channels;
+  if (selectedGroupId.value === "__ungrouped__") {
+    return props.state.catalog.channels.filter((channel) => !channel.group);
+  }
+  return props.state.catalog.channels.filter((channel) => channel.group === selectedGroupId.value);
+});
+
+const visibleChannels = computed(() => filteredChannels.value.slice(0, channelWindow.value));
+const livePlayerState = computed(() => props.state.player as PlayerState | null);
+const selectedChannel = computed(() => {
+  const id = props.state.session?.channelId;
+  return props.state.catalog.channels.find((channel) => channel.id === id) ?? null;
+});
 
 function sourceLabel(type: LiveSourceType): string {
   if (type === "m3u-url") return "M3U URL";
@@ -85,6 +109,52 @@ function formatTime(value: number | null): string {
   if (!value) return "未刷新";
   return new Date(value).toLocaleString();
 }
+
+function playChannel(channelId: string, streamId?: string): void {
+  const index = filteredChannels.value.findIndex((channel) => channel.id === channelId);
+  if (index >= 0) focusedChannelIndex.value = index;
+  emit("play", channelId, streamId);
+}
+
+function chooseGroup(groupId: string): void {
+  selectedGroupId.value = groupId;
+  focusedChannelIndex.value = 0;
+  channelWindow.value = 40;
+}
+
+function handleChannelScroll(event: Event): void {
+  const element = event.currentTarget as HTMLElement;
+  if (element.scrollTop + element.clientHeight >= element.scrollHeight - 120) {
+    channelWindow.value = Math.min(filteredChannels.value.length, channelWindow.value + 40);
+  }
+}
+
+function handleChannelKeydown(event: KeyboardEvent): void {
+  const target = event.target instanceof HTMLElement ? event.target : null;
+  if (target?.closest("input, textarea, select, [contenteditable=\"true\"]")) return;
+  if (filteredChannels.value.length === 0) return;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    const delta = event.key === "ArrowDown" ? 1 : -1;
+    focusedChannelIndex.value = Math.max(0, Math.min(filteredChannels.value.length - 1, focusedChannelIndex.value + delta));
+    channelWindow.value = Math.max(channelWindow.value, focusedChannelIndex.value + 1);
+    const channel = filteredChannels.value[focusedChannelIndex.value];
+    if (channel) {
+      [...document.querySelectorAll<HTMLElement>("[data-channel-id]")]
+        .find((element) => element.dataset.channelId === channel.id)
+        ?.focus();
+    }
+  } else if (event.key === "Enter") {
+    const channel = filteredChannels.value[focusedChannelIndex.value];
+    if (channel) {
+      event.preventDefault();
+      playChannel(channel.id);
+    }
+  }
+}
+
+onMounted(() => window.addEventListener("keydown", handleChannelKeydown));
+onBeforeUnmount(() => window.removeEventListener("keydown", handleChannelKeydown));
 </script>
 
 <template>
@@ -167,6 +237,119 @@ function formatTime(value: number | null): string {
           <button type="button" class="text-button" data-action="live-source-remove" :disabled="props.pending !== null" @click="emit('remove', source.id)">移除</button>
         </div>
       </article>
+    </section>
+
+    <section class="live-browser" data-testid="live-browser">
+      <aside class="panel live-channel-groups" data-testid="live-channel-groups">
+        <div class="panel-header">
+          <div>
+            <span class="section-kicker">频道目录</span>
+            <h2>分组</h2>
+          </div>
+        </div>
+        <p v-if="props.state.catalog.channels.length === 0" class="meta">启用直播源后，这里会显示频道。</p>
+        <button
+          v-for="group in props.state.catalog.groups"
+          :key="group.id"
+          type="button"
+          class="live-group-button"
+          :class="{ selected: group.id === selectedGroupId }"
+          :data-action="`live-group-${group.id}`"
+          @click="chooseGroup(group.id)"
+        >
+          <span>{{ group.name }}</span><small>{{ group.channelCount }}</small>
+        </button>
+      </aside>
+
+      <section class="live-channel-workspace">
+        <div class="panel live-channel-list-panel">
+          <div class="panel-header">
+            <div>
+              <span class="section-kicker">频道</span>
+              <h2>{{ filteredChannels.length }} 个频道</h2>
+            </div>
+            <span class="meta">窗口显示 {{ visibleChannels.length }} 个</span>
+          </div>
+          <div
+            class="live-channel-list"
+            data-testid="live-channel-list"
+            :data-rendered-count="visibleChannels.length"
+            @scroll="handleChannelScroll"
+          >
+            <button
+              v-for="channel in visibleChannels"
+              :key="channel.id"
+              type="button"
+              class="live-channel-row"
+              :class="{ selected: channel.id === props.state.session?.channelId }"
+              :data-channel-id="channel.id"
+              :disabled="props.pending !== null"
+              @click="playChannel(channel.id)"
+            >
+              <span class="live-channel-logo">
+                <img v-if="channel.logo" :src="channel.logo" :alt="`${channel.name} logo`" loading="lazy" />
+                <span v-else aria-hidden="true">{{ channel.name.slice(0, 1) }}</span>
+              </span>
+              <span class="live-channel-copy">
+                <strong>{{ channel.name }}</strong>
+                <small>{{ channel.sourceName }} · {{ channel.group || "未分组" }}</small>
+                <small>节目单：暂无 · 状态：{{ channel.streamCount }} 条线路</small>
+              </span>
+              <span v-if="channel.streamCount > 1" class="status-chip">{{ channel.streamCount }} 线路</span>
+            </button>
+            <p v-if="visibleChannels.length === 0" class="meta">当前分组没有可用频道。</p>
+          </div>
+        </div>
+
+        <section class="panel live-player-panel" data-testid="live-player-panel">
+          <div class="panel-header">
+            <div>
+              <span class="section-kicker">直播播放</span>
+              <h2>{{ selectedChannel?.name ?? "选择频道" }}</h2>
+              <p v-if="selectedChannel" class="meta">{{ selectedChannel.sourceName }} · 节目单：暂无</p>
+            </div>
+            <span v-if="props.state.session" class="status-chip" :data-status="props.state.session.state">{{ props.state.session.state }}</span>
+          </div>
+          <EmbeddedPlayer
+            v-if="livePlayerState"
+            :state="livePlayerState"
+            :detachable="false"
+            @stop="emit('stop')"
+            @sync="emit('sync', $event)"
+          />
+          <p v-else class="meta">从左侧选择频道开始播放。</p>
+          <p v-if="props.state.session?.error" class="error-message" data-testid="live-playback-error">
+            {{ props.state.session.error.code }}：{{ props.state.session.error.message }}
+          </p>
+          <div v-if="selectedChannel && selectedChannel.streams.length > 0" class="live-line-row" data-testid="live-line-selector">
+            <span class="meta">线路</span>
+            <button
+              v-for="stream in selectedChannel.streams"
+              :key="stream.id"
+              type="button"
+              class="button-secondary"
+              :class="{ selected: stream.id === props.state.session?.streamId }"
+              :disabled="props.pending !== null || stream.status === 'unsupported'"
+              :data-stream-id="stream.id"
+              @click="emit('line', stream.id)"
+            >
+              {{ stream.label }} · {{ stream.protocol }}
+            </button>
+          </div>
+        </section>
+
+        <section class="panel live-recent-panel" data-testid="live-recent-channels">
+          <div class="panel-header"><h2>最近频道</h2><span class="meta">仅保存频道标识与时间</span></div>
+          <button
+            v-for="recent in props.state.catalog.recent"
+            :key="`${recent.sourceId}:${recent.channelId}`"
+            type="button"
+            class="text-button live-recent-button"
+            @click="playChannel(recent.channelId, recent.lastStreamId ?? undefined)"
+          >{{ recent.channelName }} · {{ recent.sourceName }} · {{ formatTime(recent.lastPlayedAt) }}</button>
+          <p v-if="props.state.catalog.recent.length === 0" class="meta">还没有播放记录。</p>
+        </section>
+      </section>
     </section>
   </div>
 </template>

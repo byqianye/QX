@@ -96,6 +96,10 @@ const emit = defineEmits<{
   liveToggle: [payload: { sourceId: string; enabled: boolean }];
   liveRemove: [sourceId: string];
   liveClear: [];
+  livePlay: [channelId: string, streamId?: string];
+  liveLine: [streamId: string];
+  liveStop: [];
+  liveSync: [value: PlayerMediaSync];
 }>();
 
 const view = ref<"browse" | "history" | "favorites" | "follow" | "settings" | "live">(props.initialNavigation === "settings"
@@ -373,6 +377,10 @@ function navigationFromPage(page: string): RendererNavigation {
             @toggle="emit('liveToggle', $event)"
             @remove="emit('liveRemove', $event)"
             @clear="emit('liveClear')"
+            @play="emit('livePlay', $event[0], $event[1])"
+            @line="emit('liveLine', $event)"
+            @stop="emit('liveStop')"
+            @sync="emit('liveSync', $event)"
           />
         </template>
         <template v-else-if="view === 'settings'">

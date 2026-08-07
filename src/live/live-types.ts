@@ -57,6 +57,76 @@ export interface LiveChannelWithStreams extends LiveChannelRecord {
   streams: readonly LiveChannelStreamRecord[];
 }
 
+export interface LiveRecentRecord {
+  channelId: string;
+  sourceId: string;
+  lastPlayedAt: number;
+  lastStreamId: string | null;
+}
+
+export type LivePlaybackSessionState =
+  | "idle"
+  | "resolving"
+  | "loading"
+  | "playing"
+  | "buffering"
+  | "switching"
+  | "error"
+  | "stopped";
+
+export type LivePlaybackBackend = "html-video" | "hls-js" | "mpv";
+
+export interface LivePlaybackSessionUiState {
+  sessionId: string;
+  sourceId: string;
+  channelId: string;
+  streamId: string;
+  state: LivePlaybackSessionState;
+  backend: LivePlaybackBackend;
+  startedAt: number;
+  firstFrameAt: number | null;
+  error: LiveUiError | null;
+  generation: number;
+}
+
+export interface LiveChannelStreamUiState {
+  id: string;
+  label: string;
+  protocol: string;
+  status: "ready" | "unsupported";
+}
+
+export interface LiveChannelUiState {
+  id: string;
+  sourceId: string;
+  sourceName: string;
+  name: string;
+  group: string | null;
+  logo: string | null;
+  channelNumber: string | null;
+  streamCount: number;
+  streams: readonly LiveChannelStreamUiState[];
+  currentProgramme: null;
+  health: null;
+}
+
+export interface LiveChannelGroupUiState {
+  id: string;
+  name: string;
+  channelCount: number;
+}
+
+export interface LiveRecentUiState extends LiveRecentRecord {
+  channelName: string;
+  sourceName: string;
+}
+
+export interface LiveCatalogUiState {
+  groups: readonly LiveChannelGroupUiState[];
+  channels: readonly LiveChannelUiState[];
+  recent: readonly LiveRecentUiState[];
+}
+
 export interface LiveImportIssue {
   line: number;
   code: string;
@@ -110,6 +180,9 @@ export interface LiveUiState {
   preview: LivePreviewUiState | null;
   loading: boolean;
   error: LiveUiError | null;
+  catalog: LiveCatalogUiState;
+  session: LivePlaybackSessionUiState | null;
+  player: PlaybackState | null;
 }
 
 export type LiveSourceImportInput =
@@ -150,4 +223,8 @@ export const EMPTY_LIVE_UI_STATE: LiveUiState = {
   preview: null,
   loading: false,
   error: null,
+  catalog: { groups: [], channels: [], recent: [] },
+  session: null,
+  player: null,
 };
+import type { PlaybackState } from "../desktop/playback.js";

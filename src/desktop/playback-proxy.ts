@@ -176,7 +176,7 @@ export class PlaybackProxyServer {
   }
 
   public get activeSessionCount(): number {
-    return this.sessions.size;
+    return [...this.sessions.values()].filter((session) => !session.revoked && this.now() < session.expiresAt).length;
   }
 
   public async start(): Promise<void> {

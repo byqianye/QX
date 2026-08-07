@@ -119,6 +119,7 @@ try {
     QX_E2E_HLS_MASTER_URL: mediaFixture.hlsMasterUrl,
     QX_E2E_HLS_CHILD_URL: mediaFixture.hlsChildUrl,
     QX_E2E_LIVE_URL: mediaFixture.liveUrl,
+    QX_E2E_LIVE_PLAYBACK_URL: mediaFixture.livePlaybackUrl,
     QX_E2E_FAKE_MPV: "1",
     QX_SNIFF_ENABLED: "1",
     QX_E2E_SNIFF_URL: mediaFixture.sniffUrl,
@@ -152,6 +153,7 @@ try {
     QX_E2E_HLS_MASTER_URL: mediaFixture.hlsMasterUrl,
     QX_E2E_HLS_CHILD_URL: mediaFixture.hlsChildUrl,
     QX_E2E_LIVE_URL: mediaFixture.liveUrl,
+    QX_E2E_LIVE_PLAYBACK_URL: mediaFixture.livePlaybackUrl,
     QX_E2E_FAKE_MPV: "1",
     QX_SNIFF_ENABLED: "1",
     QX_E2E_SNIFF_URL: mediaFixture.sniffUrl,
@@ -305,10 +307,11 @@ function assertPersistedLivePrivacy(userDataPath: string): void {
     const sources = database.prepare("SELECT id, name, type, location, last_error FROM live_sources").all();
     const channels = database.prepare("SELECT id, source_id, name, attributes_json FROM live_channels").all();
     const streams = database.prepare("SELECT id, channel_id, url, headers_json FROM live_channel_streams").all();
-    if (sources.length === 0 || channels.length === 0 || streams.length === 0) {
+    const recent = database.prepare("SELECT channel_id, source_id, last_played_at, last_stream_id FROM live_recent").all();
+    if (sources.length === 0 || channels.length === 0 || streams.length === 0 || recent.length === 0) {
       throw new Error("Packaged E2E live source rows were not persisted");
     }
-    const serialized = JSON.stringify({ sources, channels, streams });
+    const serialized = JSON.stringify({ sources, channels, streams, recent });
     if (/token|cookie|authorization|bearer|api[_-]?key|password|secret/i.test(serialized)) {
       throw new Error("Packaged E2E live source privacy contract failed");
     }

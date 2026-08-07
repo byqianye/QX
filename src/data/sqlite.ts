@@ -9,7 +9,7 @@ import {
   type DatabaseErrorCode,
 } from "./errors.js";
 
-export const SUPPORTED_SCHEMA_VERSION = 4;
+export const SUPPORTED_SCHEMA_VERSION = 5;
 
 interface Migration {
   version: number;
@@ -240,6 +240,25 @@ const migrations: readonly Migration[] = [
 
       CREATE INDEX live_channel_streams_channel_priority
         ON live_channel_streams(channel_id, priority, id);
+    `,
+  },
+  {
+    version: 5,
+    name: "live-recent-channels",
+    sql: `
+      CREATE TABLE live_recent (
+        channel_id TEXT PRIMARY KEY NOT NULL,
+        source_id TEXT NOT NULL,
+        last_played_at INTEGER NOT NULL,
+        last_stream_id TEXT,
+        FOREIGN KEY (channel_id) REFERENCES live_channels(id) ON DELETE CASCADE,
+        FOREIGN KEY (source_id) REFERENCES live_sources(id) ON DELETE CASCADE
+      ) STRICT;
+
+      CREATE INDEX live_recent_last_played
+        ON live_recent(last_played_at DESC, channel_id);
+      CREATE INDEX live_recent_source
+        ON live_recent(source_id, last_played_at DESC);
     `,
   },
 ];

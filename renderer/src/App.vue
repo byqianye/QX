@@ -29,7 +29,9 @@ const restored = ref(false);
 const isPlayerWindow = new URL(window.location.href).searchParams.get("player-window") === "1";
 let scrollTimer: ReturnType<typeof setTimeout> | undefined;
 let playerSyncTimer: ReturnType<typeof setTimeout> | undefined;
+let liveSyncTimer: ReturnType<typeof setTimeout> | undefined;
 let latestPlayerSync: PlayerMediaSync | null = null;
+let latestLiveSync: PlayerMediaSync | null = null;
 let retryAction: { operation: string; call: () => Promise<RendererEnvelope> } | null = null;
 
 const showImport = computed(() => state.value.import.status !== "ready" || !state.value.import.sessionReady);
@@ -46,8 +48,10 @@ onBeforeUnmount(() => {
   window.removeEventListener("scroll", handleScroll);
   window.removeEventListener("qx-player-attached", refreshAfterPlayerWindow);
   if (scrollTimer !== undefined) clearTimeout(scrollTimer);
+  if (liveSyncTimer !== undefined) clearTimeout(liveSyncTimer);
   persistView({ scrollTop: window.scrollY });
   void flushPlayerSync();
+  void flushLiveSync();
 });
 
 async function request(
@@ -125,6 +129,32 @@ async function flushPlayerSync(): Promise<void> {
   }
 }
 
+function syncLive(value: PlayerMediaSync): void {
+  latestLiveSync = value;
+  if (liveSyncTimer !== undefined) clearTimeout(liveSyncTimer);
+  liveSyncTimer = setTimeout(() => {
+    liveSyncTimer = undefined;
+    void flushLiveSync();
+  }, 150);
+}
+
+async function flushLiveSync(): Promise<void> {
+  const value = latestLiveSync;
+  latestLiveSync = null;
+  const session = state.value.live.session;
+  if (!value || !session) return;
+  try {
+    const envelope = await api.post("/api/live/sync", {
+      sessionId: session.sessionId,
+      backend: session.backend,
+      ...value,
+    });
+    state.value = applyRendererEnvelope(state.value, envelope);
+  } catch {
+    // The main process owns live-session cleanup when the window closes.
+  }
+}
+
 async function detachPlayer(): Promise<void> {
   await flushPlayerSync();
   await request("detach-player", () => api.post("/api/player/detach"));
@@ -139,6 +169,18 @@ function attachPlayer(): void {
 
 function stopPlayer(): void {
   post("stop-player", "/api/player/stop");
+}
+
+function playLive(channelId: string, streamId?: string): void {
+  post("live-play", "/api/live/play", { channelId, ...(streamId ? { streamId } : {}) });
+}
+
+function switchLiveLine(streamId: string): void {
+  post("live-line", "/api/live/line", { streamId });
+}
+
+function stopLive(): void {
+  post("live-stop", "/api/live/stop");
 }
 
 function cancelFallback(): void {
@@ -318,6 +360,10 @@ function play(line: number, episode: number, resumeMode?: HistoryResumeMode): vo
       @live-toggle="post('live-toggle', '/api/live/source/toggle', { sourceId: $event.sourceId, enabled: $event.enabled })"
       @live-remove="post('live-remove', '/api/live/source/remove', { sourceId: $event })"
       @live-clear="post('live-clear', '/api/live/preview/clear')"
+      @live-play="playLive"
+      @live-line="switchLiveLine"
+      @live-stop="stopLive"
+      @live-sync="syncLive"
     />
   </div>
 </template>

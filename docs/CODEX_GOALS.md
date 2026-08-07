@@ -983,6 +983,55 @@ checkpoint: complete G55 portable data mode
 checkpoint: complete G56 live source import
 ```
 
+## G57（已完成）
+
+### 目标
+
+在 G56 的来源与线路数据之上建立直播频道目录、单频道播放、手动线路选择、最近频道
+和可取消的单会话生命周期，并复用现有 PlayerBackend、EmbeddedPlayer 与 LocalProxy。
+
+### 状态
+
+已完成。schema v5 增加 `live_recent`；LivePlaybackService 使用 generation +
+AbortController 防止快速切换的旧请求覆盖新会话；受保护线路通过 LocalProxy 播放；
+目录、窗口化频道列表、键盘选择、线路按钮、最近频道和播放器状态已接入 Open Design
+页面。节目单、健康评分、自动切源、DRM 和 Android DEX 仍未实现。
+
+### 范围与验收
+
+- 支持启用来源中的分组/频道目录、手动线路选择和最近播放持久化；停用、移除、刷新
+  会停止失效来源的当前会话。
+- HTTP(S) HLS/媒体线路按现有后端边界播放；带 headers 的线路必须经 LocalProxy，
+  proxy session 在切换/停止/退出时撤销。
+- `LIVE_*` 稳定错误码覆盖来源、频道、协议、起播失败、超时和切换取消；播放器状态
+  不暴露认证 headers。
+- fixture A/B/C/D/E 覆盖直连、受保护 HLS、500、延迟失败和双线路切换；定向、全量、
+  renderer、Electron、打包 first/restart E2E 与进程清理通过。
+
+### 文档与验证
+
+- `docs/spike-57-live-playback.md`
+- `docs/design/open-design/live-tv/live-browser-spec.md`
+- `tests/live-playback.test.ts`
+- `tests/live-playback-ui.test.ts`
+
+验证命令：
+
+```powershell
+npm run typecheck
+npm test
+npm run renderer:build
+npm run electron:build
+npm run electron:e2e:package
+git diff --check
+```
+
+### checkpoint
+
+```text
+checkpoint: complete G57 live playback
+```
+
 DEX-1 ~ DEX-5（实验支线）
 
 - DEX-1：Android Emulator 探针

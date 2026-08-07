@@ -4,6 +4,7 @@ import { type SqliteDataLayer } from "./sqlite.js";
 import type {
   LiveChannelStreamRecord,
   LiveChannelWithStreams,
+  LiveRecentRecord,
   LiveSourceRecord,
 } from "../live/live-types.js";
 
@@ -697,6 +698,41 @@ export class LiveRepository {
     }));
   }
 
+  public getAllChannels(): readonly LiveChannelWithStreams[] {
+    const channels = this.db.prepare(
+      "SELECT * FROM live_channels ORDER BY source_id, sort_order, id",
+    ).all().map(liveChannelFromRow);
+    const streams = this.db.prepare(
+      "SELECT * FROM live_channel_streams ORDER BY channel_id, priority, id",
+    ).all().map(liveStreamFromRow);
+    return attachLiveStreams(channels, streams);
+  }
+
+  public upsertRecent(record: LiveRecentRecord): void {
+    try {
+      this.db.prepare(`
+        INSERT INTO live_recent(channel_id, source_id, last_played_at, last_stream_id)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(channel_id) DO UPDATE SET
+          source_id = excluded.source_id,
+          last_played_at = excluded.last_played_at,
+          last_stream_id = excluded.last_stream_id
+      `).run(record.channelId, record.sourceId, record.lastPlayedAt, record.lastStreamId);
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public listRecent(limit = 20): readonly LiveRecentRecord[] {
+    const bounded = Math.min(100, Math.max(1, Math.floor(Number.isFinite(limit) ? limit : 20)));
+    return this.db.prepare(`
+      SELECT channel_id, source_id, last_played_at, last_stream_id
+      FROM live_recent
+      ORDER BY last_played_at DESC, channel_id
+      LIMIT ?
+    `).all(bounded).map(liveRecentFromRow);
+  }
+
   public deleteSource(id: string): void {
     try {
       this.db.prepare("DELETE FROM live_sources WHERE id = ?").run(id);
@@ -909,6 +945,31 @@ function liveStreamFromRow(row: Record<string, unknown>): LiveChannelStreamRecor
     label: nullableString(row.label),
     protocol: nullableString(row.protocol),
   };
+}
+
+function liveRecentFromRow(row: Record<string, unknown>): LiveRecentRecord {
+  return {
+    channelId: stringValue(row.channel_id),
+    sourceId: stringValue(row.source_id),
+    lastPlayedAt: numberValue(row.last_played_at),
+    lastStreamId: nullableString(row.last_stream_id),
+  };
+}
+
+function attachLiveStreams(
+  channels: readonly Omit<LiveChannelWithStreams, "streams">[],
+  streams: readonly LiveChannelStreamRecord[],
+): readonly LiveChannelWithStreams[] {
+  const byChannel = new Map<string, LiveChannelStreamRecord[]>();
+  for (const stream of streams) {
+    const current = byChannel.get(stream.channelId) ?? [];
+    current.push(stream);
+    byChannel.set(stream.channelId, current);
+  }
+  return channels.map((channel) => ({
+    ...channel,
+    streams: byChannel.get(channel.id) ?? [],
+  }));
 }
 
 function stringRecordFromRow(row: Record<string, unknown>, column: string): Record<string, string> {

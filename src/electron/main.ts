@@ -50,6 +50,7 @@ import { HistoryProgressService } from "../history/history-progress.js";
 import { FollowService } from "../follow/follow-service.js";
 import { CacheService } from "../cache/cache-service.js";
 import { LiveSourceService } from "../live/live-service.js";
+import { LivePlaybackService } from "../live/live-playback.js";
 import {
   IsolatedSniffer,
   type IsolatedSnifferPlatform,
@@ -98,6 +99,7 @@ let favoritesService: FavoritesService | undefined;
 let followService: FollowService | undefined;
 let cacheService: CacheService | undefined;
 let liveSourceService: LiveSourceService | undefined;
+let livePlaybackService: LivePlaybackService | undefined;
 let dataStorageService: DataStorageService | undefined;
 let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -159,7 +161,7 @@ function getDataStorageService(): DataStorageService {
   return dataStorageService;
 }
 function initializeDataLayer(): void {
-  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService) return;
+  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService && livePlaybackService) return;
   const dataStorage = getDataStorageService();
   const directories = dataStorage.prepare();
   const opened = openSqliteDataLayer(directories.database);
@@ -205,6 +207,11 @@ function initializeDataLayer(): void {
   liveSourceService = new LiveSourceService({
     repository: new LiveRepository(opened.layer),
     requestTimeoutMs: REQUEST_TIMEOUT_MS,
+  });
+  livePlaybackService = new LivePlaybackService({
+    repository: new LiveRepository(opened.layer),
+    requestTimeoutMs: REQUEST_TIMEOUT_MS,
+    ...(PLAYBACK_PROXY_ORIGINS.length > 0 ? { proxyAllowedOrigins: PLAYBACK_PROXY_ORIGINS } : {}),
   });
 }
 
@@ -270,6 +277,7 @@ function createShell(): DesktopShellRuntime {
         cache: getCacheService(),
         storage: getDataStorageService(),
         live: getLiveSourceService(),
+        ...(livePlaybackService ? { livePlayback: livePlaybackService } : {}),
         onStorageOpen: async () => {
           await electronShell.openPath(getDataStorageService().directories().dataRoot);
         },
@@ -525,16 +533,18 @@ async function closeShell(closeData = false): Promise<void> {
       })();
   }
   await cleanupPromise;
-  if (closeData) closeDataLayer();
+  if (closeData) await closeDataLayer();
 }
 
-function closeDataLayer(): void {
+async function closeDataLayer(): Promise<void> {
+  await livePlaybackService?.close();
   historyProgressService?.appClose();
   historyProgressService = undefined;
   favoritesService = undefined;
   followService = undefined;
   cacheService = undefined;
   liveSourceService = undefined;
+  livePlaybackService = undefined;
   dataStorageService = undefined;
   const current = dataLayer;
   dataLayer = undefined;
@@ -744,8 +754,9 @@ async function recoverDataDirectoryStartup(code: string | undefined): Promise<bo
 app.on("before-quit", (event) => {
   if (quitting) return;
   if (!shell || shell.state.status === "closed") {
+    event.preventDefault();
     quitting = true;
-    closeDataLayer();
+    void closeDataLayer().finally(() => app.quit());
     return;
   }
   event.preventDefault();
@@ -841,6 +852,8 @@ async function runE2e(baseUrl: string): Promise<void> {
       verifyStorage: true,
       verifyLiveSources: Boolean(process.env.QX_E2E_LIVE_URL),
       ...(process.env.QX_E2E_LIVE_URL ? { liveUrl: process.env.QX_E2E_LIVE_URL } : {}),
+      verifyLivePlayback: Boolean(process.env.QX_E2E_LIVE_PLAYBACK_URL),
+      ...(process.env.QX_E2E_LIVE_PLAYBACK_URL ? { livePlaybackUrl: process.env.QX_E2E_LIVE_PLAYBACK_URL } : {}),
       ...(process.env.QX_E2E_EXPECTED_FAVORITE_ID
         ? { expectedFavoriteId: process.env.QX_E2E_EXPECTED_FAVORITE_ID }
         : {}),

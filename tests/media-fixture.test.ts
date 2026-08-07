@@ -60,6 +60,20 @@ describe("local media fixture server", () => {
     expect(await child.text()).toContain("#EXT-X-MAP");
   });
 
+  it("serves bounded live playback fixture channels A through E", async () => {
+    const source = await fetch(fixture.livePlaybackUrl);
+    const sourceBody = await source.text();
+    expect(source.status).toBe(200);
+    expect(sourceBody).toContain("Fixture Channel A");
+    expect(sourceBody).toContain("Fixture Channel E");
+
+    expect((await fetch(`${fixture.baseUrl}/live/channel-a.m3u8`)).status).toBe(200);
+    expect((await fetch(`${fixture.baseUrl}/live/channel-b.m3u8`)).status).toBe(403);
+    expect((await fetch(`${fixture.baseUrl}/live/channel-c.m3u8`)).status).toBe(500);
+    expect((await fetch(`${fixture.baseUrl}/live/channel-e-line1.m3u8`)).status).toBe(500);
+    expect((await fetch(`${fixture.baseUrl}/live/channel-e-line2.m3u8`)).status).toBe(200);
+  });
+
   it("returns deterministic playerContent results for MP4, HLS and headered cases", async () => {
     const mp4 = await fetch(`${fixture.playerUrl}?id=direct-mp4`);
     const hls = await fetch(`${fixture.playerUrl}?id=direct-hls`);

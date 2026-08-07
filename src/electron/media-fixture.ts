@@ -31,6 +31,7 @@ export interface MediaFixtureServer {
   readonly parserUrl: string;
   readonly parserFailureUrl: string;
   readonly liveUrl: string;
+  readonly livePlaybackUrl: string;
   readonly doubanEndpoint: string;
   readonly subtitleVttUrl: string;
   readonly subtitleSrtUrl: string;
@@ -77,6 +78,9 @@ export function createMediaFixtureServer(host = "127.0.0.1"): MediaFixtureServer
     },
     get liveUrl() {
       return `${resource.baseUrl}/live/source.m3u`;
+    },
+    get livePlaybackUrl() {
+      return `${resource.baseUrl}/live/playback.m3u`;
     },
     get doubanEndpoint() {
       return `${resource.baseUrl}/api/v2/subject_collection/subject_real_time_hotest/items`;
@@ -142,6 +146,56 @@ async function handleRequest(
       fixture.mp4Url,
       "",
     ].join("\n"), "application/x-mpegurl; charset=utf-8");
+    return;
+  }
+
+  if (url.pathname === "/live/playback.m3u") {
+    serveText(request, response, [
+      "#EXTM3U",
+      '#EXTINF:-1 group-title="Fixtures",Fixture Channel A',
+      `${fixture.baseUrl}/live/channel-a.m3u8`,
+      '#EXTINF:-1 group-title="Fixtures",Fixture Channel B',
+      "#EXTVLCOPT:http-referrer=https://source.example.invalid/",
+      `#EXTVLCOPT:http-user-agent=${PROTECTED_USER_AGENT}`,
+      `${fixture.baseUrl}/live/channel-b.m3u8`,
+      '#EXTINF:-1 group-title="Fixtures",Fixture Channel C',
+      `${fixture.baseUrl}/live/channel-c.m3u8`,
+      '#EXTINF:-1 group-title="Fixtures",Fixture Channel D',
+      `${fixture.baseUrl}/live/channel-d.m3u8`,
+      '#EXTINF:-1 tvg-id="fixture-e" group-title="Fixtures",Fixture Channel E',
+      `${fixture.baseUrl}/live/channel-e-line1.m3u8`,
+      '#EXTINF:-1 tvg-id="fixture-e" group-title="Fixtures",Fixture Channel E',
+      `${fixture.baseUrl}/live/channel-e-line2.m3u8`,
+      "",
+    ].join("\n"), "application/x-mpegurl; charset=utf-8");
+    return;
+  }
+
+  if (url.pathname === "/live/channel-a.m3u8" || url.pathname === "/live/channel-e-line2.m3u8") {
+    servePlaylist(request, response, "/media");
+    return;
+  }
+
+  if (url.pathname === "/live/channel-b.m3u8") {
+    if (!hasProtectedHeaders(request)) {
+      response.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+      response.end("protected live channel requires playback headers");
+      return;
+    }
+    servePlaylist(request, response, "/protected");
+    return;
+  }
+
+  if (url.pathname === "/live/channel-c.m3u8" || url.pathname === "/live/channel-e-line1.m3u8") {
+    response.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+    response.end("live fixture stream failure");
+    return;
+  }
+
+  if (url.pathname === "/live/channel-d.m3u8") {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    response.writeHead(504, { "content-type": "text/plain; charset=utf-8" });
+    response.end("live fixture stream timeout");
     return;
   }
 

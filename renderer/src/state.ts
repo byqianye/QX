@@ -457,6 +457,26 @@ function cloneLiveUiState(value: LiveUiState): LiveUiState {
       : null,
     loading: value.loading,
     error: value.error ? { ...value.error } : null,
+    catalog: {
+      groups: value.catalog.groups.map((group) => ({ ...group })),
+      channels: value.catalog.channels.map((channel) => ({
+        ...channel,
+        streams: channel.streams.map((stream) => ({ ...stream })),
+      })),
+      recent: value.catalog.recent.map((recent) => ({ ...recent })),
+    },
+    session: value.session
+      ? { ...value.session, error: value.session.error ? { ...value.session.error } : null }
+      : null,
+    player: value.player
+      ? {
+          ...value.player,
+          source: value.player.source
+            ? { ...value.player.source, headers: { ...value.player.source.headers } }
+            : null,
+          error: value.player.error ? { ...value.player.error } : null,
+        }
+      : null,
   };
 }
 

@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 
 import { redactSensitiveText } from "../data/safe-persistence.js";
 import { LiveRepository } from "../data/repositories.js";
+import { buildLiveCatalog } from "./live-catalog.js";
 import {
   LiveParserError,
   normalizeChannelName,
@@ -93,6 +94,9 @@ export class LiveSourceService {
       preview: this.previewValue ? previewUiState(this.previewValue) : null,
       loading: this.loadingValue,
       error: this.errorValue ? { ...this.errorValue } : null,
+      catalog: buildLiveCatalog(this.repository),
+      session: null,
+      player: null,
     };
   }
 

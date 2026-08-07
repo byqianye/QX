@@ -25,6 +25,8 @@ export interface PackagedE2eOptions {
   verifyStorage?: boolean;
   verifyLiveSources?: boolean;
   liveUrl?: string;
+  verifyLivePlayback?: boolean;
+  livePlaybackUrl?: string;
   expectedFavoriteId?: string;
   expectedFollowIdentity?: string;
   verifyParserFallback?: boolean;
@@ -90,6 +92,11 @@ export interface PackagedE2eChecks {
   liveSources?: boolean;
   liveRestart?: boolean;
   liveSourceDisable?: boolean;
+  livePlayback?: boolean;
+  liveProxy?: boolean;
+  liveLineSwitch?: boolean;
+  livePlaybackRestart?: boolean;
+  liveRecent?: boolean;
 }
 
 export interface PackagedE2eResult {
@@ -209,6 +216,58 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
         && filePreviewState?.stats.channelCount === 1
         && fileApplied?.state?.live?.sources.some((source) => source.name === "Packaged E2E 文件源" && source.channelCount === 1) === true;
       checks.liveSourceDisable = disabled?.state?.live?.sources.some((source) => source.name === "Packaged E2E 直播源" && source.enabled === false) === true;
+    }
+    if (options.verifyLivePlayback) {
+      if (!options.livePlaybackUrl) throw new Error("Packaged live playback E2E URL is not configured");
+      const beforePlayback = await getState(options.baseUrl);
+      if (!options.freshTrust) {
+        checks.livePlaybackRestart = (beforePlayback.state?.live?.catalog?.recent ?? []).some(
+          (recent) => recent.channelName === "Fixture Channel B" || recent.channelName === "Fixture Channel E",
+        );
+      }
+      const playbackPreview = await post(options.baseUrl, "/api/live/source/preview", {
+        name: "Packaged G57 Live",
+        type: "m3u-url",
+        location: options.livePlaybackUrl,
+      });
+      const playbackPreviewState = playbackPreview.state?.live?.preview;
+      const playbackApplied = playbackPreviewState
+        ? await post(options.baseUrl, "/api/live/source/apply", { previewId: playbackPreviewState.id })
+        : null;
+      const playbackSource = playbackApplied?.state?.live?.sources.find((source) => source.name === "Packaged G57 Live");
+      const catalogChannels = playbackApplied?.state?.live?.catalog?.channels ?? [];
+      const channelB = catalogChannels.find((channel) => channel.name === "Fixture Channel B");
+      const channelE = catalogChannels.find((channel) => channel.name === "Fixture Channel E");
+      const playedB = channelB
+        ? await post(options.baseUrl, "/api/live/play", { channelId: channelB.id })
+        : null;
+      const protectedUrl = livePlayerSourceUrl(playedB?.state ?? null);
+      const protectedResponse = protectedUrl ? await fetch(protectedUrl) : null;
+      const protectedBody = protectedResponse ? await protectedResponse.text() : "";
+      checks.liveProxy = playedB?.state?.live?.session?.channelId === channelB?.id
+        && playedB?.state?.live?.session?.backend === "hls-js"
+        && protectedUrl?.includes("/__qx_playback/") === true
+        && protectedResponse?.ok === true
+        && protectedBody.includes("#EXTM3U")
+        && Object.keys(livePlayerSourceHeaders(playedB?.state ?? null) ?? {}).length === 0;
+
+      const selectedE = channelE
+        ? await post(options.baseUrl, "/api/live/play", { channelId: channelE.id })
+        : null;
+      const line = channelE?.streams[1];
+      const switchedE = line
+        ? await post(options.baseUrl, "/api/live/line", { streamId: line.id })
+        : null;
+      checks.liveLineSwitch = selectedE?.state?.live?.session?.channelId === channelE?.id
+        && channelE?.streams.length === 2
+        && switchedE?.state?.live?.session?.channelId === channelE?.id
+        && switchedE?.state?.live?.session?.streamId === line?.id;
+      const recent = switchedE?.state?.live?.catalog?.recent ?? [];
+      checks.liveRecent = recent.some((item) => item.channelName === "Fixture Channel E" && item.lastStreamId === line?.id);
+      checks.livePlayback = playbackPreviewState?.stats.channelCount === 5
+        && playbackApplied?.state?.live?.sources.some((source) => source.name === "Packaged G57 Live" && source.channelCount === 5) === true
+        && playbackSource?.enabled === true;
+      await post(options.baseUrl, "/api/live/stop");
     }
     const opened = await post(options.baseUrl, "/api/open");
     const search = await post(options.baseUrl, "/api/search", {
@@ -822,6 +881,32 @@ interface UiState {
     } | null;
     loading: boolean;
     error: { code: string; message: string } | null;
+    catalog?: {
+      groups: readonly { id: string; name: string; channelCount: number }[];
+      channels: readonly {
+        id: string;
+        sourceId: string;
+        sourceName: string;
+        name: string;
+        group: string | null;
+        streamCount: number;
+        streams: readonly { id: string; label: string; protocol: string; status: string }[];
+      }[];
+      recent: readonly { channelId: string; sourceId: string; channelName: string; lastStreamId: string | null }[];
+    };
+    session?: {
+      sessionId: string;
+      channelId: string;
+      streamId: string;
+      state: string;
+      backend: string;
+    } | null;
+    player?: {
+      source?: {
+        url?: string;
+        headers?: Record<string, unknown>;
+      } | null;
+    } | null;
   };
 }
 
@@ -832,6 +917,18 @@ function playerSourceUrl(state: UiState | null): string | null {
 
 function playerSourceHeaders(state: UiState | null): Record<string, string> | null {
   const headers = state?.player?.source?.headers;
+  return isRecord(headers)
+    ? Object.fromEntries(Object.entries(headers).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
+    : null;
+}
+
+function livePlayerSourceUrl(state: UiState | null): string | null {
+  const source = state?.live?.player?.source;
+  return typeof source?.url === "string" ? source.url : null;
+}
+
+function livePlayerSourceHeaders(state: UiState | null): Record<string, string> | null {
+  const headers = state?.live?.player?.source?.headers;
   return isRecord(headers)
     ? Object.fromEntries(Object.entries(headers).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
     : null;

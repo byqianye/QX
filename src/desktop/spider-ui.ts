@@ -103,9 +103,11 @@ import {
   LiveSourceError,
   LiveSourceService,
 } from "../live/live-service.js";
+import { LivePlaybackError, LivePlaybackService } from "../live/live-playback.js";
 import {
   EMPTY_LIVE_UI_STATE,
   isLiveSourceType,
+  type LivePlaybackBackend,
   type LiveSourceImportInput,
   type LiveSourceType,
 } from "../live/live-types.js";
@@ -1356,6 +1358,7 @@ export interface DesktopSpiderUiServerOptions {
   cache?: CacheService;
   storage?: DataStorageService;
   live?: LiveSourceService;
+  livePlayback?: LivePlaybackService;
   onStorageOpen?: () => void | Promise<void>;
   onStorageSwitch?: (mode: StorageMode) => void;
 }
@@ -1387,6 +1390,7 @@ export class DesktopSpiderUiServer {
   private readonly cacheService: CacheService | undefined;
   private readonly storageService: DataStorageService | undefined;
   private readonly liveService: LiveSourceService | undefined;
+  private readonly livePlayback: LivePlaybackService | undefined;
   private readonly onStorageOpen: (() => void | Promise<void>) | undefined;
   private readonly onStorageSwitch: ((mode: StorageMode) => void) | undefined;
   private server: Server | undefined;
@@ -1430,6 +1434,7 @@ export class DesktopSpiderUiServer {
     this.cacheService = options.cache;
     this.storageService = options.storage;
     this.liveService = options.live;
+    this.livePlayback = options.livePlayback;
     this.onStorageOpen = options.onStorageOpen;
     this.onStorageSwitch = options.onStorageSwitch;
   }
@@ -1469,6 +1474,7 @@ export class DesktopSpiderUiServer {
   }
 
   public async close(): Promise<void> {
+    await this.livePlayback?.stop();
     if (this.importer) {
       await this.releaseImportedUiResources();
       await this.importer.close();
@@ -1887,13 +1893,15 @@ export class DesktopSpiderUiServer {
       const message = error instanceof Error ? error.message : String(error);
       const errorCode = error instanceof LiveSourceError
         ? error.code
+        : error instanceof LivePlaybackError
+          ? error.code
         : errorCodeFromMessage(message);
       writeJson(response, {
         error: message,
         ...(errorCode ? { errorCode } : {}),
         import: this.importer?.state ?? null,
         state: ui?.state ?? null,
-        ...(this.liveService ? { live: this.liveService.uiState() } : {}),
+        ...(this.liveService || this.livePlayback ? { live: this.liveUiState() } : {}),
       }, 400);
     }
   }
@@ -1910,19 +1918,43 @@ export class DesktopSpiderUiServer {
       return;
     }
     if (pathname === "/api/live/source/refresh") {
-      await live.refreshSource(stringValue(body.sourceId, ""));
+      const sourceId = stringValue(body.sourceId, "");
+      await live.refreshSource(sourceId);
+      await this.livePlayback?.stopIfSource(sourceId);
       return;
     }
     if (pathname === "/api/live/source/toggle") {
-      live.setSourceEnabled(stringValue(body.sourceId, ""), booleanValue(body.enabled, false));
+      const sourceId = stringValue(body.sourceId, "");
+      live.setSourceEnabled(sourceId, booleanValue(body.enabled, false));
+      await this.livePlayback?.stopIfSource(sourceId);
       return;
     }
     if (pathname === "/api/live/source/remove") {
-      live.removeSource(stringValue(body.sourceId, ""));
+      const sourceId = stringValue(body.sourceId, "");
+      live.removeSource(sourceId);
+      await this.livePlayback?.stopIfSource(sourceId);
       return;
     }
     if (pathname === "/api/live/preview/clear") {
       live.clearPreview();
+      return;
+    }
+    const playback = this.livePlayback;
+    if (!playback) throw new LivePlaybackError("LIVE_SOURCE_UNAVAILABLE", "直播播放服务不可用。");
+    if (pathname === "/api/live/play") {
+      await playback.selectChannel(stringValue(body.channelId, ""), optionalString(body.streamId) ?? undefined);
+      return;
+    }
+    if (pathname === "/api/live/line") {
+      await playback.selectLine(stringValue(body.streamId, ""));
+      return;
+    }
+    if (pathname === "/api/live/stop") {
+      await playback.stop();
+      return;
+    }
+    if (pathname === "/api/live/sync") {
+      playback.sync(optionalString(body.sessionId) ?? undefined, playerMediaSyncFromRequest(body), liveBackendFromRequest(body));
       return;
     }
     throw new LiveSourceError("LIVE_ROUTE_NOT_FOUND", "直播源请求不存在。");
@@ -1974,11 +2006,16 @@ export class DesktopSpiderUiServer {
     await Promise.all([...this.importedUiBySession.values()].map((ui) => ui.releaseResources()));
   }
 
+  private liveUiState() {
+    const base = this.liveService?.uiState() ?? EMPTY_LIVE_UI_STATE;
+    return this.livePlayback?.uiState(base) ?? base;
+  }
+
   private writeCurrentState(response: ServerResponse): void {
     const ui = this.activeUi();
     const visibleState = this.visibleState(ui);
     const persistence = this.stateStore?.rendererState();
-    const live = this.liveService?.uiState() ?? EMPTY_LIVE_UI_STATE;
+    const live = this.liveUiState();
     const state = visibleState ? { ...visibleState, live } : null;
     if (this.importer) {
       writeJson(response, {
@@ -2557,6 +2594,12 @@ function recordOfStrings(value: unknown): Record<string, string> {
 
 function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function liveBackendFromRequest(body: Record<string, unknown>): LivePlaybackBackend | undefined {
+  return body.backend === "html-video" || body.backend === "hls-js" || body.backend === "mpv"
+    ? body.backend
+    : undefined;
 }
 
 function playerMediaSyncFromRequest(body: Record<string, unknown>): PlayerMediaSync {

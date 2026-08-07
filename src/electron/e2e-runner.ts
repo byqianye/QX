@@ -27,6 +27,10 @@ export interface PackagedE2eOptions {
   liveUrl?: string;
   verifyLivePlayback?: boolean;
   livePlaybackUrl?: string;
+  verifyLiveFailover?: boolean;
+  liveFailoverUrl?: string;
+  liveFailoverBackupUrl?: string;
+  liveFailoverBrokenUrl?: string;
   verifySmartChannels?: boolean;
   smartBackupUrl?: string;
   verifyEpg?: boolean;
@@ -102,6 +106,12 @@ export interface PackagedE2eChecks {
   liveLineSwitch?: boolean;
   livePlaybackRestart?: boolean;
   liveRecent?: boolean;
+  liveHealthRestart?: boolean;
+  liveFailoverFixture?: boolean;
+  liveFailover?: boolean;
+  liveFailoverSmart?: boolean;
+  liveFailoverEpgContinuity?: boolean;
+  liveFailoverDebug?: boolean;
   smartChannels?: boolean;
   smartRestart?: boolean;
   epgImport?: boolean;
@@ -361,6 +371,155 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
           && timeline.items.map((item) => item.title).join("|") === "Fixture News Current|Fixture News Next"
           && timeline.toAt - timeline.fromAt === 3 * 60 * 60 * 1000;
       }
+    }
+    if (options.verifyLiveFailover) {
+      if (!options.liveFailoverUrl || !options.liveFailoverBackupUrl || !options.liveFailoverBrokenUrl) {
+        throw new Error("Packaged live failover E2E URLs are not configured");
+      }
+      checks.liveFailoverFixture = await verifyLiveFailoverFixture(
+        options.liveFailoverUrl,
+        options.liveFailoverBackupUrl,
+        options.liveFailoverBrokenUrl,
+        options.freshTrust,
+      );
+      const beforeFailover = await getState(options.baseUrl);
+      if (!options.freshTrust) {
+        checks.liveHealthRestart = (beforeFailover.state?.live?.catalog?.channels ?? []).some((channel) =>
+          channel.streams.some((stream) => (stream.health?.segmentFailure?.value ?? 0) > 0),
+        );
+      }
+      const sourceA = await importLiveFailoverSource(options.baseUrl, "Packaged G61 Failover A", options.liveFailoverUrl);
+      const sourceB = await importLiveFailoverSource(options.baseUrl, "Packaged G61 Failover B", options.liveFailoverBackupUrl);
+      const sourceC = await importLiveFailoverSource(options.baseUrl, "Packaged G61 Failover C", options.liveFailoverBrokenUrl);
+      const failoverChannel = sourceA?.state?.live?.catalog?.channels.find((channel) => channel.sourceName === "Packaged G61 Failover A");
+      const backupChannel = sourceB?.state?.live?.catalog?.channels.find((channel) => channel.sourceName === "Packaged G61 Failover B");
+      const brokenChannel = sourceC?.state?.live?.catalog?.channels.find((channel) => channel.sourceName === "Packaged G61 Failover C");
+      const firstLine = failoverChannel?.streams[0];
+      const secondLine = failoverChannel?.streams[1];
+      const started = failoverChannel && firstLine
+        ? await post(options.baseUrl, "/api/live/play", { channelId: failoverChannel.id, streamId: firstLine.id })
+        : null;
+      const firstSession = started?.state?.live?.session;
+      const firstFrame = firstSession
+        ? await post(options.baseUrl, "/api/live/sync", {
+            sessionId: firstSession.sessionId,
+            event: { type: "first-frame", at: 1_000 },
+            status: "playing",
+          })
+        : null;
+      const oneSegment = firstFrame?.state?.live?.session
+        ? await post(options.baseUrl, "/api/live/sync", {
+            sessionId: firstFrame.state.live.session.sessionId,
+            event: { type: "segment-failure", reason: "fixture segment one" },
+          })
+        : null;
+      const switched = oneSegment?.state?.live?.session
+        ? await post(options.baseUrl, "/api/live/sync", {
+            sessionId: oneSegment.state.live.session.sessionId,
+            event: { type: "segment-failure", reason: "fixture segment two" },
+          })
+        : null;
+      const stableFrame = switched?.state?.live?.session
+        ? await post(options.baseUrl, "/api/live/sync", {
+            sessionId: switched.state.live.session.sessionId,
+            event: { type: "first-frame", at: 1_250 },
+            status: "playing",
+          })
+        : null;
+      const failedStartup = brokenChannel
+        ? await post(options.baseUrl, "/api/live/play", { channelId: brokenChannel.id })
+        : null;
+      const startupFailure = failedStartup?.state?.live?.session
+        ? await post(options.baseUrl, "/api/live/sync", {
+            sessionId: failedStartup.state.live.session.sessionId,
+            event: { type: "startup-timeout", reason: "fixture startup failure" },
+            status: "error",
+          })
+        : null;
+      const createdSmart = failoverChannel && backupChannel
+        ? await post(options.baseUrl, "/api/live/smart/create", {
+            name: options.freshTrust ? "Packaged G61 Failover Smart" : "Packaged G61 Failover Smart Restart",
+            memberIds: [failoverChannel.id],
+          })
+        : null;
+      const smartName = options.freshTrust ? "Packaged G61 Failover Smart" : "Packaged G61 Failover Smart Restart";
+      const smartId = createdSmart?.state?.live?.smartChannels?.find((channel) => channel.name === smartName)?.id;
+      const addedBackup = smartId && backupChannel
+        ? await post(options.baseUrl, "/api/live/smart/member/add", {
+            smartChannelId: smartId,
+            liveChannelId: backupChannel.id,
+            priority: 1,
+          })
+        : null;
+      const smartMapping = addedBackup?.state?.live?.epg?.mappings.find((mapping) =>
+        mapping.liveChannelName === "Fixture Channel A" && mapping.mapping,
+      )?.mapping;
+      if (smartId && smartMapping) {
+        await post(options.baseUrl, "/api/live/smart/epg", {
+          smartChannelId: smartId,
+          epgSourceId: smartMapping.epgSourceId,
+          epgChannelId: smartMapping.epgChannelId,
+        });
+      }
+      const primaryMemberId = smartId && addedBackup
+        ? addedBackup.state?.live?.smartChannels?.find((channel) => channel.id === smartId)?.members
+          .find((member) => member.liveChannelId === failoverChannel?.id)?.id
+        : undefined;
+      const smartPlay = smartId && failoverChannel && secondLine
+        ? await post(options.baseUrl, "/api/live/smart/play", {
+            smartChannelId: smartId,
+            memberId: primaryMemberId,
+            streamId: secondLine.id,
+          })
+        : null;
+      const smartSession = smartPlay?.state?.live?.session;
+      const smartFailure = smartSession
+        ? await post(options.baseUrl, "/api/live/sync", {
+            sessionId: smartSession.sessionId,
+            event: { type: "fatal-error", code: "FIXTURE_ALL_PRIMARY_LINES_FAILED" },
+            status: "error",
+          })
+        : null;
+      // The Smart failure intentionally opens the current primary line's
+      // circuit. Recover it before the process exits so the restart run starts
+      // from a healthy backup candidate rather than a persisted test cooldown.
+      const primaryRecovery = smartId && failoverChannel && secondLine && primaryMemberId
+        ? await post(options.baseUrl, "/api/live/smart/play", {
+            smartChannelId: smartId,
+            memberId: primaryMemberId,
+            streamId: secondLine.id,
+          })
+        : null;
+      const primaryRecoverySession = primaryRecovery?.state?.live?.session;
+      if (primaryRecoverySession) {
+        await post(options.baseUrl, "/api/live/sync", {
+          sessionId: primaryRecoverySession.sessionId,
+          event: { type: "first-frame", at: 1_500 },
+          status: "playing",
+        });
+      }
+      const smartActive = smartFailure?.state?.live?.activeSmartChannel;
+      const timeline = smartFailure?.state?.live?.epg?.timeline;
+      const liveUi = await post(options.baseUrl, "/api/view-state", { navigation: "live" });
+      const debugHtml = options.readWindowHtml ? await readPage(options) : "";
+      checks.liveFailover = firstLine !== undefined
+        && secondLine !== undefined
+        && oneSegment?.state?.live?.session?.streamId === firstLine.id
+        && switched?.state?.live?.session?.streamId === secondLine.id
+        && stableFrame?.state?.live?.failover?.status === "recovered"
+        && startupFailure?.state?.live?.health?.startupSuccess?.value === false;
+      checks.liveFailoverSmart = smartFailure?.state?.live?.session?.channelId === backupChannel?.id
+        && smartActive?.liveChannelId === backupChannel?.id;
+      checks.liveFailoverEpgContinuity = timeline !== null
+        && timeline !== undefined
+        && timeline.liveChannelId === failoverChannel?.id
+        && timeline.items.length > 0
+        && (smartFailure?.state?.live?.smartChannels ?? []).some((channel) => channel.id === smartId && channel.epg.mode === "explicit");
+      checks.liveFailoverDebug = liveUi.state?.live?.failover !== undefined
+        && (!options.readWindowHtml || debugHtml.includes('data-testid="live-debug-panel"'));
+      void sourceA;
+      void sourceB;
+      void sourceC;
     }
     if (options.verifySmartChannels) {
       if (!options.smartBackupUrl) throw new Error("Packaged Smart Channel E2E URL is not configured");
@@ -877,12 +1036,80 @@ async function post(
   });
   const value: unknown = await response.json();
   if (!response.ok || !isRecord(value) || !isRecord(value.import)) {
-    throw new Error(`Packaged E2E request failed: ${path}`);
+    throw new Error(`Packaged E2E request failed: ${path} ${isRecord(value) ? JSON.stringify(value) : ""}`);
   }
   return {
     import: value.import as unknown as ImportState,
     state: isRecord(value.state) ? value.state as unknown as UiState : null,
   };
+}
+
+async function importLiveFailoverSource(baseUrl: string, name: string, location: string): Promise<UiEnvelope | null> {
+  const preview = await post(baseUrl, "/api/live/source/preview", {
+    name,
+    type: "m3u-url",
+    location,
+  });
+  const previewId = preview.state?.live?.preview?.id;
+  return typeof previewId === "string"
+    ? post(baseUrl, "/api/live/source/apply", { previewId })
+    : null;
+}
+
+async function verifyLiveFailoverFixture(
+  sourceUrl: string,
+  backupUrl: string,
+  brokenUrl: string,
+  probeUnstableSegments: boolean,
+): Promise<boolean> {
+  const [sourceResponse, backupSourceResponse, brokenSourceResponse] = await Promise.all([
+    fetch(sourceUrl),
+    fetch(backupUrl),
+    fetch(brokenUrl),
+  ]);
+  const sourceBody = await sourceResponse.text();
+  const backupSourceBody = await backupSourceResponse.text();
+  const brokenSourceBody = await brokenSourceResponse.text();
+  const a1PlaylistUrl = absoluteFixtureUrl(sourceBody, "failover-a1.m3u8");
+  const a2PlaylistUrl = absoluteFixtureUrl(sourceBody, "channel-a.m3u8");
+  const backupPlaylistUrl = absoluteFixtureUrl(backupSourceBody, "channel-a.m3u8");
+  const brokenPlaylistUrl = absoluteFixtureUrl(brokenSourceBody, "failover-c.m3u8");
+  if (!a1PlaylistUrl || !a2PlaylistUrl || !backupPlaylistUrl || !brokenPlaylistUrl) return false;
+
+  const [a1Response, a2Response, backupResponse, brokenResponse] = await Promise.all([
+    fetch(a1PlaylistUrl),
+    fetch(a2PlaylistUrl),
+    fetch(backupPlaylistUrl),
+    fetch(brokenPlaylistUrl),
+  ]);
+  const a1Body = await a1Response.text();
+  const initUrl = absoluteFixtureUrl(a1Body, "failover-a1-init.mp4");
+  const segment0Url = absoluteFixtureUrl(a1Body, "failover-a1-segment-0.m4s");
+  const segment1Url = absoluteFixtureUrl(a1Body, "failover-a1-segment-1.m4s");
+  if (!initUrl || !segment0Url || !segment1Url) return false;
+  const initResponse = await fetch(initUrl);
+  let unstableSegmentsValid = true;
+  if (probeUnstableSegments) {
+    const firstSegment = await fetch(segment0Url);
+    const failedSegment = await fetch(segment0Url);
+    const secondFailedSegment = await fetch(segment1Url);
+    unstableSegmentsValid = firstSegment.ok
+      && failedSegment.status === 503
+      && secondFailedSegment.status === 503;
+  }
+  return sourceResponse.ok
+    && backupSourceResponse.ok
+    && brokenSourceResponse.ok
+    && a1Response.ok
+    && a2Response.ok
+    && backupResponse.ok
+    && brokenResponse.status === 500
+    && initResponse.ok
+    && unstableSegmentsValid;
+}
+
+function absoluteFixtureUrl(body: string, suffix: string): string | null {
+  return body.match(new RegExp(`https?:\\/\\/[^\\s]+${suffix}`, "u"))?.[0] ?? null;
 }
 
 async function getState(baseUrl: string): Promise<UiEnvelope> {
@@ -1074,7 +1301,13 @@ interface UiState {
         epgStatus: string;
         currentProgramme: { title: string } | null;
         nextProgramme: { title: string } | null;
-        streams: readonly { id: string; label: string; protocol: string; status: string }[];
+        streams: readonly {
+          id: string;
+          label: string;
+          protocol: string;
+          status: string;
+          health?: { segmentFailure?: { value?: number | null } } | null;
+        }[];
       }[];
       recent: readonly { channelId: string; sourceId: string; channelName: string; lastStreamId: string | null }[];
     };
@@ -1141,6 +1374,8 @@ interface UiState {
     }[];
     smartSuggestions?: readonly { reason: string }[];
     activeSmartChannel?: { smartChannelId: string; memberId: string; liveChannelId: string } | null;
+    health?: { startupSuccess?: { value?: boolean | null }; score?: number | null } | null;
+    failover?: { status?: string; attempts?: number; maxAttempts?: number };
   };
 }
 

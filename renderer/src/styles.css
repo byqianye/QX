@@ -362,6 +362,12 @@ p { margin-bottom: 12px; }
 .live-channel-copy small { color: var(--muted); font-size: 12px; }
 .live-line-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; }
 .live-line-row .selected { color: var(--accent); border-color: var(--accent); }
+.live-failover-panel { display: grid; gap: 10px; margin-top: 16px; padding: 14px; background: var(--surface-subtle); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); }
+.live-failover-panel h3 { margin: 2px 0 0; font-size: 1rem; }
+.live-failover-mode { display: inline-flex; align-items: center; gap: 8px; color: var(--fg-2); font-size: .85rem; }
+.live-failover-notice { display: grid; gap: 5px; padding: 10px; background: var(--surface); border: 1px solid var(--warning); border-radius: var(--radius-sm); }
+.live-debug-panel { display: grid; gap: 4px; padding-top: 8px; color: var(--fg-2); font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.live-debug-panel p { margin: 0; overflow-wrap: anywhere; }
 .live-recent-panel { display: grid; gap: 8px; }
 .live-recent-panel .panel-header { margin-bottom: 0; }
 .live-recent-button { width: fit-content; min-height: 36px; text-align: left; }

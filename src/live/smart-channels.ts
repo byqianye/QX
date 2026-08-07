@@ -14,6 +14,7 @@ import { normalizeChannelName } from "./live-parser.js";
 import type {
   LiveCatalogUiState,
   LiveChannelWithStreams,
+  LiveFailoverCandidateUiState,
   SmartChannelEpgUiState,
   SmartChannelMemberRecord,
   SmartChannelMemberUiState,
@@ -222,6 +223,52 @@ export class SmartChannelService {
     return selection;
   }
 
+  public markActiveMember(smartChannelId: string, memberId: string): void {
+    this.requireMember(smartChannelId, memberId);
+    this.activeValue = { smartChannelId, memberId };
+  }
+
+  public failoverCandidates(smartChannelId: string): readonly LiveFailoverCandidateUiState[] {
+    const smartChannel = this.requireSmartChannel(smartChannelId);
+    const liveChannels = new Map(this.liveRepository.getAllChannels().map((channel) => [channel.id, channel] as const));
+    const sources = new Map(this.liveRepository.listSources().map((source) => [source.id, source] as const));
+    const members = this.repository.listMembers(smartChannelId)
+      .filter((member) => member.enabled)
+      .sort((left, right) => {
+        const leftActive = this.activeValue?.smartChannelId === smartChannelId && this.activeValue.memberId === left.id;
+        const rightActive = this.activeValue?.smartChannelId === smartChannelId && this.activeValue.memberId === right.id;
+        if (leftActive !== rightActive) return leftActive ? -1 : 1;
+        const leftPreferred = smartChannel.preferredMemberId === left.id;
+        const rightPreferred = smartChannel.preferredMemberId === right.id;
+        if (leftPreferred !== rightPreferred) return leftPreferred ? -1 : 1;
+        return left.priority - right.priority || left.id.localeCompare(right.id);
+      });
+    const candidates: LiveFailoverCandidateUiState[] = [];
+    for (const member of members) {
+      const channel = liveChannels.get(member.liveChannelId);
+      const source = channel ? sources.get(channel.sourceId) : undefined;
+      if (!channel || !source?.enabled || !channel.enabled) continue;
+      channel.streams
+        .filter((stream) => isSupportedStream(stream))
+        .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id))
+        .forEach((stream, index) => {
+          candidates.push({
+            id: `smart:${smartChannelId}:${member.id}:${stream.id}`,
+            channelId: channel.id,
+            streamId: stream.id,
+            sourceId: channel.sourceId,
+            sourceName: source.name,
+            channelName: channel.name,
+            streamLabel: stream.label ?? `线路 ${index + 1}`,
+            memberId: member.id,
+            smartChannelId,
+            healthScore: this.healthScores.get(member.liveChannelId) ?? null,
+          });
+        });
+    }
+    return candidates;
+  }
+
   public select(smartChannelId: string, memberId?: string): SmartChannelSelection {
     const smartChannel = this.requireSmartChannel(smartChannelId);
     const liveChannels = this.liveRepository.getAllChannels();
@@ -253,6 +300,11 @@ export class SmartChannelService {
     const byLiveId = new Map(liveChannels.map((channel) => [channel.id, channel] as const));
     const sourceById = new Map(this.liveRepository.listSources().map((source) => [source.id, source] as const));
     const catalogById = new Map(catalog.channels.map((channel) => [channel.id, channel] as const));
+    for (const channel of catalog.channels) {
+      if (channel.health?.score !== null && channel.health?.score !== undefined) {
+        this.setHealthScore(channel.id, channel.health.score);
+      }
+    }
     const smartChannels = this.repository.list().map((record) => {
       const members = this.repository.listMembers(record.id).map((member) => this.memberUi(
         member,
@@ -322,10 +374,14 @@ export class SmartChannelService {
   }
 
   private pickUiMember(
-    smartChannel: Pick<SmartChannelRecord, "preferredMemberId">,
+    smartChannel: Pick<SmartChannelRecord, "id" | "preferredMemberId">,
     members: readonly SmartMemberView[],
   ): SmartMemberView | null {
     const candidates = members.filter((member) => member.enabled && member.available);
+    const active = this.activeValue?.memberId
+      ? candidates.find((member) => this.activeValue?.smartChannelId === smartChannel.id && member.id === this.activeValue.memberId)
+      : undefined;
+    if (active) return active;
     const preferred = smartChannel.preferredMemberId
       ? candidates.find((member) => member.id === smartChannel.preferredMemberId)
       : undefined;

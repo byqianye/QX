@@ -26,6 +26,7 @@ import {
   type LivePreviewUiState,
 } from "./live-types.js";
 import { EMPTY_EPG_UI_STATE } from "../epg/epg-types.js";
+import { EMPTY_LIVE_FAILOVER_UI_STATE } from "./live-types.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
@@ -102,6 +103,8 @@ export class LiveSourceService {
       smartChannels: [],
       smartSuggestions: [],
       activeSmartChannel: null,
+      health: null,
+      failover: EMPTY_LIVE_FAILOVER_UI_STATE,
     };
   }
 

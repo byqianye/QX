@@ -561,14 +561,22 @@ export class HealthRepository {
   }
 
   public upsertStream(record: HealthSnapshotRecord): void {
-    if (!record.sourceId) throw databaseError("DATABASE_WRITE_FAILED");
-    const snapshotJson = serializeJson(record.snapshot);
+    this.upsertStreams([record]);
+  }
+
+  public upsertStreams(records: readonly HealthSnapshotRecord[]): void {
+    if (records.some((record) => !record.sourceId)) throw databaseError("DATABASE_WRITE_FAILED");
     try {
-      this.db.prepare(`
+      const statement = this.db.prepare(`
         INSERT INTO stream_health(stream_id, source_id, snapshot_json, updated_at)
         VALUES (?, ?, ?, ?)
         ON CONFLICT(stream_id) DO UPDATE SET source_id = excluded.source_id, snapshot_json = excluded.snapshot_json, updated_at = excluded.updated_at
-      `).run(record.id, record.sourceId, snapshotJson, record.updatedAt);
+      `);
+      this.db.transaction(() => {
+        for (const record of records) {
+          statement.run(record.id, record.sourceId!, serializeJson(record.snapshot), record.updatedAt);
+        }
+      });
     } catch (error) {
       throw databaseError("DATABASE_WRITE_FAILED", error);
     }
@@ -576,6 +584,11 @@ export class HealthRepository {
 
   public readSource(id: string): unknown | null {
     const row = this.db.prepare("SELECT snapshot_json FROM source_health WHERE source_id = ?").get(id);
+    return row ? parseJsonRow(row, "snapshot_json") : null;
+  }
+
+  public readStream(id: string): unknown | null {
+    const row = this.db.prepare("SELECT snapshot_json FROM stream_health WHERE stream_id = ?").get(id);
     return row ? parseJsonRow(row, "snapshot_json") : null;
   }
 }

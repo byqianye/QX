@@ -148,9 +148,14 @@ function loadSource(): void {
     hls.on(Hls.Events.ERROR, (_event, data) => {
       const status = typeof data.response?.code === "number" ? data.response.code : undefined;
       if (status !== undefined) emitSync(localStatus.value, { type: "http-status", status });
+      const details = String(data.details ?? "");
       if (!data.fatal) {
-        if (/frag|segment|level|buffer/i.test(String(data.details ?? ""))) {
-          emitSync(localStatus.value, { type: "segment-failure", reason: String(data.details ?? "分片失败") });
+        if (/manifest|playlist|levelload|level_load/i.test(details)) {
+          emitSync(localStatus.value, { type: "playlist-refresh-failure", reason: details || "播放列表刷新失败" });
+        } else if (/network|disconnect|timeout/i.test(details)) {
+          emitSync(localStatus.value, { type: "disconnect", reason: details || "播放器连接断开" });
+        } else if (/frag|segment|buffer/i.test(details)) {
+          emitSync(localStatus.value, { type: "segment-failure", reason: details || "分片失败" });
         }
         return;
       }

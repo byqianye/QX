@@ -74,6 +74,37 @@ describe("local media fixture server", () => {
     expect((await fetch(`${fixture.baseUrl}/live/channel-e-line2.m3u8`)).status).toBe(200);
   });
 
+  it("serves the finite failover fixture with a real A1 segment failure", async () => {
+    const sourceA = await fetch(fixture.liveFailoverUrl);
+    const sourceABody = await sourceA.text();
+    const a1PlaylistUrl = sourceABody.match(/https?:\/\/[^\s]+failover-a1\.m3u8/u)?.[0];
+    const sourceB = await fetch(fixture.liveFailoverBackupUrl);
+    const sourceBBody = await sourceB.text();
+    const backupPlaylistUrl = sourceBBody.match(/https?:\/\/[^\s]+channel-a\.m3u8/u)?.[0];
+    const sourceC = await fetch(fixture.liveFailoverBrokenUrl);
+    const sourceCBody = await sourceC.text();
+    const brokenPlaylistUrl = sourceCBody.match(/https?:\/\/[^\s]+failover-c\.m3u8/u)?.[0];
+
+    expect(sourceA.status).toBe(200);
+    expect(sourceB.status).toBe(200);
+    expect(sourceC.status).toBe(200);
+    expect(a1PlaylistUrl).toBeTruthy();
+    expect(backupPlaylistUrl).toBeTruthy();
+    expect(brokenPlaylistUrl).toBeTruthy();
+
+    const a1Playlist = await fetch(a1PlaylistUrl!);
+    const a1Body = await a1Playlist.text();
+    const segmentUrl = a1Body.match(/https?:\/\/[^\s]+failover-a1-segment-0\.m4s/u)?.[0];
+    expect(a1Playlist.status).toBe(200);
+    expect(a1Body).toContain("#EXT-X-MAP");
+    expect(segmentUrl).toBeTruthy();
+    expect((await fetch(segmentUrl!)).status).toBe(200);
+    expect((await fetch(segmentUrl!)).status).toBe(503);
+    expect((await fetch(new URL("failover-a1-segment-1.m4s", a1PlaylistUrl))).status).toBe(503);
+    expect((await fetch(backupPlaylistUrl!)).status).toBe(200);
+    expect((await fetch(brokenPlaylistUrl!)).status).toBe(500);
+  });
+
   it("serves XMLTV with validators for EPG refresh tests", async () => {
     const first = await fetch(fixture.epgUrl);
     expect(first.status).toBe(200);

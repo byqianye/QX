@@ -659,6 +659,71 @@ describe("Vue renderer", () => {
     wrapper.unmount();
   });
 
+  it("renders live health details and failover actions", async () => {
+    const candidate = {
+      id: "live:channel-a:line-1",
+      channelId: "channel-a",
+      streamId: "line-1",
+      sourceId: "source-a",
+      sourceName: "Source A",
+      channelName: "News",
+      streamLabel: "线路 1",
+      memberId: null,
+      smartChannelId: null,
+      healthScore: 42,
+    };
+    const state: LiveUiState = {
+      ...EMPTY_LIVE_UI_STATE,
+      health: {
+        streamId: "line-1",
+        sourceId: "source-a",
+        startupSuccess: { value: true, samples: 1 },
+        firstFrameMs: { value: 320, samples: 1 },
+        playlistRefreshFailure: { value: 0, samples: 1 },
+        segmentFailure: { value: 2, samples: 2 },
+        bufferCount: { value: 1, samples: 1 },
+        bufferDuration: { value: 9_000, samples: 1 },
+        fatalError: { value: 0, samples: 1 },
+        disconnectCount: { value: 0, samples: 1 },
+        uptimeMs: { value: 10_000, samples: 1 },
+        lastSuccessAt: 1_000,
+        lastFailureAt: 2_000,
+        consecutiveFailures: 2,
+        score: 42,
+        scoreReasons: ["segment failures 2"],
+        cooldownUntil: 3_000,
+      },
+      failover: {
+        ...EMPTY_LIVE_UI_STATE.failover,
+        status: "prompt",
+        trigger: "segment-errors",
+        reason: "连续分片失败",
+        current: candidate,
+        next: { ...candidate, id: "live:channel-a:line-2", streamId: "line-2", streamLabel: "线路 2" },
+        attempts: 0,
+        maxAttempts: 3,
+        tried: [candidate.id],
+        manualOverrideUntil: 4_000,
+      },
+    };
+    const wrapper = mount(LiveSourcesView, { props: { state, pending: null } });
+
+    expect(wrapper.get('[data-testid="live-health-summary"]').text()).toContain("评分 42");
+    expect(wrapper.get('[data-testid="live-failover-prompt"]').text()).toContain("连续分片失败");
+    expect(wrapper.get('[data-testid="live-debug-panel"]').text()).toContain("Manual override");
+    await wrapper.get('[data-action="live-failover-mode"]').setValue("auto");
+    await wrapper.get('[data-action="live-failover-approve"]').trigger("click");
+    await wrapper.get('[data-action="live-failover-cancel"]').trigger("click");
+    await wrapper.get('[data-action="live-failover-stay"]').trigger("click");
+    await wrapper.get('[data-action="live-failover-return"]').trigger("click");
+    expect(wrapper.emitted("failoverMode")).toEqual([["auto"]]);
+    expect(wrapper.emitted("failoverApprove")).toHaveLength(1);
+    expect(wrapper.emitted("failoverCancel")).toHaveLength(1);
+    expect(wrapper.emitted("failoverStay")).toHaveLength(1);
+    expect(wrapper.emitted("failoverReturn")).toHaveLength(1);
+    wrapper.unmount();
+  });
+
   it("renders the formal history page and confirms destructive actions", async () => {
     const envelope = readyEnvelope();
     envelope.state = {

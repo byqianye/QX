@@ -35,6 +35,8 @@ export type PlaybackMediaEventType =
   | "buffer-end"
   | "fatal-error"
   | "segment-failure"
+  | "playlist-refresh-failure"
+  | "disconnect"
   | "http-status"
   | "completion"
   | "user-pause"

@@ -18,6 +18,7 @@ const MEDIA_HLS_SEGMENT_BYTES = Buffer.from(
 
 const PROTECTED_REFERER = "https://source.example.invalid/";
 const PROTECTED_USER_AGENT = "G22-fixture";
+const failoverStates = new WeakMap<object, { segmentRequests: number }>();
 
 export interface MediaFixtureServer {
   readonly baseUrl: string;
@@ -33,6 +34,9 @@ export interface MediaFixtureServer {
   readonly liveUrl: string;
   readonly livePlaybackUrl: string;
   readonly liveSmartUrl: string;
+  readonly liveFailoverUrl: string;
+  readonly liveFailoverBackupUrl: string;
+  readonly liveFailoverBrokenUrl: string;
   readonly epgUrl: string;
   readonly doubanEndpoint: string;
   readonly subtitleVttUrl: string;
@@ -87,6 +91,15 @@ export function createMediaFixtureServer(host = "127.0.0.1"): MediaFixtureServer
     get liveSmartUrl() {
       return `${resource.baseUrl}/live/smart-backup.m3u`;
     },
+    get liveFailoverUrl() {
+      return `${resource.baseUrl}/live/failover/source-a.m3u`;
+    },
+    get liveFailoverBackupUrl() {
+      return `${resource.baseUrl}/live/failover/source-b.m3u`;
+    },
+    get liveFailoverBrokenUrl() {
+      return `${resource.baseUrl}/live/failover/source-c.m3u`;
+    },
     get epgUrl() {
       return `${resource.baseUrl}/epg/guide.xml`;
     },
@@ -104,6 +117,8 @@ export function createMediaFixtureServer(host = "127.0.0.1"): MediaFixtureServer
     },
     async start() {
       if (server) return;
+      const state = failoverStates.get(resource);
+      if (state) state.segmentRequests = 0;
       server = createServer((request, response) => {
         void handleRequest(request, response, resource);
       });
@@ -124,6 +139,8 @@ export function createMediaFixtureServer(host = "127.0.0.1"): MediaFixtureServer
       });
     },
   };
+
+  failoverStates.set(resource, { segmentRequests: 0 });
 
   return resource;
 }
@@ -199,6 +216,49 @@ async function handleRequest(
       `${fixture.baseUrl}/live/channel-e-line2.m3u8`,
       "",
     ].join("\n"), "application/x-mpegurl; charset=utf-8");
+    return;
+  }
+
+  if (url.pathname === "/live/failover/source-a.m3u") {
+    serveText(request, response, [
+      "#EXTM3U",
+      '#EXTINF:-1 tvg-id="fixture-news" group-title="Failover",Fixture Channel A',
+      `${fixture.baseUrl}/live/failover-a1.m3u8`,
+      '#EXTINF:-1 tvg-id="fixture-news" group-title="Failover",Fixture Channel A',
+      `${fixture.baseUrl}/live/channel-a.m3u8`,
+      "",
+    ].join("\n"), "application/x-mpegurl; charset=utf-8");
+    return;
+  }
+
+  if (url.pathname === "/live/failover/source-b.m3u") {
+    serveText(request, response, [
+      "#EXTM3U",
+      '#EXTINF:-1 tvg-id="fixture-news" group-title="Failover",Fixture Channel A',
+      `${fixture.baseUrl}/live/channel-a.m3u8`,
+      "",
+    ].join("\n"), "application/x-mpegurl; charset=utf-8");
+    return;
+  }
+
+  if (url.pathname === "/live/failover/source-c.m3u") {
+    serveText(request, response, [
+      "#EXTM3U",
+      '#EXTINF:-1 tvg-id="fixture-news" group-title="Failover",Fixture Channel A',
+      `${fixture.baseUrl}/live/failover-c.m3u8`,
+      "",
+    ].join("\n"), "application/x-mpegurl; charset=utf-8");
+    return;
+  }
+
+  if (url.pathname === "/live/failover-a1.m3u8") {
+    serveFailoverPlaylist(request, response, fixture.baseUrl);
+    return;
+  }
+
+  if (url.pathname === "/live/failover-c.m3u8") {
+    response.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+    response.end("failover startup failure");
     return;
   }
 
@@ -497,6 +557,31 @@ async function handleRequest(
     return;
   }
 
+  if (url.pathname === "/live/failover-a1-init.mp4") {
+    serveBytes(request, response, MEDIA_HLS_INIT_BYTES, "video/mp4");
+    return;
+  }
+
+  if (url.pathname === "/live/failover-a1-segment-0.m4s") {
+    const state = failoverStates.get(fixture);
+    if (state) state.segmentRequests += 1;
+    if ((state?.segmentRequests ?? 0) === 1) {
+      serveBytes(request, response, MEDIA_HLS_SEGMENT_BYTES, "video/iso.segment");
+    } else {
+      response.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
+      response.end("failover segment failure");
+    }
+    return;
+  }
+
+  if (url.pathname === "/live/failover-a1-segment-1.m4s") {
+    const state = failoverStates.get(fixture);
+    if (state) state.segmentRequests += 1;
+    response.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
+    response.end("failover segment failure");
+    return;
+  }
+
   if (url.pathname === "/protected/fixture-init.mp4" || url.pathname === "/protected/fixture-0.m4s") {
     if (!hasProtectedHeaders(request)) {
       response.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
@@ -536,6 +621,23 @@ function servePlaylist(request: IncomingMessage, response: ServerResponse, prefi
   });
   if (request.method === "HEAD") response.end();
   else response.end(body);
+}
+
+function serveFailoverPlaylist(request: IncomingMessage, response: ServerResponse, baseUrl: string): void {
+  serveText(request, response, [
+    "#EXTM3U",
+    "#EXT-X-VERSION:7",
+    "#EXT-X-TARGETDURATION:1",
+    "#EXT-X-MEDIA-SEQUENCE:0",
+    "#EXT-X-PLAYLIST-TYPE:VOD",
+    `#EXT-X-MAP:URI=\"${baseUrl}/live/failover-a1-init.mp4\"`,
+    "#EXTINF:1.0,",
+    `${baseUrl}/live/failover-a1-segment-0.m4s`,
+    "#EXTINF:1.0,",
+    `${baseUrl}/live/failover-a1-segment-1.m4s`,
+    "#EXT-X-ENDLIST",
+    "",
+  ].join("\n"), "application/vnd.apple.mpegurl; charset=utf-8");
 }
 
 function serveMasterPlaylist(request: IncomingMessage, response: ServerResponse): void {

@@ -17,6 +17,7 @@ import {
 } from "../desktop/state-persistence.js";
 import type { DesktopSpiderClientPort } from "../desktop/spider-client-port.js";
 import type { PlaybackFallbackMode } from "../health/playback-health.js";
+import type { LiveFailoverMode } from "../live/live-types.js";
 import { EngineRouter } from "../engine/engine-router.js";
 import { readJellyfinEnvironment } from "../jellyfin/jellyfin-adapter.js";
 import { resolveJavaExecutable } from "../spikes/java-probe.js";
@@ -46,6 +47,7 @@ import {
   SmartChannelRepository,
   PlaybackProgressRepository,
   SettingsRepository,
+  HealthRepository,
 } from "../data/repositories.js";
 import { FavoritesService } from "../favorites/favorites-service.js";
 import { HistoryProgressService } from "../history/history-progress.js";
@@ -79,6 +81,10 @@ const PLAYBACK_RULES = playbackRulesEnvironment("QX_PLAYBACK_RULES_JSON");
 const PLAYBACK_FALLBACK_MODE = playbackFallbackModeEnvironment("QX_PLAYBACK_FALLBACK_MODE");
 const PLAYBACK_FALLBACK_MAX_ATTEMPTS = numberEnvironment("QX_PLAYBACK_FALLBACK_MAX_ATTEMPTS", 4);
 const PLAYBACK_FALLBACK_TIMEOUT_MS = numberEnvironment("QX_PLAYBACK_FALLBACK_TIMEOUT_MS", 30_000);
+const LIVE_FAILOVER_MODE = liveFailoverModeEnvironment("QX_LIVE_FAILOVER_MODE");
+const LIVE_FAILOVER_MAX_ATTEMPTS = numberEnvironment("QX_LIVE_FAILOVER_MAX_ATTEMPTS", 3);
+const LIVE_FAILOVER_TIMEOUT_MS = numberEnvironment("QX_LIVE_FAILOVER_TIMEOUT_MS", 30_000);
+const LIVE_FAILOVER_COOLDOWN_MS = numberEnvironment("QX_LIVE_FAILOVER_COOLDOWN_MS", 15_000);
 const ISOLATED_SNIFFER_ENABLED = process.env.QX_SNIFF_ENABLED === "1";
 
 if (process.env.QX_E2E_USER_DATA) {
@@ -218,11 +224,6 @@ function initializeDataLayer(): void {
     repository: liveRepository,
     requestTimeoutMs: REQUEST_TIMEOUT_MS,
   });
-  livePlaybackService = new LivePlaybackService({
-    repository: new LiveRepository(opened.layer),
-    requestTimeoutMs: REQUEST_TIMEOUT_MS,
-    ...(PLAYBACK_PROXY_ORIGINS.length > 0 ? { proxyAllowedOrigins: PLAYBACK_PROXY_ORIGINS } : {}),
-  });
   epgService = new EpgService({
     repository: epgRepository,
     requestTimeoutMs: REQUEST_TIMEOUT_MS,
@@ -235,6 +236,27 @@ function initializeDataLayer(): void {
     repository: new SmartChannelRepository(opened.layer),
     liveRepository,
     epgRepository,
+  });
+  livePlaybackService = new LivePlaybackService({
+    repository: liveRepository,
+    requestTimeoutMs: REQUEST_TIMEOUT_MS,
+    healthStore: new HealthRepository(opened.layer),
+    failoverMode: LIVE_FAILOVER_MODE,
+    failoverMaxAttempts: LIVE_FAILOVER_MAX_ATTEMPTS,
+    failoverTimeoutMs: LIVE_FAILOVER_TIMEOUT_MS,
+    failoverCooldownMs: LIVE_FAILOVER_COOLDOWN_MS,
+    onSelection: (selection) => {
+      if (selection.smartChannelId && selection.smartMemberId) {
+        smartChannelService?.markActiveMember(selection.smartChannelId, selection.smartMemberId);
+      }
+      // Smart failover changes the playback member, not the user's EPG
+      // identity. Initial/manual Smart selection still establishes the
+      // timeline; an automatic member switch leaves that request intact.
+      if (selection.reason !== "failover" || !selection.smartChannelId) {
+        epgMatchingService?.setTimeline(selection.channelId);
+      }
+    },
+    ...(PLAYBACK_PROXY_ORIGINS.length > 0 ? { proxyAllowedOrigins: PLAYBACK_PROXY_ORIGINS } : {}),
   });
 }
 
@@ -885,6 +907,10 @@ async function runE2e(baseUrl: string): Promise<void> {
       ...(process.env.QX_E2E_LIVE_URL ? { liveUrl: process.env.QX_E2E_LIVE_URL } : {}),
       verifyLivePlayback: Boolean(process.env.QX_E2E_LIVE_PLAYBACK_URL),
       ...(process.env.QX_E2E_LIVE_PLAYBACK_URL ? { livePlaybackUrl: process.env.QX_E2E_LIVE_PLAYBACK_URL } : {}),
+      verifyLiveFailover: Boolean(process.env.QX_E2E_LIVE_FAILOVER_URL),
+      ...(process.env.QX_E2E_LIVE_FAILOVER_URL ? { liveFailoverUrl: process.env.QX_E2E_LIVE_FAILOVER_URL } : {}),
+      ...(process.env.QX_E2E_LIVE_FAILOVER_BACKUP_URL ? { liveFailoverBackupUrl: process.env.QX_E2E_LIVE_FAILOVER_BACKUP_URL } : {}),
+      ...(process.env.QX_E2E_LIVE_FAILOVER_BROKEN_URL ? { liveFailoverBrokenUrl: process.env.QX_E2E_LIVE_FAILOVER_BROKEN_URL } : {}),
       verifySmartChannels: Boolean(process.env.QX_E2E_LIVE_SMART_URL),
       ...(process.env.QX_E2E_LIVE_SMART_URL ? { smartBackupUrl: process.env.QX_E2E_LIVE_SMART_URL } : {}),
       verifyEpg: Boolean(process.env.QX_E2E_EPG_URL),
@@ -1029,6 +1055,11 @@ function listEnvironment(name: string): string[] {
 function playbackFallbackModeEnvironment(name: string): PlaybackFallbackMode {
   const value = process.env[name];
   return value === "off" || value === "auto" || value === "prompt" ? value : "prompt";
+}
+
+function liveFailoverModeEnvironment(name: string): LiveFailoverMode {
+  const value = process.env[name];
+  return value === "off" || value === "auto" || value === "ask" ? value : "ask";
 }
 
 function parserCandidatesEnvironment(name: string): ParserCandidate[] {

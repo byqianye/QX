@@ -1149,6 +1149,75 @@ git diff --check
 checkpoint: complete G60 smart channels
 ```
 
+## G61 (completed)
+
+### Goal
+
+Add explainable, finite, cancellable Live health failover over G60 Smart
+Channels: stream metrics and score, batched persistence, Off/Ask/Auto modes,
+ordinary line failover, Smart Channel member failover, cooldown, manual
+override, EPG continuity, redacted debug UI, deterministic fixture coverage,
+and Stage 4 verification.
+
+### Status
+
+Completed. Health summaries are aggregated and debounced into the existing
+`stream_health` table. Failover uses tried candidates, attempt/deadline limits,
+generation cancellation, `AbortController`, temporary cooldown, and a default
+`Ask` mode. Packaged first/restart E2E covers line failover, Smart member
+failover, startup failure, EPG continuity, debug state, restart hydration, and
+process cleanup.
+
+### Dependency
+
+- G60 checkpoint `9232c13`: `checkpoint: complete G60 smart channels`
+
+### Scope and acceptance
+
+- Health metrics return `unknown` with no samples and expose explainable score
+  reasons; pause, seek, stop, exit, and manual line changes are not failures.
+- Only defined startup, repeated playlist/segment, fatal, disconnect, and long
+  buffer triggers may start failover; one segment or short buffer cannot switch.
+- Ordinary channels and Smart Channels use deterministic finite candidates with
+  loop prevention, cooldown/recovery, maximum attempts, total timeout, and
+  manual override expiry.
+- Switching preserves Smart Channel identity and EPG timeline identity while
+  updating only playback source/line/health.
+- Health/debug UI is typed and redacted; high-frequency events do not write one
+  SQLite row per segment.
+- Unit, renderer, build, package, first/restart E2E, security, performance,
+  migration, and process-cleanup evidence is recorded under `verification/`.
+
+### Verification commands
+
+```powershell
+git diff --check
+npm run typecheck
+npm test
+npm run renderer:build
+npm run electron:build
+npm run electron:package:win
+npm run electron:e2e:package
+```
+
+### Documentation
+
+- `docs/spike-61-live-failover.md`
+- `docs/design/open-design/live-tv/live-failover-spec.md`
+
+### Checkpoint
+
+```text
+checkpoint: complete G61 live failover
+```
+
+## Stage 4 (completed)
+
+直播与 EPG 闭环已完成：授权 M3U/TXT 导入、Live 浏览与播放、XMLTV、EPG
+四层匹配与 Timeline、Smart Channel、多线路、健康评分、有限自动故障转移
+以及本地 packaged first/restart E2E。外部 IPTV/Jellyfin 服务、DRM、真实
+第三方源能力和 Android DEX 不在本阶段承诺内。
+
 DEX-1 ~ DEX-5（实验支线）
 
 - DEX-1：Android Emulator 探针

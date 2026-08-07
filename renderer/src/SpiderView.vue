@@ -111,6 +111,11 @@ const emit = defineEmits<{
   smartSelect: [payload: { smartChannelId: string; memberId: string | null }];
   smartPlay: [payload: { smartChannelId: string; memberId?: string }];
   smartEpg: [payload: { smartChannelId: string; epgSourceId: string | null; epgChannelId: string | null }];
+  liveFailoverMode: [mode: "off" | "ask" | "auto"];
+  liveFailoverApprove: [];
+  liveFailoverCancel: [];
+  liveFailoverStay: [];
+  liveFailoverReturn: [];
   epgPreview: [input: Record<string, unknown>];
   epgApply: [previewId: string];
   epgRefresh: [sourceId: string];
@@ -413,6 +418,11 @@ function navigationFromPage(page: string): RendererNavigation {
             @smart-select="emit('smartSelect', $event)"
             @smart-play="emit('smartPlay', $event)"
             @smart-epg="emit('smartEpg', $event)"
+            @failover-mode="emit('liveFailoverMode', $event)"
+            @failover-approve="emit('liveFailoverApprove')"
+            @failover-cancel="emit('liveFailoverCancel')"
+            @failover-stay="emit('liveFailoverStay')"
+            @failover-return="emit('liveFailoverReturn')"
           />
         </template>
         <template v-else-if="view === 'settings'">

@@ -72,6 +72,87 @@ export interface SmartPlaybackUiState {
   channelName: string;
 }
 
+export type LiveFailoverMode = "off" | "ask" | "auto";
+export type LiveFailoverStatus = "idle" | "prompt" | "trying" | "recovered" | "cancelled" | "stopped" | "disabled";
+export type LiveFailoverTrigger =
+  | "startup-failure"
+  | "startup-timeout"
+  | "playlist-failures"
+  | "segment-errors"
+  | "fatal-error"
+  | "long-buffer"
+  | "backend-crash";
+
+export interface LiveHealthMetricUiState<T> {
+  value: T | null;
+  samples: number;
+}
+
+export interface LiveStreamHealthUiState {
+  streamId: string;
+  sourceId: string;
+  startupSuccess: LiveHealthMetricUiState<boolean>;
+  firstFrameMs: LiveHealthMetricUiState<number>;
+  playlistRefreshFailure: LiveHealthMetricUiState<number>;
+  segmentFailure: LiveHealthMetricUiState<number>;
+  bufferCount: LiveHealthMetricUiState<number>;
+  bufferDuration: LiveHealthMetricUiState<number>;
+  fatalError: LiveHealthMetricUiState<number>;
+  disconnectCount: LiveHealthMetricUiState<number>;
+  uptimeMs: LiveHealthMetricUiState<number>;
+  lastSuccessAt: number | null;
+  lastFailureAt: number | null;
+  consecutiveFailures: number;
+  score: number | null;
+  scoreReasons: readonly string[];
+  cooldownUntil: number | null;
+}
+
+export interface LiveFailoverCandidateUiState {
+  id: string;
+  channelId: string;
+  streamId: string;
+  sourceId: string;
+  sourceName: string;
+  channelName: string;
+  streamLabel: string;
+  memberId: string | null;
+  smartChannelId: string | null;
+  healthScore: number | null;
+}
+
+export interface LiveFailoverUiState {
+  mode: LiveFailoverMode;
+  status: LiveFailoverStatus;
+  trigger: LiveFailoverTrigger | null;
+  reason: string | null;
+  current: LiveFailoverCandidateUiState | null;
+  next: LiveFailoverCandidateUiState | null;
+  attempts: number;
+  maxAttempts: number;
+  tried: readonly string[];
+  startedAt: number | null;
+  deadlineAt: number | null;
+  cooldownUntil: number | null;
+  manualOverrideUntil: number | null;
+}
+
+export const EMPTY_LIVE_FAILOVER_UI_STATE: LiveFailoverUiState = {
+  mode: "ask",
+  status: "idle",
+  trigger: null,
+  reason: null,
+  current: null,
+  next: null,
+  attempts: 0,
+  maxAttempts: 3,
+  tried: [],
+  startedAt: null,
+  deadlineAt: null,
+  cooldownUntil: null,
+  manualOverrideUntil: null,
+};
+
 export const LIVE_SOURCE_TYPES = [
   "m3u-url",
   "m3u-file",
@@ -155,6 +236,8 @@ export interface LivePlaybackSessionUiState {
   sourceId: string;
   channelId: string;
   streamId: string;
+  smartChannelId: string | null;
+  smartMemberId: string | null;
   state: LivePlaybackSessionState;
   backend: LivePlaybackBackend;
   startedAt: number;
@@ -168,6 +251,7 @@ export interface LiveChannelStreamUiState {
   label: string;
   protocol: string;
   status: "ready" | "unsupported";
+  health?: LiveStreamHealthUiState | null;
 }
 
 export interface LiveChannelUiState {
@@ -183,7 +267,7 @@ export interface LiveChannelUiState {
   epgStatus: EpgMappingStatus;
   currentProgramme: EpgProgrammeUiState | null;
   nextProgramme: EpgProgrammeUiState | null;
-  health: null;
+  health: LiveStreamHealthUiState | null;
 }
 
 export interface LiveChannelGroupUiState {
@@ -263,6 +347,8 @@ export interface LiveUiState {
   smartChannels: readonly SmartChannelUiState[];
   smartSuggestions: readonly SmartChannelSuggestionUiState[];
   activeSmartChannel: SmartPlaybackUiState | null;
+  health: LiveStreamHealthUiState | null;
+  failover: LiveFailoverUiState;
 }
 
 export type LiveSourceImportInput =
@@ -318,4 +404,6 @@ export const EMPTY_LIVE_UI_STATE: LiveUiState = {
   smartChannels: [],
   smartSuggestions: [],
   activeSmartChannel: null,
+  health: null,
+  failover: EMPTY_LIVE_FAILOVER_UI_STATE,
 };

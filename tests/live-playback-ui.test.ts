@@ -84,6 +84,51 @@ describe("live playback UI API", () => {
     expect(disabled.live.catalog.channels).toHaveLength(0);
     expect(JSON.stringify(disabled.live.catalog)).not.toContain("__qx_playback");
   });
+
+  it("exposes finite failover mode and cancellation actions through the UI API", async () => {
+    const preview = await post(server.url, "/api/live/source/preview", {
+      name: "G61 API Fixture",
+      type: "m3u-url",
+      location: fixture.liveFailoverUrl,
+    });
+    const applied = await post(server.url, "/api/live/source/apply", { previewId: preview.live.preview.id });
+    const channel = applied.live.catalog.channels.find((candidate: any) => candidate.sourceName === "G61 API Fixture");
+    const firstLine = channel?.streams[0];
+    const secondLine = channel?.streams[1];
+    expect(firstLine).toBeTruthy();
+    expect(secondLine).toBeTruthy();
+
+    const ask = await post(server.url, "/api/live/failover/mode", { mode: "ask" });
+    expect(ask.live.failover.mode).toBe("ask");
+    const started = await post(server.url, "/api/live/play", { channelId: channel.id, streamId: firstLine.id });
+    const firstFrame = await post(server.url, "/api/live/sync", {
+      sessionId: started.live.session.sessionId,
+      event: { type: "first-frame" },
+      status: "playing",
+    });
+    await post(server.url, "/api/live/sync", {
+      sessionId: firstFrame.live.session.sessionId,
+      event: { type: "segment-failure", reason: "one" },
+    });
+    const prompt = await post(server.url, "/api/live/sync", {
+      sessionId: firstFrame.live.session.sessionId,
+      event: { type: "segment-failure", reason: "two" },
+    });
+    expect(prompt.live.failover.status).toBe("prompt");
+
+    const approved = await post(server.url, "/api/live/failover/approve", {});
+    expect(approved.live.session.streamId).toBe(secondLine.id);
+    const cancelled = await post(server.url, "/api/live/failover/cancel", {});
+    expect(cancelled.live.session.streamId).toBe(firstLine.id);
+    expect(cancelled.live.failover.status).toBe("cancelled");
+    const stayed = await post(server.url, "/api/live/failover/stay", {});
+    expect(stayed.live.failover.status).toBe("stopped");
+    const returned = await post(server.url, "/api/live/failover/return", {});
+    expect(returned.live.session.streamId).toBe(firstLine.id);
+    const off = await post(server.url, "/api/live/failover/mode", { mode: "off" });
+    expect(off.live.failover.mode).toBe("off");
+    expect(off.live.failover.status).toBe("disabled");
+  });
 });
 
 async function post(baseUrl: string, pathname: string, body: Record<string, unknown>): Promise<any> {

@@ -112,6 +112,7 @@ import {
   EMPTY_LIVE_UI_STATE,
   isLiveSourceType,
   type LivePlaybackBackend,
+  type LiveFailoverMode,
   type LiveSourceImportInput,
   type LiveSourceType,
 } from "../live/live-types.js";
@@ -1037,6 +1038,9 @@ export class DesktopSpiderUiController {
         if (tracker.shouldTriggerSegmentFailure()) {
           void this.triggerMediaFailure("segment-errors", event.reason ?? "连续分片错误");
         }
+        break;
+      case "playlist-refresh-failure":
+      case "disconnect":
         break;
       case "http-status":
         tracker.recordHttpStatus(event.status ?? 0, event.at);
@@ -2029,9 +2033,14 @@ export class DesktopSpiderUiServer {
       if (pathname === "/api/live/smart/play") {
         const playback = this.livePlayback;
         if (!playback) throw new LivePlaybackError("LIVE_SOURCE_UNAVAILABLE", "直播播放服务不可用。");
-        const selection = smart.play(stringValue(body.smartChannelId, ""), optionalString(body.memberId) ?? undefined);
+        const smartChannelId = stringValue(body.smartChannelId, "");
+        const selection = smart.play(smartChannelId, optionalString(body.memberId) ?? undefined);
         try {
-          await playback.selectChannel(selection.liveChannel.id, optionalString(body.streamId) ?? undefined);
+          await playback.selectChannel(selection.liveChannel.id, optionalString(body.streamId) ?? undefined, {
+            smartChannelId,
+            smartMemberId: selection.member.id,
+            failoverCandidates: smart.failoverCandidates(smartChannelId),
+          });
           this.epgMatching?.setTimeline(selection.liveChannel.id);
         } catch (error) {
           smart.stop();
@@ -2057,6 +2066,30 @@ export class DesktopSpiderUiServer {
     }
     const playback = this.livePlayback;
     if (!playback) throw new LivePlaybackError("LIVE_SOURCE_UNAVAILABLE", "直播播放服务不可用。");
+    if (pathname === "/api/live/failover/mode") {
+      const mode = body.mode;
+      if (mode !== "off" && mode !== "ask" && mode !== "auto") {
+        throw new LivePlaybackError("LIVE_FAILOVER_MODE_INVALID", "直播故障转移模式无效。");
+      }
+      playback.setFailoverMode(mode as LiveFailoverMode);
+      return;
+    }
+    if (pathname === "/api/live/failover/approve") {
+      await playback.approveFailover();
+      return;
+    }
+    if (pathname === "/api/live/failover/cancel") {
+      await playback.cancelFailover();
+      return;
+    }
+    if (pathname === "/api/live/failover/stay") {
+      await playback.stayOnCurrentLine();
+      return;
+    }
+    if (pathname === "/api/live/failover/return") {
+      await playback.returnToStable();
+      return;
+    }
     if (pathname === "/api/live/play") {
       const channelId = stringValue(body.channelId, "");
       await playback.selectChannel(channelId, optionalString(body.streamId) ?? undefined);
@@ -2074,7 +2107,7 @@ export class DesktopSpiderUiServer {
       return;
     }
     if (pathname === "/api/live/sync") {
-      playback.sync(optionalString(body.sessionId) ?? undefined, playerMediaSyncFromRequest(body), liveBackendFromRequest(body));
+      await playback.syncAndMaybeFailover(optionalString(body.sessionId) ?? undefined, playerMediaSyncFromRequest(body), liveBackendFromRequest(body));
       return;
     }
     throw new LiveSourceError("LIVE_ROUTE_NOT_FOUND", "直播源请求不存在。");
@@ -2869,6 +2902,8 @@ function isPlaybackMediaEventType(value: unknown): value is PlaybackMediaEvent["
     || value === "buffer-end"
     || value === "fatal-error"
     || value === "segment-failure"
+    || value === "playlist-refresh-failure"
+    || value === "disconnect"
     || value === "http-status"
     || value === "completion"
     || value === "user-pause"

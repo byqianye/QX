@@ -461,7 +461,24 @@ function cloneLiveUiState(value: LiveUiState): LiveUiState {
       groups: value.catalog.groups.map((group) => ({ ...group })),
       channels: value.catalog.channels.map((channel) => ({
         ...channel,
-        streams: channel.streams.map((stream) => ({ ...stream })),
+        streams: channel.streams.map((stream) => ({
+          ...stream,
+          health: stream.health
+            ? {
+                ...stream.health,
+                startupSuccess: { ...stream.health.startupSuccess },
+                firstFrameMs: { ...stream.health.firstFrameMs },
+                playlistRefreshFailure: { ...stream.health.playlistRefreshFailure },
+                segmentFailure: { ...stream.health.segmentFailure },
+                bufferCount: { ...stream.health.bufferCount },
+                bufferDuration: { ...stream.health.bufferDuration },
+                fatalError: { ...stream.health.fatalError },
+                disconnectCount: { ...stream.health.disconnectCount },
+                uptimeMs: { ...stream.health.uptimeMs },
+                scoreReasons: [...stream.health.scoreReasons],
+              }
+            : null,
+        })),
         currentProgramme: channel.currentProgramme ? { ...channel.currentProgramme } : null,
         nextProgramme: channel.nextProgramme ? { ...channel.nextProgramme } : null,
       })),
@@ -479,6 +496,27 @@ function cloneLiveUiState(value: LiveUiState): LiveUiState {
           error: value.player.error ? { ...value.player.error } : null,
         }
       : null,
+    health: value.health
+      ? {
+          ...value.health,
+          startupSuccess: { ...value.health.startupSuccess },
+          firstFrameMs: { ...value.health.firstFrameMs },
+          playlistRefreshFailure: { ...value.health.playlistRefreshFailure },
+          segmentFailure: { ...value.health.segmentFailure },
+          bufferCount: { ...value.health.bufferCount },
+          bufferDuration: { ...value.health.bufferDuration },
+          fatalError: { ...value.health.fatalError },
+          disconnectCount: { ...value.health.disconnectCount },
+          uptimeMs: { ...value.health.uptimeMs },
+          scoreReasons: [...value.health.scoreReasons],
+        }
+      : null,
+    failover: {
+      ...value.failover,
+      tried: [...value.failover.tried],
+      current: value.failover.current ? { ...value.failover.current } : null,
+      next: value.failover.next ? { ...value.failover.next } : null,
+    },
     epg: {
       sources: value.epg.sources.map((source) => ({ ...source })),
       preview: value.epg.preview

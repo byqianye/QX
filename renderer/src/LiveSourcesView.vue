@@ -36,6 +36,11 @@ const emit = defineEmits<{
   smartSelect: [payload: { smartChannelId: string; memberId: string | null }];
   smartPlay: [payload: { smartChannelId: string; memberId?: string }];
   smartEpg: [payload: { smartChannelId: string; epgSourceId: string | null; epgChannelId: string | null }];
+  failoverMode: [mode: "off" | "ask" | "auto"];
+  failoverApprove: [];
+  failoverCancel: [];
+  failoverStay: [];
+  failoverReturn: [];
 }>();
 
 const name = ref("我的直播源");
@@ -53,6 +58,7 @@ const smartName = ref("");
 const smartGroup = ref("");
 const selectedSmartMemberIds = ref<string[]>([]);
 const renameValues = ref<Record<string, string>>({});
+const liveDebugOpen = ref(true);
 
 const filteredChannels = computed(() => {
   if (selectedGroupId.value === "__all__") return props.state.catalog.channels;
@@ -220,6 +226,16 @@ function preview(): void {
 function formatTime(value: number | null): string {
   if (!value) return "未刷新";
   return new Date(value).toLocaleString();
+}
+
+function metric(value: { value: number | boolean | null; samples: number }, suffix = ""): string {
+  if (value.samples === 0 || value.value === null) return "unknown";
+  return `${String(value.value)}${suffix}`;
+}
+
+function failoverCandidateLabel(candidate: LiveUiState["failover"]["current"]): string {
+  if (!candidate) return "未知线路";
+  return `${candidate.sourceName} · ${candidate.channelName} · ${candidate.streamLabel}`;
 }
 
 function playChannel(channelId: string, streamId?: string): void {
@@ -456,6 +472,53 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleChannelKeydown
           <p v-if="props.state.session?.error" class="error-message" data-testid="live-playback-error">
             {{ props.state.session.error.code }}：{{ props.state.session.error.message }}
           </p>
+          <section class="live-failover-panel" data-testid="live-failover-panel">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">播放健康</span>
+                <h3>可解释故障转移</h3>
+              </div>
+              <label class="live-failover-mode">模式
+                <select
+                  data-action="live-failover-mode"
+                  :value="props.state.failover.mode"
+                  @change="emit('failoverMode', ($event.target as HTMLSelectElement).value as 'off' | 'ask' | 'auto')"
+                >
+                  <option value="off">关闭</option>
+                  <option value="ask">询问</option>
+                  <option value="auto">自动</option>
+                </select>
+              </label>
+            </div>
+            <p class="meta" data-testid="live-health-summary">
+              评分 {{ props.state.health?.score ?? "unknown" }} · 首帧 {{ props.state.health ? metric(props.state.health.firstFrameMs, "ms") : "unknown" }} · 播放列表失败 {{ props.state.health ? metric(props.state.health.playlistRefreshFailure, " 次") : "unknown" }} · 分片失败 {{ props.state.health ? metric(props.state.health.segmentFailure, " 次") : "unknown" }} · 缓冲 {{ props.state.health ? metric(props.state.health.bufferCount, " 次") : "unknown" }}
+            </p>
+            <div v-if="props.state.failover.status !== 'idle' && props.state.failover.status !== 'disabled' && props.state.failover.status !== 'recovered'" class="live-failover-notice" data-testid="live-failover-prompt">
+              <strong>{{ props.state.failover.status === 'prompt' ? '当前线路异常，需要确认' : '正在处理线路故障' }}</strong>
+              <span>{{ props.state.failover.reason || props.state.failover.trigger || "直播播放异常" }}</span>
+              <span v-if="props.state.failover.next">下一候选：{{ failoverCandidateLabel(props.state.failover.next) }}</span>
+              <div class="button-row">
+                <button v-if="props.state.failover.status === 'prompt'" type="button" class="button-primary" data-action="live-failover-approve" @click="emit('failoverApprove')">尝试下一条</button>
+                <button v-if="props.state.failover.status === 'prompt' || props.state.failover.status === 'trying'" type="button" class="button-secondary" data-action="live-failover-cancel" @click="emit('failoverCancel')">取消</button>
+                <button v-if="props.state.failover.status === 'prompt' || props.state.failover.status === 'trying'" type="button" class="button-secondary" data-action="live-failover-stay" @click="emit('failoverStay')">保持当前</button>
+                <button v-if="props.state.failover.status === 'prompt'" type="button" class="text-button" data-action="live-failover-return" @click="emit('failoverReturn')">返回稳定线路</button>
+                <button type="button" class="text-button" data-action="live-failover-debug" @click="liveDebugOpen = !liveDebugOpen">查看详情</button>
+              </div>
+            </div>
+            <div v-if="liveDebugOpen" class="live-debug-panel" data-testid="live-debug-panel">
+              <p>Live Session：{{ props.state.session?.sessionId ?? "none" }}</p>
+              <p>Channel：{{ selectedChannel?.name ?? "none" }}</p>
+              <p>Smart Channel：{{ props.state.session?.smartChannelId ?? "none" }}</p>
+              <p>Member：{{ props.state.session?.smartMemberId ?? "none" }}</p>
+              <p>Stream：{{ props.state.session?.streamId ?? "none" }}</p>
+              <p>Health Score：{{ props.state.health?.score ?? "unknown" }}</p>
+              <p>Failure：{{ props.state.failover.reason ?? "none" }}</p>
+              <p>Failover attempts：{{ props.state.failover.attempts }} / {{ props.state.failover.maxAttempts }}</p>
+              <p>Cooldown：{{ props.state.health?.cooldownUntil ?? "none" }}</p>
+              <p>Manual override：{{ props.state.failover.manualOverrideUntil ?? "none" }}</p>
+              <p v-if="props.state.health?.scoreReasons.length" class="meta">原因：{{ props.state.health.scoreReasons.join("；") }}</p>
+            </div>
+          </section>
           <div v-if="selectedChannel && selectedChannel.streams.length > 0" class="live-line-row" data-testid="live-line-selector">
             <span class="meta">线路</span>
             <button

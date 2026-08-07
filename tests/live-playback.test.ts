@@ -2,9 +2,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { LiveRepository } from "../src/data/repositories.js";
+import { HealthRepository, LiveRepository } from "../src/data/repositories.js";
 import { SqliteDataLayer } from "../src/data/sqlite.js";
 import { PlaybackProxyServer } from "../src/desktop/playback-proxy.js";
 import { createMediaFixtureServer, type MediaFixtureServer } from "../src/electron/media-fixture.js";
@@ -123,6 +123,132 @@ describe("live playback session", () => {
       error: { code: "LIVE_STREAM_TIMEOUT" },
     });
     await service.close();
+  });
+
+  it("switches after repeated segment failures, but not after one segment failure", async () => {
+    const { repository } = createRepository();
+    seedFixture(repository, fixture.baseUrl);
+    const service = new LivePlaybackService({ repository, failoverMode: "auto", now: () => 5_000 });
+    const started = await service.selectChannel("channel-e", "channel-e-line-1");
+    service.sync(started.sessionId, { status: "playing", event: { type: "first-frame", at: 5_100 } });
+    service.sync(started.sessionId, { event: { type: "segment-failure", reason: "one" } });
+    expect(service.uiState(EMPTY_LIVE_UI_STATE).session?.streamId).toBe("channel-e-line-1");
+    await service.syncAndMaybeFailover(started.sessionId, { event: { type: "segment-failure", reason: "two" } });
+    expect(service.uiState(EMPTY_LIVE_UI_STATE).session).toMatchObject({ streamId: "channel-e-line-2", state: "loading" });
+    const replacement = service.uiState(EMPTY_LIVE_UI_STATE).session!;
+    service.sync(replacement.sessionId, { status: "playing", event: { type: "first-frame" } });
+    expect(service.uiState(EMPTY_LIVE_UI_STATE).failover.status).toBe("recovered");
+    await service.close();
+  });
+
+  it("switches after continuous long buffering, but not after a short buffer", async () => {
+    vi.useFakeTimers();
+    try {
+      const { repository } = createRepository();
+      seedFixture(repository, fixture.baseUrl);
+      const service = new LivePlaybackService({ repository, failoverMode: "auto", now: () => 5_000 });
+      const started = await service.selectChannel("channel-e", "channel-e-line-1");
+      service.sync(started.sessionId, { status: "playing", event: { type: "first-frame" } });
+      service.sync(started.sessionId, { status: "playing", event: { type: "buffer-start" } });
+      await vi.advanceTimersByTimeAsync(7_999);
+      expect(service.uiState(EMPTY_LIVE_UI_STATE).session?.streamId).toBe("channel-e-line-1");
+      service.sync(started.sessionId, { event: { type: "buffer-end", at: 12_000 } });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(service.uiState(EMPTY_LIVE_UI_STATE).session?.streamId).toBe("channel-e-line-1");
+
+      service.sync(started.sessionId, { status: "playing", event: { type: "buffer-start" } });
+      await vi.advanceTimersByTimeAsync(8_000);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(service.uiState(EMPTY_LIVE_UI_STATE).session?.streamId).toBe("channel-e-line-2");
+      await service.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("switches after repeated playlist failures and records backend disconnect", async () => {
+    const { repository } = createRepository();
+    seedFixture(repository, fixture.baseUrl);
+    const service = new LivePlaybackService({ repository, failoverMode: "auto", now: () => 5_000 });
+    const started = await service.selectChannel("channel-e", "channel-e-line-1");
+    service.sync(started.sessionId, { status: "playing", event: { type: "first-frame" } });
+    service.sync(started.sessionId, { event: { type: "playlist-refresh-failure", reason: "first refresh" } });
+    expect(service.uiState(EMPTY_LIVE_UI_STATE).session?.streamId).toBe("channel-e-line-1");
+    await service.syncAndMaybeFailover(started.sessionId, { event: { type: "playlist-refresh-failure", reason: "second refresh" } });
+    const replacement = service.uiState(EMPTY_LIVE_UI_STATE).session!;
+    expect(replacement.streamId).toBe("channel-e-line-2");
+    service.sync(replacement.sessionId, { status: "playing", event: { type: "first-frame" } });
+    await service.syncAndMaybeFailover(replacement.sessionId, { event: { type: "disconnect", reason: "fixture backend stopped" } });
+    expect(service.uiState(EMPTY_LIVE_UI_STATE).failover).toMatchObject({
+      status: "stopped",
+      trigger: "backend-crash",
+    });
+    await service.close();
+  });
+
+  it("prompts in Ask mode and supports cancel/stay without looping", async () => {
+    const { repository } = createRepository();
+    seedFixture(repository, fixture.baseUrl);
+    const service = new LivePlaybackService({ repository, failoverMode: "ask", now: () => 6_000 });
+    const started = await service.selectChannel("channel-e", "channel-e-line-1");
+    service.sync(started.sessionId, { status: "playing", event: { type: "first-frame" } });
+    service.sync(started.sessionId, { event: { type: "segment-failure", reason: "one" } });
+    await service.syncAndMaybeFailover(started.sessionId, { event: { type: "segment-failure", reason: "two" } });
+    expect(service.uiState(EMPTY_LIVE_UI_STATE).failover).toMatchObject({ status: "prompt", attempts: 0 });
+    expect(service.uiState(EMPTY_LIVE_UI_STATE).failover.next?.streamId).toBe("channel-e-line-2");
+    service.stayOnCurrentLine();
+    expect(service.uiState(EMPTY_LIVE_UI_STATE).failover.status).toBe("stopped");
+    await service.close();
+  });
+
+  it("does not immediately return to a manually rejected line, then retries it after override expiry", async () => {
+    let now = 10_000;
+    const { repository } = createRepository();
+    seedFixture(repository, fixture.baseUrl);
+    const service = new LivePlaybackService({
+      repository,
+      failoverMode: "auto",
+      manualOverrideMs: 1_000,
+      now: () => now,
+    });
+    const first = await service.selectChannel("channel-e", "channel-e-line-1");
+    service.sync(first.sessionId, { status: "playing", event: { type: "first-frame", at: now } });
+
+    now = 10_100;
+    await service.selectLine("channel-e-line-2");
+    const replacement = service.uiState(EMPTY_LIVE_UI_STATE).session!;
+    service.sync(replacement.sessionId, { status: "playing", event: { type: "first-frame", at: now } });
+    service.sync(replacement.sessionId, { event: { type: "segment-failure", reason: "one" } });
+    await service.syncAndMaybeFailover(replacement.sessionId, { event: { type: "segment-failure", reason: "two" } });
+    expect(service.uiState(EMPTY_LIVE_UI_STATE).session?.streamId).toBe("channel-e-line-2");
+    expect(service.uiState(EMPTY_LIVE_UI_STATE).failover.status).toBe("stopped");
+
+    now = 11_200;
+    service.sync(replacement.sessionId, { event: { type: "segment-failure", reason: "three" } });
+    await service.syncAndMaybeFailover(replacement.sessionId, { event: { type: "segment-failure", reason: "four" } });
+    expect(service.uiState(EMPTY_LIVE_UI_STATE).session?.streamId).toBe("channel-e-line-1");
+    await service.close();
+  });
+
+  it("persists a debounced health summary and hydrates it after restart", async () => {
+    const { repository, layer } = createRepository();
+    seedFixture(repository, fixture.baseUrl);
+    const health = new HealthRepository(layer);
+    const first = new LivePlaybackService({ repository, healthStore: health, now: () => 7_000 });
+    const session = await first.selectChannel("channel-a");
+    first.sync(session.sessionId, { status: "playing", event: { type: "first-frame", at: 7_120 } });
+    await first.close();
+
+    const restarted = new LivePlaybackService({ repository, healthStore: health, now: () => 8_000 });
+    const hydrated = await restarted.selectChannel("channel-a");
+    expect(restarted.uiState(EMPTY_LIVE_UI_STATE).health).toMatchObject({
+      streamId: "channel-a",
+      firstFrameMs: { value: 120 },
+      score: expect.any(Number),
+    });
+    await restarted.close();
+    expect(hydrated.streamId).toBe("channel-a");
   });
 });
 

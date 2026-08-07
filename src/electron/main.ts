@@ -66,6 +66,7 @@ import { PushService, PushServiceError } from "../push/push-service.js";
 import type { PushRequest } from "../push/push-types.js";
 import { CastMediaBridge } from "../cast/cast-media-bridge.js";
 import { CastService, UdpSsdpTransport } from "../cast/cast-service.js";
+import { WebControlService } from "../web-control/web-control-service.js";
 import {
   IsolatedSniffer,
   type IsolatedSnifferPlatform,
@@ -95,6 +96,7 @@ const LIVE_FAILOVER_MAX_ATTEMPTS = numberEnvironment("QX_LIVE_FAILOVER_MAX_ATTEM
 const LIVE_FAILOVER_TIMEOUT_MS = numberEnvironment("QX_LIVE_FAILOVER_TIMEOUT_MS", 30_000);
 const LIVE_FAILOVER_COOLDOWN_MS = numberEnvironment("QX_LIVE_FAILOVER_COOLDOWN_MS", 15_000);
 const ISOLATED_SNIFFER_ENABLED = process.env.QX_SNIFF_ENABLED === "1";
+const WEB_CONTROL_PORT = webControlPortEnvironment();
 
 if (process.env.QX_E2E_USER_DATA) {
   mkdirSync(process.env.QX_E2E_USER_DATA, { recursive: true });
@@ -128,6 +130,7 @@ let localMediaService: LocalMediaService | undefined;
 let downloadService: DownloadService | undefined;
 let pushService: PushService | undefined;
 let castService: CastService | undefined;
+let webControlService: WebControlService | undefined;
 let dataStorageService: DataStorageService | undefined;
 let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -434,6 +437,19 @@ function createShell(): DesktopShellRuntime {
   });
 }
 
+async function ensureWebControl(): Promise<void> {
+  if (!uiServer) throw new Error("Web control backend is unavailable before the desktop server starts");
+  if (!webControlService) {
+    webControlService = new WebControlService({
+      backend: uiServer.webControlBackend(),
+      port: WEB_CONTROL_PORT,
+    });
+  } else {
+    webControlService.setBackend(uiServer.webControlBackend());
+  }
+  await webControlService.start();
+}
+
 function createElectronSnifferPlatform(): IsolatedSnifferPlatform {
   return {
     createSession: (policy) => createElectronSnifferSession(policy),
@@ -671,6 +687,7 @@ async function closeShell(closeData = false): Promise<void> {
 }
 
 async function closeDataLayer(): Promise<void> {
+  await webControlService?.close().catch(() => undefined);
   await castService?.close().catch(() => undefined);
   await pushService?.close().catch(() => undefined);
   await downloadService?.close().catch(() => undefined);
@@ -693,6 +710,7 @@ async function closeDataLayer(): Promise<void> {
   downloadService = undefined;
   pushService = undefined;
   castService = undefined;
+  webControlService = undefined;
   dataStorageService = undefined;
   const current = dataLayer;
   dataLayer = undefined;
@@ -846,18 +864,32 @@ async function createMainWindow(): Promise<void> {
     void closeShell();
   });
   mainWindow.webContents.once("did-finish-load", () => {
-    if (E2E_MODE) {
-      if (process.env.QX_E2E_SCENARIO === "network-timeout") {
-        void runNetworkTimeoutE2e(uiUrl);
-      } else {
-        void runE2e(uiUrl);
+    void (async () => {
+      try {
+        await ensureWebControl();
+      } catch (error) {
+        if (E2E_MODE) {
+          writeE2eResult({ status: "blocked", reason: "WEB_CONTROL_START_ERROR", message: errorMessage(error) });
+        } else {
+          dialog.showErrorBox(APP_NAME, errorMessage(error));
+        }
+        await closeShell(true);
+        app.quit();
+        return;
       }
-      return;
-    }
-    if (SMOKE_MODE) {
-      console.log("electron-smoke: ready");
-      void closeShell().finally(() => app.quit());
-    }
+      if (E2E_MODE) {
+        if (process.env.QX_E2E_SCENARIO === "network-timeout") {
+          void runNetworkTimeoutE2e(uiUrl);
+        } else {
+          void runE2e(uiUrl);
+        }
+        return;
+      }
+      if (SMOKE_MODE) {
+        console.log("electron-smoke: ready");
+        void closeShell().finally(() => app.quit());
+      }
+    })();
   });
 
   try {
@@ -945,6 +977,7 @@ async function runE2e(baseUrl: string): Promise<void> {
         if (!startedAgain || startedAgain.status !== "running" || !startedAgain.url) {
           throw new Error("Repeated Electron shell start did not return a running URL");
         }
+        await ensureWebControl();
         return { url: startedAgain.url };
       },
       closeWindow: async () => {
@@ -1030,6 +1063,10 @@ async function runE2e(baseUrl: string): Promise<void> {
       verifyPush: Boolean(process.env.QX_E2E_PUSH_URL),
       ...(process.env.QX_E2E_PUSH_URL ? { pushUrl: process.env.QX_E2E_PUSH_URL } : {}),
       verifyCast: Boolean(process.env.QX_E2E_CAST_SSDP_PORT),
+      verifyWebControl: process.env.QX_E2E_WEB_CONTROL === "1",
+      ...(process.env.QX_E2E_WEB_CONTROL === "1" && webControlService?.url
+        ? { webControlUrl: webControlService.url }
+        : {}),
       ...(process.env.QX_E2E_HLS_MASTER_URL ? { hlsMasterUrl: process.env.QX_E2E_HLS_MASTER_URL } : {}),
       ...(process.env.QX_E2E_HLS_CHILD_URL ? { hlsChildUrl: process.env.QX_E2E_HLS_CHILD_URL } : {}),
       verifySniffer: ISOLATED_SNIFFER_ENABLED,
@@ -1146,6 +1183,11 @@ function writeE2eResult(result: PackagedE2eResult | Record<string, unknown>): vo
 function numberEnvironment(name: string, fallback: number): number {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function webControlPortEnvironment(): number {
+  const value = Number(process.env.QX_WEB_CONTROL_PORT);
+  return Number.isInteger(value) && value >= 0 && value <= 65_535 ? value : 0;
 }
 
 function listEnvironment(name: string): string[] {

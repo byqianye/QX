@@ -1447,6 +1447,104 @@ npm run electron:e2e:package
 checkpoint: complete G65 push playback
 ```
 
+## G66 (completed)
+
+### Goal
+
+Add bounded DLNA/UPnP MediaRenderer discovery and casting through the existing
+playback boundary, with a session-only media bridge, capability-aware SOAP
+actions, device-loss handling, and packaged first/restart E2E.
+
+### Status
+
+Completed. G66 keeps SSDP user-triggered, validates local device descriptions,
+uses an explicit SOAP allowlist, and redacts device locations and private media
+headers from renderer-visible state.
+
+### Dependency
+
+- G65 checkpoint `2952827`: `checkpoint: complete G65 push playback`
+
+### Scope and acceptance
+
+- Discovery, description/SCPD validation, SetAVTransportURI/Play/Pause/Stop and
+  capability-gated Seek/position/transport operations are covered.
+- Headered, local, and subtitle media use the temporary `CastMediaBridge`; it
+  is bounded, session-only, and revoked on close/device loss.
+- Cast UI states, shutdown cleanup, renderer tests, Electron package, and
+  packaged first/restart E2E pass.
+
+### Documentation
+
+- `docs/spike-66-dlna-cast.md`
+- `docs/design/open-design/stage-5/cast-spec.md`
+
+### Checkpoint
+
+```text
+checkpoint: complete G66 DLNA cast
+```
+
+## G67 (completed)
+
+### Goal
+
+Add a localhost-only lightweight Web control console with an explicit
+`WebControlService`/`WebControlBackend` boundary, safe playback/live/download/
+cast/Push APIs, responsive local UI, CSRF/CORS policy, bounded WebSocket state,
+and packaged first/restart E2E.
+
+### Status
+
+Completed. G67 listens only on `127.0.0.1` with a random or configured port.
+The web surface exposes allowlisted opaque identifiers and safe projections;
+arbitrary SQL, file paths, commands, Spider execution, trust policy changes,
+raw process/SQLite access, secrets, and diagnostic stacks are not available.
+
+### Dependency
+
+- G66 checkpoint `f01c447`: `checkpoint: complete G66 DLNA cast`
+
+### Scope and acceptance
+
+- The 16-route contract covers now-playing, play/pause/stop/seek/volume,
+  search/detail/play-episode, live channels, Push, downloads, cast devices/
+  cast, and safe-status.
+- State-changing requests require same-origin `Origin` and CSRF; no wildcard
+  CORS is emitted. JSON/body/schema/rate limits and safe error mapping are
+  covered.
+- WebSocket state snapshots include playback, live, downloads, cast and safe
+  status, with max connections, max message size, idle timeout, and shutdown
+  cleanup.
+- Local HTML/CSS/JavaScript provides Now Playing, Search, Live, Downloads,
+  Cast, and safe-status views under a strict CSP; no CDN or full renderer copy.
+- Electron lifecycle updates the backend across shell restarts and packaged
+  first/restart E2E checks the web listener, safe status, search, CSRF, and
+  restart continuity.
+
+### Verification commands
+
+```powershell
+git diff --check
+npm run typecheck
+npm test -- --maxWorkers=1 --minWorkers=1 --reporter=dot
+npm run renderer:build
+npm run electron:build
+npm run electron:package:win
+npm run electron:e2e:package
+```
+
+### Documentation
+
+- `docs/spike-67-web-console.md`
+- `docs/design/open-design/stage-5/web-console-spec.md`
+
+### Checkpoint
+
+```text
+checkpoint: complete G67 web console
+```
+
 ## Stage 4 (completed)
 
 直播与 EPG 闭环已完成：授权 M3U/TXT 导入、Live 浏览与播放、XMLTV、EPG

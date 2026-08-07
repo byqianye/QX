@@ -50,6 +50,8 @@ export interface PackagedE2eOptions {
   verifyPush?: boolean;
   pushUrl?: string;
   verifyCast?: boolean;
+  verifyWebControl?: boolean;
+  webControlUrl?: string;
   fakeMpv?: () => Promise<boolean>;
   verifySniffer?: boolean;
   sniff?: () => Promise<SniffedMedia>;
@@ -93,6 +95,8 @@ export interface PackagedE2eChecks {
   pushRestart?: boolean;
   cast?: boolean;
   castRestart?: boolean;
+  webControl?: boolean;
+  webControlRestart?: boolean;
   hlsTopology?: boolean;
   aggregateSearch?: boolean;
   proxyCleanup?: boolean;
@@ -644,6 +648,10 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
     }
     const detail = await post(options.baseUrl, "/api/detail", { vodId: searchVodId });
     detailVodId = stringField(detail.state?.detail?.vod_id);
+    if (options.verifyWebControl) {
+      if (!options.webControlUrl) throw new Error("Packaged Web control E2E URL is not configured");
+      checks.webControl = await verifyWebControlEndpoint(options.webControlUrl);
+    }
     const doubanPlayback = await post(options.baseUrl, "/api/player", {
       flag: "default",
       id: searchVodId,
@@ -1180,6 +1188,9 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
     if (options.startAgain) {
       const startedAgain = await options.startAgain();
       checks.repeatedStart = startedAgain.url === options.baseUrl;
+      if (options.verifyWebControl && options.webControlUrl) {
+        checks.webControlRestart = await verifyWebControlEndpoint(options.webControlUrl);
+      }
     } else {
       checks.repeatedStart = false;
     }
@@ -1226,6 +1237,49 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       error: errorMessage(error),
     };
   }
+}
+
+async function verifyWebControlEndpoint(baseUrl: string): Promise<boolean> {
+  const origin = new URL(baseUrl).origin;
+  const root = await fetch(new URL("/", baseUrl));
+  const html = await root.text();
+  const token = /<meta name="qx-csrf-token" content="([^"]+)"/u.exec(html)?.[1];
+  const csp = root.headers.get("content-security-policy") ?? "";
+  const safe = await fetch(new URL("/api/safe-status", baseUrl), {
+    headers: { Origin: origin },
+  });
+  const safeValue: unknown = await safe.json();
+  const search = await fetch(new URL("/api/search?q=fixture", baseUrl), {
+    headers: { Origin: origin },
+  });
+  const searchValue: unknown = await search.json();
+  const rejected = await fetch(new URL("/api/volume", baseUrl), {
+    method: "POST",
+    headers: { Origin: origin, "content-type": "application/json" },
+    body: JSON.stringify({ volume: 0.5 }),
+  });
+  const accepted = token
+    ? await fetch(new URL("/api/volume", baseUrl), {
+        method: "POST",
+        headers: { Origin: origin, "content-type": "application/json", "x-csrf-token": token },
+        body: JSON.stringify({ volume: 0.5 }),
+      })
+    : null;
+  const safeStatus = isRecord(safeValue) && isRecord(safeValue.status) ? safeValue.status : null;
+  const searchResult = isRecord(searchValue) && isRecord(searchValue.search) ? searchValue.search : null;
+  return root.ok
+    && html.includes("/app.js")
+    && csp.includes("default-src 'self'")
+    && root.headers.get("access-control-allow-origin") !== "*"
+    && token !== undefined
+    && safe.ok
+    && safeStatus?.host === "127.0.0.1"
+    && safeStatus?.port === Number(new URL(baseUrl).port)
+    && search.ok
+    && Array.isArray(searchResult?.items)
+    && rejected.status === 403
+    && accepted?.ok === true
+    && !JSON.stringify({ safeValue, searchValue }).includes("stack");
 }
 
 async function page(baseUrl: string): Promise<string> {

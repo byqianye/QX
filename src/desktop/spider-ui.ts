@@ -120,10 +120,23 @@ import { EMPTY_LOCAL_MEDIA_UI_STATE, type LocalMediaUiState } from "../local-med
 import { DownloadError } from "../downloads/download-backend.js";
 import { DownloadService, DownloadServiceError } from "../downloads/download-service.js";
 import { EMPTY_DOWNLOAD_UI_STATE, type DownloadUiState } from "../downloads/download-types.js";
-import { PushService, PushServiceError } from "../push/push-service.js";
+import { PushService, PushServiceError, type PushSubmissionResult } from "../push/push-service.js";
 import type { PushPlaybackSessionSnapshot, PushRequest, PushSourceReference, PushUrlRequest } from "../push/push-types.js";
 import { CastService, CastServiceError } from "../cast/cast-service.js";
 import type { CastMediaSource } from "../cast/cast-types.js";
+import type { CastUiState } from "../cast/cast-types.js";
+import type {
+  WebControlBackend,
+  WebControlBackendStatus,
+  WebControlCastState,
+  WebControlDetail,
+  WebControlDownloads,
+  WebControlLiveState,
+  WebControlNowPlaying,
+  WebControlPushResult,
+  WebControlSearchResult,
+  WebControlSnapshot,
+} from "../web-control/web-control-types.js";
 import {
   EMPTY_LIVE_UI_STATE,
   isLiveSourceType,
@@ -131,6 +144,7 @@ import {
   type LiveFailoverMode,
   type LiveSourceImportInput,
   type LiveSourceType,
+  type LiveUiState,
 } from "../live/live-types.js";
 
 const require = createRequire(import.meta.url);
@@ -1685,6 +1699,165 @@ export class DesktopSpiderUiServer {
     return this.activeUi()?.attachPlayer() ?? null;
   }
 
+  /**
+   * The Web control surface is deliberately an allowlisted adapter. It does
+   * not expose the renderer state object or route arbitrary HTTP requests into
+   * the desktop UI server.
+   */
+  public webControlBackend(): WebControlBackend {
+    return {
+      snapshot: () => this.webControlSnapshot(),
+      play: async ({ flag, id, vipFlags }) => {
+        const ui = this.playbackUi() ?? this.activeUi();
+        if (!ui) throw webControlUnavailable("WEB_UI_UNAVAILABLE");
+        await ui.player(flag, id, [...vipFlags]);
+      },
+      pause: async () => {
+        const live = this.liveUiState();
+        if (live.session && live.session.state !== "stopped" && this.livePlayback) {
+          this.livePlayback.sync(live.session.sessionId, { status: "paused" });
+          return;
+        }
+        const ui = this.playbackUi() ?? this.activeUi();
+        if (!ui) throw webControlUnavailable("WEB_PLAYBACK_UNAVAILABLE");
+        await ui.syncPlayerStateAsync({ status: "paused" });
+      },
+      stop: async () => {
+        await this.livePlayback?.stop();
+        const ui = this.playbackUi() ?? this.activeUi();
+        if (ui) await ui.stopPlayer();
+      },
+      seek: async (position) => {
+        const live = this.liveUiState();
+        if (live.session && live.session.state !== "stopped" && this.livePlayback) {
+          this.livePlayback.sync(live.session.sessionId, { currentTime: position });
+          return;
+        }
+        const ui = this.playbackUi() ?? this.activeUi();
+        if (!ui) throw webControlUnavailable("WEB_PLAYBACK_UNAVAILABLE");
+        await ui.syncPlayerStateAsync({ currentTime: position });
+      },
+      volume: async (volume, muted) => {
+        const live = this.liveUiState();
+        if (live.session && live.session.state !== "stopped" && this.livePlayback) {
+          this.livePlayback.sync(live.session.sessionId, {
+            volume,
+            ...(muted === undefined ? {} : { muted }),
+          });
+          return;
+        }
+        const ui = this.playbackUi() ?? this.activeUi();
+        if (!ui) throw webControlUnavailable("WEB_PLAYBACK_UNAVAILABLE");
+        await ui.syncPlayerStateAsync({
+          volume,
+          ...(muted === undefined ? {} : { muted }),
+        });
+      },
+      search: async (query) => {
+        const ui = this.activeUi();
+        if (!ui) throw webControlUnavailable("WEB_SEARCH_UNAVAILABLE");
+        return toWebSearchResult(query, (await ui.search(query)).items);
+      },
+      detail: async (id) => {
+        const ui = this.activeUi();
+        if (!ui) throw webControlUnavailable("WEB_DETAIL_UNAVAILABLE");
+        const state = await ui.detail(id);
+        return toWebDetail(id, state.detail, state.playbackCatalog);
+      },
+      playEpisode: async ({ lineIndex, episodeIndex, vipFlags }) => {
+        const ui = this.activeUi();
+        if (!ui) throw webControlUnavailable("WEB_PLAYBACK_UNAVAILABLE");
+        await ui.playEpisode(lineIndex, episodeIndex, [...vipFlags]);
+      },
+      liveChannels: () => toWebLiveState(this.liveUiState()),
+      playLive: async ({ channelId, streamId }) => {
+        if (!this.livePlayback) throw webControlUnavailable("WEB_LIVE_UNAVAILABLE");
+        await this.livePlayback.selectChannel(channelId, streamId);
+      },
+      push: async ({ url, title }) => {
+        if (!this.pushService) throw webControlUnavailable("WEB_PUSH_UNAVAILABLE");
+        const result = await this.pushService.submit({
+          type: "url",
+          url,
+          requestedBy: "user",
+          ...(title === undefined ? {} : { title }),
+        });
+        return toWebPushResult(result);
+      },
+      downloads: () => toWebDownloads(this.downloadService?.uiState()),
+      castDevices: () => toWebCastState(this.castService?.uiState()),
+      cast: async (deviceId) => {
+        if (!this.castService) throw webControlUnavailable("WEB_CAST_UNAVAILABLE");
+        const live = this.liveUiState();
+        const livePlayer = live.player;
+        const ui = this.playbackUi() ?? this.activeUi();
+        const liveActive = live.session && live.session.state !== "stopped" && livePlayer?.source ? livePlayer : null;
+        const player = liveActive ?? ui?.state.player;
+        const source = player?.source;
+        if (!source) throw webControlUnavailable("WEB_CAST_NO_MEDIA");
+        const title = liveActive && live.session
+          ? live.session.channelId
+          : ui?.state.playbackSession?.media.title ?? "QX 影视媒体";
+        const media: CastMediaSource = {
+          url: source.url,
+          title,
+          headers: { ...source.headers },
+          ...(source.url.includes(".m3u8") ? { contentType: "application/vnd.apple.mpegurl" } : {}),
+        };
+        await this.castService.cast({ deviceId, media });
+      },
+      safeStatus: () => this.webControlStatus(),
+    };
+  }
+
+  private webControlSnapshot(): WebControlSnapshot {
+    return {
+      nowPlaying: this.webControlNowPlaying(),
+      search: { query: "", items: [] },
+      live: toWebLiveState(this.liveUiState()),
+      downloads: toWebDownloads(this.downloadService?.uiState()),
+      cast: toWebCastState(this.castService?.uiState()),
+      status: this.webControlStatus(),
+    };
+  }
+
+  private webControlNowPlaying(): WebControlNowPlaying {
+    const live = this.liveUiState();
+    if (live.session && live.session.state !== "stopped" && live.player?.source) {
+      return toWebNowPlaying(
+        live.player,
+        live.session.channelId,
+        null,
+        true,
+        live.session.state,
+      );
+    }
+    const ui = this.playbackUi() ?? this.activeUi();
+    return toWebNowPlaying(
+      ui?.state.player ?? null,
+      ui?.state.playbackSession?.media.title ?? null,
+      ui?.state.playbackSession?.episodeName ?? null,
+      false,
+    );
+  }
+
+  private webControlStatus(): WebControlBackendStatus {
+    const ui = this.activeUi();
+    const live = this.liveUiState();
+    return {
+      uiReady: Boolean(ui),
+      capabilities: {
+        search: Boolean(ui),
+        playback: Boolean(ui?.state.canPlay),
+        live: Boolean(this.livePlayback && (this.liveService || live.catalog.channels.length > 0)),
+        push: Boolean(this.pushService),
+        downloads: Boolean(this.downloadService),
+        cast: Boolean(this.castService),
+      },
+      lanControl: "requires-g68",
+    };
+  }
+
   public async start(): Promise<void> {
     if (this.server) return;
     this.server = createServer((request, response) => {
@@ -2345,13 +2518,19 @@ export class DesktopSpiderUiServer {
     }
     if (pathname === "/api/cast/play") {
       const ui = this.playbackUi() ?? this.activeUi();
-      const player = ui?.state.player;
+      const live = this.liveUiState();
+      const liveActive = live.session && live.session.state !== "stopped" && live.player?.source
+        ? live.player
+        : null;
+      const player = liveActive ?? ui?.state.player;
       const source = player?.source;
       if (!source) throw new CastServiceError("DLNA_MEDIA_UNAVAILABLE", "当前没有可投屏的媒体。");
       const selectedSubtitle = source.subtitles?.find((track) => track.default || track.forced) ?? source.subtitles?.[0];
       const media: CastMediaSource = {
         url: new URL(source.url, this.url).toString(),
-        title: ui?.state.playbackSession?.media.title ?? "当前媒体",
+        title: liveActive && live.session
+          ? live.session.channelId
+          : ui?.state.playbackSession?.media.title ?? "当前媒体",
         ...(Object.keys(source.headers).length > 0 ? { headers: { ...source.headers } } : {}),
         ...(selectedSubtitle?.url ? {
           subtitle: {
@@ -3014,6 +3193,183 @@ export class DesktopSpiderUiServer {
     if (candidate !== this.rendererDirectory && !candidate.startsWith(root)) return null;
     return existsSync(candidate) ? candidate : null;
   }
+}
+
+function webControlUnavailable(code: string): Error & { code: string } {
+  const error = new Error("Web 控制能力当前不可用") as Error & { code: string };
+  error.code = code;
+  return error;
+}
+
+function toWebNowPlaying(
+  player: PlaybackState | null,
+  title: string | null,
+  episode: string | null,
+  live: boolean,
+  liveStatus?: string,
+): WebControlNowPlaying {
+  const status = player?.status ?? webPlaybackStatus(liveStatus ?? "idle");
+  return {
+    status,
+    title: safeText(title, 240),
+    episode: safeText(episode, 240),
+    currentTime: safeFinite(player?.currentTime, 0),
+    duration: safeFinite(player?.duration, 0),
+    volume: Math.min(1, Math.max(0, safeFinite(player?.volume, 1))),
+    muted: player?.muted ?? false,
+    live,
+    error: player?.error ? safeWebError(player.error.code) : null,
+  };
+}
+
+function webPlaybackStatus(value: string): WebControlNowPlaying["status"] {
+  if (value === "buffering" || value === "switching") return "playing";
+  if (value === "idle" || value === "resolving" || value === "loading" || value === "playing"
+    || value === "paused" || value === "ended" || value === "stopped" || value === "error") return value;
+  return "idle";
+}
+
+function toWebSearchResult(query: string, items: readonly Record<string, unknown>[]): WebControlSearchResult {
+  const result = items.flatMap((item, index) => {
+    const id = firstText(item, ["vod_id", "id", "video_id"]);
+    if (!id) return [];
+    return [{
+      id: safeText(id, 512) ?? `item-${index}`,
+      title: safeText(firstText(item, ["vod_name", "name", "title"]), 240) ?? id,
+      year: safeText(firstText(item, ["vod_year", "year"]), 32),
+      remark: safeText(firstText(item, ["vod_remarks", "remark", "remarks"]), 240),
+    }];
+  });
+  return { query: safeText(query, 120) ?? "", items: result };
+}
+
+function toWebDetail(id: string, detail: Record<string, unknown> | null, catalog: PlaybackCatalog | null): WebControlDetail {
+  const safeDetailId = safeText(firstText(detail ?? {}, ["vod_id", "id", "video_id"]) ?? id, 512) ?? id;
+  const title = safeText(firstText(detail ?? {}, ["vod_name", "name", "title"]), 240) ?? safeDetailId;
+  const overview = safeText(firstText(detail ?? {}, ["vod_content", "content", "overview", "description"]), 2_000);
+  const episodes = (catalog?.lines ?? []).flatMap((line) => line.episodes.map((episode) => ({
+    lineIndex: line.index,
+    episodeIndex: episode.index,
+    lineName: safeText(line.name, 160) ?? "线路",
+    name: safeText(episode.name, 240) ?? `第 ${episode.index + 1} 集`,
+  })));
+  return {
+    id: safeDetailId,
+    title,
+    year: safeText(firstText(detail ?? {}, ["vod_year", "year"]), 32),
+    overview,
+    episodes,
+  };
+}
+
+function toWebLiveState(state: LiveUiState): WebControlLiveState {
+  return {
+    channels: state.catalog.channels.map((channel) => ({
+      id: channel.id,
+      name: safeText(channel.name, 240) ?? channel.id,
+      group: safeText(channel.group, 160),
+      sourceName: safeText(channel.sourceName, 160) ?? "直播源",
+      streams: channel.streams.map((stream) => ({
+        id: stream.id,
+        label: safeText(stream.label, 160) ?? stream.id,
+        protocol: safeText(stream.protocol, 32) ?? "unknown",
+        status: stream.status,
+      })),
+    })),
+    activeChannelId: state.session?.channelId ?? null,
+    activeStreamId: state.session?.streamId ?? null,
+    state: state.session ? webPlaybackStatus(state.session.state) : null,
+  };
+}
+
+function toWebDownloads(state: DownloadUiState | undefined): WebControlDownloads {
+  const source = state ?? EMPTY_DOWNLOAD_UI_STATE;
+  return {
+    tasks: source.tasks.map((task) => ({
+      id: task.id,
+      title: safeText(task.title, 240) ?? task.id,
+      filename: safeText(task.suggestedFilename, 180) ?? "download",
+      status: task.status,
+      totalBytes: safeNullableNumber(task.totalBytes),
+      completedBytes: safeNullableNumber(task.completedBytes),
+      speed: safeNullableNumber(task.speed),
+      error: task.error ? safeText(task.error, 240) : null,
+    })),
+    backend: source.backend,
+    available: source.aria2Available,
+    error: source.error ? safeWebError(source.error.code) : null,
+  };
+}
+
+function toWebCastState(state: CastUiState | undefined): WebControlCastState {
+  const source = state ?? { discoveryStatus: "idle", devices: [], session: null, error: null } satisfies CastUiState;
+  return {
+    discoveryStatus: source.discoveryStatus,
+    devices: source.devices.map((device) => ({
+      deviceId: device.deviceId,
+      friendlyName: safeText(device.friendlyName, 240) ?? device.deviceId,
+      model: safeText(device.model, 160) ?? "",
+      manufacturer: safeText(device.manufacturer, 160) ?? "",
+      capabilities: {
+        play: device.capabilities.play,
+        pause: device.capabilities.pause,
+        stop: device.capabilities.stop,
+        seek: device.capabilities.seek,
+      },
+    })),
+    session: source.session ? {
+      deviceId: source.session.device.deviceId,
+      deviceName: safeText(source.session.device.friendlyName, 240) ?? source.session.device.deviceId,
+      title: safeText(source.session.media.title, 240) ?? "QX 影视媒体",
+      state: source.session.state,
+      lastPosition: safeFinite(source.session.lastPosition, 0),
+      error: source.session.error ? safeWebError(source.session.error.code) : null,
+    } : null,
+    error: source.error ? safeWebError(source.error.code) : null,
+  };
+}
+
+function toWebPushResult(result: PushSubmissionResult): WebControlPushResult {
+  if (result.kind === "confirmation-required") {
+    return {
+      kind: result.kind,
+      id: result.preview.id,
+      title: safeText(result.preview.title, 240),
+      status: "pending-confirmation",
+    };
+  }
+  return {
+    kind: result.kind,
+    id: result.recent.id,
+    title: safeText(result.recent.title, 240),
+    status: result.recent.status,
+  };
+}
+
+function firstText(value: Record<string, unknown>, keys: readonly string[]): string | null {
+  for (const key of keys) {
+    if (typeof value[key] === "string" && value[key].trim().length > 0) return value[key] as string;
+  }
+  return null;
+}
+
+function safeText(value: string | null | undefined, maxLength: number): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.replace(/[\u0000-\u001f]/g, " ").trim();
+  return normalized.length > 0 ? normalized.slice(0, maxLength) : null;
+}
+
+function safeFinite(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : fallback;
+}
+
+function safeNullableNumber(value: number | null): number | null {
+  return value === null ? null : safeFinite(value, 0);
+}
+
+function safeWebError(code: string): { code: string; message: string } {
+  const safeCode = /^[A-Z][A-Z0-9_]{1,63}$/.test(code) ? code : "WEB_BACKEND_ERROR";
+  return { code: safeCode, message: "状态操作失败" };
 }
 
 function rendererContentType(path: string): string {

@@ -947,6 +947,42 @@ Backups、Settings 路径，并提供用户确认的安全迁移。
 checkpoint: complete G55 portable data mode
 ```
 
+## G56（已完成）
+
+### 目标
+
+建立直播源的安全导入、预览、确认、SQLite 持久化、手动刷新和来源管理能力，支持 M3U/M3U8/TXT URL 与本地文件，并保留刷新失败时的 last-known-good 频道。
+
+### 状态
+
+已完成。schema v4 增加直播源/频道/线路表；LiveSourceService 通过预览→确认事务替换写入；Desktop UI API、renderer 直播源管理页、重启持久化和 packaged first/restart E2E 已接通。频道播放、EPG、自动切源、DRM 和 Android DEX 仍按计划留给后续 Goal。
+
+### 范围
+
+- `src/live/`：M3U/TXT parser、来源导入/刷新/启停/移除服务及 safe UI state。
+- `src/data/`：SQLite v4 migration、LiveRepository 和频道线路映射。
+- `src/desktop/spider-ui.ts`、`src/electron/main.ts`：typed live API、服务生命周期和错误边界。
+- `renderer/src/LiveSourcesView.vue`、Sidebar、state、persistence 和现有 Open Design token 接线。
+- live source 单元、UI API、SQLite migration、renderer build、packaged E2E、restart 和 privacy audit。
+
+### 验收与验证
+
+- URL/file 预览不写库；确认后事务替换频道/线路；同名不同 URL 不误合并，同频道多线路保留。
+- HTTP(S) 约束、同源重定向、超时、大小/content-type 校验、ETag/304、last-known-good、敏感认证拒绝通过。
+- renderer 不接触 SQLite、文件系统、raw playlist、播放 URL 或 headers；数据库不包含测试凭据。
+- `npm run typecheck`、定向/全量 Vitest、renderer/Electron build 和 packaged first/restart E2E 通过，且 Electron/sidecar 退出后无残留进程。
+
+### 文档
+
+- `docs/spike-56-live-source-import.md`
+- `docs/design/open-design/live-tv/`
+
+### checkpoint
+
+```text
+checkpoint: complete G56 live source import
+```
+
 DEX-1 ~ DEX-5（实验支线）
 
 - DEX-1：Android Emulator 探针

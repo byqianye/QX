@@ -41,6 +41,7 @@ import {
   FavoritesRepository,
   FollowRepository,
   HistoryRepository,
+  LiveRepository,
   PlaybackProgressRepository,
   SettingsRepository,
 } from "../data/repositories.js";
@@ -48,6 +49,7 @@ import { FavoritesService } from "../favorites/favorites-service.js";
 import { HistoryProgressService } from "../history/history-progress.js";
 import { FollowService } from "../follow/follow-service.js";
 import { CacheService } from "../cache/cache-service.js";
+import { LiveSourceService } from "../live/live-service.js";
 import {
   IsolatedSniffer,
   type IsolatedSnifferPlatform,
@@ -95,6 +97,7 @@ let historyProgressService: HistoryProgressService | undefined;
 let favoritesService: FavoritesService | undefined;
 let followService: FollowService | undefined;
 let cacheService: CacheService | undefined;
+let liveSourceService: LiveSourceService | undefined;
 let dataStorageService: DataStorageService | undefined;
 let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -141,6 +144,11 @@ function getCacheService(): CacheService {
   if (!cacheService) throw new Error("Cache service is unavailable");
   return cacheService;
 }
+function getLiveSourceService(): LiveSourceService {
+  initializeDataLayer();
+  if (!liveSourceService) throw new Error("Live source service is unavailable");
+  return liveSourceService;
+}
 function getDataStorageService(): DataStorageService {
   if (!dataStorageService) {
     dataStorageService = new DataStorageService(new DataDirectoryResolver(app.getPath("userData"), {
@@ -151,7 +159,7 @@ function getDataStorageService(): DataStorageService {
   return dataStorageService;
 }
 function initializeDataLayer(): void {
-  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService) return;
+  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService) return;
   const dataStorage = getDataStorageService();
   const directories = dataStorage.prepare();
   const opened = openSqliteDataLayer(directories.database);
@@ -193,6 +201,10 @@ function initializeDataLayer(): void {
   cacheService = new CacheService({
     root: directories.cache,
     repository: new CacheRepository(opened.layer),
+  });
+  liveSourceService = new LiveSourceService({
+    repository: new LiveRepository(opened.layer),
+    requestTimeoutMs: REQUEST_TIMEOUT_MS,
   });
 }
 
@@ -257,6 +269,7 @@ function createShell(): DesktopShellRuntime {
         follow: getFollowService(),
         cache: getCacheService(),
         storage: getDataStorageService(),
+        live: getLiveSourceService(),
         onStorageOpen: async () => {
           await electronShell.openPath(getDataStorageService().directories().dataRoot);
         },
@@ -521,6 +534,7 @@ function closeDataLayer(): void {
   favoritesService = undefined;
   followService = undefined;
   cacheService = undefined;
+  liveSourceService = undefined;
   dataStorageService = undefined;
   const current = dataLayer;
   dataLayer = undefined;
@@ -825,6 +839,8 @@ async function runE2e(baseUrl: string): Promise<void> {
       verifyFollow: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifyCache: true,
       verifyStorage: true,
+      verifyLiveSources: Boolean(process.env.QX_E2E_LIVE_URL),
+      ...(process.env.QX_E2E_LIVE_URL ? { liveUrl: process.env.QX_E2E_LIVE_URL } : {}),
       ...(process.env.QX_E2E_EXPECTED_FAVORITE_ID
         ? { expectedFavoriteId: process.env.QX_E2E_EXPECTED_FAVORITE_ID }
         : {}),

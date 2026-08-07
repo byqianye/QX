@@ -13,6 +13,7 @@ import FollowView from "./FollowView.vue";
 import HistoryView from "./HistoryView.vue";
 import CacheManagement from "./CacheManagement.vue";
 import StorageManagement from "./StorageManagement.vue";
+import LiveSourcesView from "./LiveSourcesView.vue";
 import MediaGrid from "./MediaGrid.vue";
 import PlaybackSelector from "./PlaybackSelector.vue";
 import PlaybackHealthPanel from "./PlaybackHealthPanel.vue";
@@ -89,10 +90,17 @@ const emit = defineEmits<{
   storageRefresh: [];
   storageOpen: [];
   storageSwitch: [mode: "normal" | "portable"];
+  livePreview: [input: Record<string, unknown>];
+  liveApply: [previewId: string];
+  liveRefresh: [sourceId: string];
+  liveToggle: [payload: { sourceId: string; enabled: boolean }];
+  liveRemove: [sourceId: string];
+  liveClear: [];
 }>();
 
-const view = ref<"browse" | "history" | "favorites" | "follow" | "settings">(props.initialNavigation === "settings"
+const view = ref<"browse" | "history" | "favorites" | "follow" | "settings" | "live">(props.initialNavigation === "settings"
   ? "settings"
+  : props.initialNavigation === "live" ? "live"
   : props.initialNavigation === "history" ? "history"
     : props.initialNavigation === "favorites" ? "favorites"
       : props.initialNavigation === "follow" ? "follow" : "browse");
@@ -143,7 +151,7 @@ const selectedLine = computed(() => {
 
 const canStart = computed(() => props.state.spider.status === "idle"
   || (props.state.spider.status === "error" && !props.state.spider.sidecarRunning));
-const activePage = computed(() => view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow" ? view.value : props.state.browse.page);
+const activePage = computed(() => view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow" || view.value === "live" ? view.value : props.state.browse.page);
 const retryable = computed(() => props.state.error.error?.retryable === true);
 const hasPlayback = computed(() => props.state.detail.playbackCatalog !== null || props.state.playback.player.source !== null);
 const playerDetached = computed(() => props.state.playback.session?.host === "detached");
@@ -182,16 +190,21 @@ watch(() => props.state.browse.page, (page) => {
 watch(theme, () => {
   emit("viewState", {
     theme: theme.value,
-    navigation: view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow"
+    navigation: view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow" || view.value === "live"
       ? view.value
       : navigationFromPage(props.state.browse.page),
   });
 });
 
-function navigate(route: "home" | "category" | "history" | "favorites" | "follow" | "settings"): void {
+function navigate(route: "home" | "category" | "history" | "favorites" | "follow" | "settings" | "live"): void {
   if (route === "settings") {
     view.value = "settings";
     persistNavigation("settings");
+    return;
+  }
+  if (route === "live") {
+    view.value = "live";
+    persistNavigation("live");
     return;
   }
   if (route === "history") {
@@ -328,8 +341,8 @@ function navigationFromPage(page: string): RendererNavigation {
       <div class="workspace-content">
         <header class="workspace-header">
           <div>
-            <span class="section-kicker">{{ view === "settings" ? "工作区设置" : view === "history" ? "播放历史" : view === "favorites" ? "收藏管理" : view === "follow" ? "追更状态" : "媒体工作台" }}</span>
-            <h1>{{ view === "settings" ? "设置" : view === "history" ? "History" : view === "favorites" ? "Favorites" : view === "follow" ? "追更" : (props.state.spider.api ? displaySource(props.state.spider.api) : "QX 影视") }}</h1>
+            <span class="section-kicker">{{ view === "live" ? "直播源管理" : view === "settings" ? "工作区设置" : view === "history" ? "播放历史" : view === "favorites" ? "收藏管理" : view === "follow" ? "追更状态" : "媒体工作台" }}</span>
+            <h1>{{ view === "live" ? "直播源" : view === "settings" ? "设置" : view === "history" ? "History" : view === "favorites" ? "Favorites" : view === "follow" ? "追更" : (props.state.spider.api ? displaySource(props.state.spider.api) : "QX 影视") }}</h1>
             <p data-testid="status" class="workspace-status" :class="{ loading: props.state.browse.loading || props.pending !== null }">
               {{ statusLabels[props.state.spider.status] }}{{ props.state.browse.loading || props.pending !== null ? " · 加载中" : "" }}
             </p>
@@ -342,6 +355,7 @@ function navigationFromPage(page: string): RendererNavigation {
         <PlaybackDebugPanel v-if="debugOpen" :snapshot="debugSnapshot" @close="closeDebug" />
 
         <SourceSwitcher
+          v-if="view !== 'live'"
           :source="props.state.spider.source"
           :api="props.state.spider.api"
           :status="props.state.spider.status"
@@ -349,7 +363,19 @@ function navigationFromPage(page: string): RendererNavigation {
           @change="emit('switch')"
         />
 
-        <template v-if="view === 'settings'">
+        <template v-if="view === 'live'">
+          <LiveSourcesView
+            :state="props.state.live"
+            :pending="props.pending"
+            @preview="emit('livePreview', $event)"
+            @apply="emit('liveApply', $event)"
+            @refresh="emit('liveRefresh', $event)"
+            @toggle="emit('liveToggle', $event)"
+            @remove="emit('liveRemove', $event)"
+            @clear="emit('liveClear')"
+          />
+        </template>
+        <template v-else-if="view === 'settings'">
           <SettingsSection title="来源管理" description="管理已导入的来源和当前连接状态。">
             <div class="settings-row"><span>当前来源</span><strong>{{ displaySource(props.state.spider.source) }}</strong></div>
             <button type="button" class="button-secondary" data-action="settings-switch" @click="emit('switch')">切换来源</button>

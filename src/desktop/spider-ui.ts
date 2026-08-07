@@ -99,6 +99,16 @@ import {
   followContentFromDetail,
   FollowService,
 } from "../follow/follow-service.js";
+import {
+  LiveSourceError,
+  LiveSourceService,
+} from "../live/live-service.js";
+import {
+  EMPTY_LIVE_UI_STATE,
+  isLiveSourceType,
+  type LiveSourceImportInput,
+  type LiveSourceType,
+} from "../live/live-types.js";
 
 const require = createRequire(import.meta.url);
 
@@ -1345,6 +1355,7 @@ export interface DesktopSpiderUiServerOptions {
   follow?: FollowService;
   cache?: CacheService;
   storage?: DataStorageService;
+  live?: LiveSourceService;
   onStorageOpen?: () => void | Promise<void>;
   onStorageSwitch?: (mode: StorageMode) => void;
 }
@@ -1375,6 +1386,7 @@ export class DesktopSpiderUiServer {
   private readonly followService: FollowService | undefined;
   private readonly cacheService: CacheService | undefined;
   private readonly storageService: DataStorageService | undefined;
+  private readonly liveService: LiveSourceService | undefined;
   private readonly onStorageOpen: (() => void | Promise<void>) | undefined;
   private readonly onStorageSwitch: ((mode: StorageMode) => void) | undefined;
   private server: Server | undefined;
@@ -1417,6 +1429,7 @@ export class DesktopSpiderUiServer {
     this.followService = options.follow;
     this.cacheService = options.cache;
     this.storageService = options.storage;
+    this.liveService = options.live;
     this.onStorageOpen = options.onStorageOpen;
     this.onStorageSwitch = options.onStorageSwitch;
   }
@@ -1506,6 +1519,11 @@ export class DesktopSpiderUiServer {
       }
 
       const body = await readJson(request);
+      if (url.pathname.startsWith("/api/live/")) {
+        await this.handleLiveRequest(url.pathname, body);
+        this.writeCurrentState(response);
+        return;
+      }
       if (this.importer && url.pathname.startsWith("/api/import/")) {
         switch (url.pathname) {
           case "/api/import/load":
@@ -1867,14 +1885,47 @@ export class DesktopSpiderUiServer {
     } catch (error) {
       const ui = this.activeUi();
       const message = error instanceof Error ? error.message : String(error);
-      const errorCode = errorCodeFromMessage(message);
+      const errorCode = error instanceof LiveSourceError
+        ? error.code
+        : errorCodeFromMessage(message);
       writeJson(response, {
         error: message,
         ...(errorCode ? { errorCode } : {}),
         import: this.importer?.state ?? null,
         state: ui?.state ?? null,
+        ...(this.liveService ? { live: this.liveService.uiState() } : {}),
       }, 400);
     }
+  }
+
+  private async handleLiveRequest(pathname: string, body: Record<string, unknown>): Promise<void> {
+    const live = this.liveService;
+    if (!live) throw new LiveSourceError("LIVE_UNAVAILABLE", "直播源服务不可用。");
+    if (pathname === "/api/live/source/preview") {
+      await live.previewSource(liveInputFromRequest(body));
+      return;
+    }
+    if (pathname === "/api/live/source/apply") {
+      await live.applyPreview(stringValue(body.previewId, ""));
+      return;
+    }
+    if (pathname === "/api/live/source/refresh") {
+      await live.refreshSource(stringValue(body.sourceId, ""));
+      return;
+    }
+    if (pathname === "/api/live/source/toggle") {
+      live.setSourceEnabled(stringValue(body.sourceId, ""), booleanValue(body.enabled, false));
+      return;
+    }
+    if (pathname === "/api/live/source/remove") {
+      live.removeSource(stringValue(body.sourceId, ""));
+      return;
+    }
+    if (pathname === "/api/live/preview/clear") {
+      live.clearPreview();
+      return;
+    }
+    throw new LiveSourceError("LIVE_ROUTE_NOT_FOUND", "直播源请求不存在。");
   }
 
   private activeUi(): DesktopSpiderUiController | undefined {
@@ -1927,15 +1978,19 @@ export class DesktopSpiderUiServer {
     const ui = this.activeUi();
     const visibleState = this.visibleState(ui);
     const persistence = this.stateStore?.rendererState();
+    const live = this.liveService?.uiState() ?? EMPTY_LIVE_UI_STATE;
+    const state = visibleState ? { ...visibleState, live } : null;
     if (this.importer) {
       writeJson(response, {
         import: this.importer.state,
-        state: visibleState,
+        state,
+        live,
         ...(persistence ? { persistence } : {}),
       });
     } else {
       writeJson(response, {
-        state: visibleState,
+        state,
+        live,
         ...(persistence ? { persistence } : {}),
       });
     }
@@ -2380,6 +2435,48 @@ function stringValue(value: unknown, fallback: string): string {
   return typeof value === "string" ? value : fallback;
 }
 
+function liveInputFromRequest(body: Record<string, unknown>): LiveSourceImportInput {
+  const name = stringValue(body.name, "").trim();
+  const type = body.type;
+  if (!isLiveSourceType(type)) throw new LiveSourceError("LIVE_SOURCE_TYPE_INVALID", "直播源格式无效。");
+  const sourceId = typeof body.sourceId === "string" && body.sourceId.trim() ? body.sourceId.trim() : null;
+  if (type === "m3u-url" || type === "txt-url") {
+    const location = stringValue(body.location, "").trim();
+    if (!location) throw new LiveSourceError("LIVE_SOURCE_URL_INVALID", "直播源 URL 不能为空。");
+    return { name, type, location, ...(sourceId ? { sourceId } : {}) };
+  }
+  if (type === "fixture") {
+    const format = body.format === "txt" ? "txt" : body.format === "m3u" ? "m3u" : null;
+    const content = typeof body.content === "string" ? body.content : null;
+    if (!format || content === null) throw new LiveSourceError("LIVE_SOURCE_FIXTURE_INVALID", "直播 fixture 输入无效。");
+    const location = typeof body.location === "string" && body.location.trim() ? body.location.trim() : undefined;
+    return {
+      name,
+      type,
+      format,
+      content,
+      ...(location ? { location } : {}),
+      ...(sourceId ? { sourceId } : {}),
+    };
+  }
+  const fileName = stringValue(body.fileName, "playlist");
+  const content = typeof body.content === "string" ? body.content : undefined;
+  const filePath = typeof body.filePath === "string" && body.filePath.trim() ? body.filePath.trim() : undefined;
+  const location = typeof body.location === "string" && body.location.trim() ? body.location.trim() : undefined;
+  if (type !== "m3u-file" && type !== "txt-file") {
+    throw new LiveSourceError("LIVE_SOURCE_TYPE_INVALID", "直播源类型无效。");
+  }
+  return {
+    name,
+    type,
+    fileName,
+    ...(content === undefined ? {} : { content }),
+    ...(filePath ? { filePath } : {}),
+    ...(location ? { location } : {}),
+    ...(sourceId ? { sourceId } : {}),
+  };
+}
+
 function booleanValue(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
@@ -2588,7 +2685,7 @@ function isThemeMode(value: unknown): value is "system" | "light" | "dark" {
   return value === "system" || value === "light" || value === "dark";
 }
 
-function isNavigation(value: unknown): value is "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" {
+function isNavigation(value: unknown): value is "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" | "live" {
   return value === "home"
     || value === "category"
     || value === "search"
@@ -2596,7 +2693,8 @@ function isNavigation(value: unknown): value is "home" | "category" | "search" |
     || value === "history"
     || value === "favorites"
     || value === "follow"
-    || value === "settings";
+    || value === "settings"
+    || value === "live";
 }
 
 function isCacheClearScope(value: unknown): value is CacheClearScope {

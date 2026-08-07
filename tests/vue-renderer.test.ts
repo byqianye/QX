@@ -487,7 +487,8 @@ describe("Vue renderer", () => {
     expect(wrapper.findAll('[data-od-id]').length).toBeGreaterThan(10);
     expect(wrapper.find('[data-play-url]').exists()).toBe(false);
     expect(wrapper.findAll('[data-diagnostic-step]').length).toBeGreaterThan(0);
-    expect(wrapper.findAll('[data-action$="-placeholder"]')).toHaveLength(3);
+    expect(wrapper.findAll('[data-action$="-placeholder"]')).toHaveLength(2);
+    expect(wrapper.get('[data-action="live-sources"]')).toBeTruthy();
     expect(wrapper.get('[data-action="history"]')).toBeTruthy();
     expect(wrapper.get('[data-action="favorites"]')).toBeTruthy();
     expect(wrapper.get('[data-testid="detail-drawer"]').text()).toContain("导演");
@@ -499,6 +500,9 @@ describe("Vue renderer", () => {
     expect(wrapper.get('[data-testid="desktop-spider-ui"]').attributes("data-theme")).toBe("dark");
     await themeMode.setValue("system");
     expect(wrapper.get('[data-testid="desktop-spider-ui"]').attributes("data-theme-mode")).toBe("system");
+    await wrapper.get('[data-action="live-sources"]').trigger("click");
+    expect(wrapper.get('[data-testid="live-sources"]')).toBeTruthy();
+    expect(wrapper.get('[data-action="live-source-preview"]')).toBeTruthy();
     wrapper.unmount();
 
     const proxyState = applyRendererEnvelope(createRendererState(), {

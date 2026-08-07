@@ -9,7 +9,7 @@ import {
   type DatabaseErrorCode,
 } from "./errors.js";
 
-export const SUPPORTED_SCHEMA_VERSION = 3;
+export const SUPPORTED_SCHEMA_VERSION = 4;
 
 interface Migration {
   version: number;
@@ -179,6 +179,67 @@ const migrations: readonly Migration[] = [
     name: "follow-poster",
     sql: `
       ALTER TABLE follow_items ADD COLUMN poster TEXT;
+    `,
+  },
+  {
+    version: 4,
+    name: "live-source-import",
+    sql: `
+      CREATE TABLE live_sources (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        location TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        refresh_mode TEXT NOT NULL DEFAULT 'manual',
+        last_updated_at INTEGER,
+        last_success_at INTEGER,
+        last_error TEXT,
+        content_hash TEXT,
+        etag TEXT,
+        last_modified TEXT
+      ) STRICT;
+
+      CREATE INDEX live_sources_enabled_updated
+        ON live_sources(enabled, last_updated_at);
+
+      CREATE TABLE live_channels (
+        id TEXT PRIMARY KEY NOT NULL,
+        source_id TEXT NOT NULL,
+        external_id TEXT,
+        name TEXT NOT NULL,
+        normalized_name TEXT NOT NULL,
+        group_name TEXT,
+        logo TEXT,
+        tvg_id TEXT,
+        tvg_name TEXT,
+        tvg_logo TEXT,
+        tvg_chno TEXT,
+        catchup TEXT,
+        attributes_json TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (source_id) REFERENCES live_sources(id) ON DELETE CASCADE
+      ) STRICT;
+
+      CREATE INDEX live_channels_source_order
+        ON live_channels(source_id, sort_order, id);
+      CREATE INDEX live_channels_source_name
+        ON live_channels(source_id, normalized_name);
+
+      CREATE TABLE live_channel_streams (
+        id TEXT PRIMARY KEY NOT NULL,
+        channel_id TEXT NOT NULL,
+        url TEXT NOT NULL,
+        headers_json TEXT NOT NULL,
+        priority INTEGER NOT NULL DEFAULT 0,
+        label TEXT,
+        protocol TEXT,
+        FOREIGN KEY (channel_id) REFERENCES live_channels(id) ON DELETE CASCADE
+      ) STRICT;
+
+      CREATE INDEX live_channel_streams_channel_priority
+        ON live_channel_streams(channel_id, priority, id);
     `,
   },
 ];

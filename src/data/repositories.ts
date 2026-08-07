@@ -1,6 +1,11 @@
 import { databaseError } from "./errors.js";
 import { serializePersistedJson } from "./safe-persistence.js";
 import { type SqliteDataLayer } from "./sqlite.js";
+import type {
+  LiveChannelStreamRecord,
+  LiveChannelWithStreams,
+  LiveSourceRecord,
+} from "../live/live-types.js";
 
 export interface HistoryRecord {
   identity: string;
@@ -563,6 +568,144 @@ export class HealthRepository {
   }
 }
 
+export class LiveRepository {
+  public constructor(private readonly db: SqliteDataLayer) {}
+
+  public upsertSource(record: LiveSourceRecord): void {
+    try {
+      this.db.prepare(`
+        INSERT INTO live_sources(
+          id, name, type, location, enabled, refresh_mode,
+          last_updated_at, last_success_at, last_error, content_hash, etag, last_modified
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          type = excluded.type,
+          location = excluded.location,
+          enabled = excluded.enabled,
+          refresh_mode = excluded.refresh_mode,
+          last_updated_at = excluded.last_updated_at,
+          last_success_at = excluded.last_success_at,
+          last_error = excluded.last_error,
+          content_hash = excluded.content_hash,
+          etag = excluded.etag,
+          last_modified = excluded.last_modified
+      `).run(
+        record.id,
+        record.name,
+        record.type,
+        record.location,
+        record.enabled ? 1 : 0,
+        record.refreshMode,
+        record.lastUpdatedAt,
+        record.lastSuccessAt,
+        record.lastError,
+        record.contentHash,
+        record.etag,
+        record.lastModified,
+      );
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public saveSourceContent(record: LiveSourceRecord, channels: readonly LiveChannelWithStreams[]): void {
+    try {
+      this.db.transaction(() => {
+        this.upsertSource(record);
+        this.db.prepare(`
+          DELETE FROM live_channel_streams
+          WHERE channel_id IN (SELECT id FROM live_channels WHERE source_id = ?)
+        `).run(record.id);
+        this.db.prepare("DELETE FROM live_channels WHERE source_id = ?").run(record.id);
+
+        const channelInsert = this.db.prepare(`
+          INSERT INTO live_channels(
+            id, source_id, external_id, name, normalized_name, group_name,
+            logo, tvg_id, tvg_name, tvg_logo, tvg_chno, catchup,
+            attributes_json, enabled, sort_order
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        const streamInsert = this.db.prepare(`
+          INSERT INTO live_channel_streams(
+            id, channel_id, url, headers_json, priority, label, protocol
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const channel of channels) {
+          channelInsert.run(
+            channel.id,
+            channel.sourceId,
+            channel.externalId,
+            channel.name,
+            channel.normalizedName,
+            channel.group,
+            channel.logo,
+            channel.tvgId,
+            channel.tvgName,
+            channel.tvgLogo,
+            channel.tvgChno,
+            channel.catchup,
+            serializeJson(channel.attributes),
+            channel.enabled ? 1 : 0,
+            channel.sortOrder,
+          );
+          for (const stream of channel.streams) {
+            streamInsert.run(
+              stream.id,
+              stream.channelId,
+              stream.url,
+              serializeJson(stream.headers),
+              stream.priority,
+              stream.label,
+              stream.protocol,
+            );
+          }
+        }
+      });
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+
+  public getSource(id: string): LiveSourceRecord | null {
+    const row = this.db.prepare("SELECT * FROM live_sources WHERE id = ?").get(id);
+    return row ? liveSourceFromRow(row) : null;
+  }
+
+  public listSources(): readonly LiveSourceRecord[] {
+    return this.db.prepare(
+      "SELECT * FROM live_sources ORDER BY name COLLATE NOCASE, id",
+    ).all().map(liveSourceFromRow);
+  }
+
+  public getChannels(sourceId: string): readonly LiveChannelWithStreams[] {
+    const channels = this.db.prepare(
+      "SELECT * FROM live_channels WHERE source_id = ? ORDER BY sort_order, id",
+    ).all(sourceId).map(liveChannelFromRow);
+    const streams = this.db.prepare(
+      "SELECT * FROM live_channel_streams WHERE channel_id IN (SELECT id FROM live_channels WHERE source_id = ?) ORDER BY priority, id",
+    ).all(sourceId).map(liveStreamFromRow);
+    const byChannel = new Map<string, LiveChannelStreamRecord[]>();
+    for (const stream of streams) {
+      const current = byChannel.get(stream.channelId) ?? [];
+      current.push(stream);
+      byChannel.set(stream.channelId, current);
+    }
+    return channels.map((channel) => ({
+      ...channel,
+      streams: byChannel.get(channel.id) ?? [],
+    }));
+  }
+
+  public deleteSource(id: string): void {
+    try {
+      this.db.prepare("DELETE FROM live_sources WHERE id = ?").run(id);
+    } catch (error) {
+      throw databaseError("DATABASE_WRITE_FAILED", error);
+    }
+  }
+}
+
 export class CacheRepository {
   public constructor(private readonly db: SqliteDataLayer) {}
 
@@ -717,6 +860,67 @@ function followFromRow(row: Record<string, unknown>): FollowRecord {
     checkError: nullableString(row.check_error),
     enabled: booleanValue(row.enabled),
   };
+}
+
+function liveSourceFromRow(row: Record<string, unknown>): LiveSourceRecord {
+  return {
+    id: stringValue(row.id),
+    name: stringValue(row.name),
+    type: stringValue(row.type) as LiveSourceRecord["type"],
+    location: stringValue(row.location),
+    enabled: booleanValue(row.enabled),
+    refreshMode: stringValue(row.refresh_mode) as LiveSourceRecord["refreshMode"],
+    lastUpdatedAt: nullableNumber(row.last_updated_at),
+    lastSuccessAt: nullableNumber(row.last_success_at),
+    lastError: nullableString(row.last_error),
+    contentHash: nullableString(row.content_hash),
+    etag: nullableString(row.etag),
+    lastModified: nullableString(row.last_modified),
+  };
+}
+
+function liveChannelFromRow(row: Record<string, unknown>): Omit<LiveChannelWithStreams, "streams"> {
+  return {
+    id: stringValue(row.id),
+    sourceId: stringValue(row.source_id),
+    externalId: nullableString(row.external_id),
+    name: stringValue(row.name),
+    normalizedName: stringValue(row.normalized_name),
+    group: nullableString(row.group_name),
+    logo: nullableString(row.logo),
+    tvgId: nullableString(row.tvg_id),
+    tvgName: nullableString(row.tvg_name),
+    tvgLogo: nullableString(row.tvg_logo),
+    tvgChno: nullableString(row.tvg_chno),
+    catchup: nullableString(row.catchup),
+    attributes: stringRecordFromRow(row, "attributes_json"),
+    enabled: booleanValue(row.enabled),
+    sortOrder: numberValue(row.sort_order),
+  };
+}
+
+function liveStreamFromRow(row: Record<string, unknown>): LiveChannelStreamRecord {
+  return {
+    id: stringValue(row.id),
+    channelId: stringValue(row.channel_id),
+    url: stringValue(row.url),
+    headers: stringRecordFromRow(row, "headers_json"),
+    priority: numberValue(row.priority),
+    label: nullableString(row.label),
+    protocol: nullableString(row.protocol),
+  };
+}
+
+function stringRecordFromRow(row: Record<string, unknown>, column: string): Record<string, string> {
+  const value = parseJsonRow(row, column);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw databaseError("DATABASE_CORRUPT");
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.some(([, entryValue]) => typeof entryValue !== "string")) {
+    throw databaseError("DATABASE_CORRUPT");
+  }
+  return Object.fromEntries(entries) as Record<string, string>;
 }
 
 function cacheFromRow(row: Record<string, unknown>): CacheEntryRecord {

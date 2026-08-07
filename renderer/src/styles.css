@@ -315,6 +315,12 @@ p { margin-bottom: 12px; }
 .settings-section { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; margin-bottom: 16px; padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
 .settings-section > .settings-row { grid-column: 1 / -1; width: 100%; }
 .settings-section h2 { margin-bottom: 4px; }
+.live-sources { display: grid; gap: 16px; }
+.live-source-card { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 16px 0; border-bottom: 1px solid var(--border-soft); }
+.live-source-card:last-child { border-bottom: 0; }
+.live-source-card h3 { margin-bottom: 4px; }
+.live-issues { margin: 16px 0; padding-left: 20px; color: var(--warn); }
+.live-issues li + li { margin-top: 6px; }
 .cache-management { grid-template-columns: minmax(0, 1fr) minmax(220px, 320px); }
 .cache-summary, .cache-breakdown { display: grid; gap: 0; min-width: 0; }
 .cache-breakdown, .cache-actions { grid-column: 1 / -1; }

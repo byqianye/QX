@@ -23,6 +23,8 @@ export interface PackagedE2eOptions {
   verifyFollow?: boolean;
   verifyCache?: boolean;
   verifyStorage?: boolean;
+  verifyLiveSources?: boolean;
+  liveUrl?: string;
   expectedFavoriteId?: string;
   expectedFollowIdentity?: string;
   verifyParserFallback?: boolean;
@@ -85,6 +87,9 @@ export interface PackagedE2eChecks {
   followRestart?: boolean;
   cache?: boolean;
   storage?: boolean;
+  liveSources?: boolean;
+  liveRestart?: boolean;
+  liveSourceDisable?: boolean;
 }
 
 export interface PackagedE2eResult {
@@ -165,6 +170,46 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
 
     const jsonImport = await load(options.baseUrl, options.configJson);
     const jsonReady = await confirmIfNeeded(options.baseUrl, jsonImport.import.status);
+    if (options.verifyLiveSources) {
+      if (!options.liveUrl) throw new Error("Packaged live source E2E URL is not configured");
+      const beforeLive = await getState(options.baseUrl);
+      if (!options.freshTrust) {
+        checks.liveRestart = (beforeLive.state?.live?.sources ?? []).some((source) => source.channelCount > 0)
+          && (beforeLive.state?.live?.sources ?? []).some((source) => source.enabled === false);
+      }
+      const remotePreview = await post(options.baseUrl, "/api/live/source/preview", {
+        name: "Packaged E2E 直播源",
+        type: "m3u-url",
+        location: options.liveUrl,
+      });
+      const remotePreviewState = remotePreview.state?.live?.preview;
+      const remoteApplied = remotePreviewState
+        ? await post(options.baseUrl, "/api/live/source/apply", { previewId: remotePreviewState.id })
+        : null;
+      const remoteSource = remoteApplied?.state?.live?.sources.find((source) => source.name === "Packaged E2E 直播源" && source.enabled);
+      const refreshed = remoteSource
+        ? await post(options.baseUrl, "/api/live/source/refresh", { sourceId: remoteSource.id })
+        : null;
+      const filePreview = await post(options.baseUrl, "/api/live/source/preview", {
+        name: "Packaged E2E 文件源",
+        type: "m3u-file",
+        fileName: "e2e.m3u",
+        content: "#EXTM3U\n#EXTINF:-1 group-title=\"E2E\",E2E 文件频道\nhttps://media.example.invalid/e2e.m3u8\n",
+      });
+      const filePreviewState = filePreview.state?.live?.preview;
+      const fileApplied = filePreviewState
+        ? await post(options.baseUrl, "/api/live/source/apply", { previewId: filePreviewState.id })
+        : null;
+      const disabled = remoteSource
+        ? await post(options.baseUrl, "/api/live/source/toggle", { sourceId: remoteSource.id, enabled: false })
+        : null;
+      checks.liveSources = remotePreviewState?.stats.channelCount === 2
+        && remoteApplied?.state?.live?.sources.some((source) => source.name === "Packaged E2E 直播源" && source.channelCount === 2) === true
+        && refreshed?.state?.live?.sources.some((source) => source.name === "Packaged E2E 直播源" && source.lastError === null) === true
+        && filePreviewState?.stats.channelCount === 1
+        && fileApplied?.state?.live?.sources.some((source) => source.name === "Packaged E2E 文件源" && source.channelCount === 1) === true;
+      checks.liveSourceDisable = disabled?.state?.live?.sources.some((source) => source.name === "Packaged E2E 直播源" && source.enabled === false) === true;
+    }
     const opened = await post(options.baseUrl, "/api/open");
     const search = await post(options.baseUrl, "/api/search", {
       key: "蜘蛛侠",
@@ -600,6 +645,18 @@ async function post(
   };
 }
 
+async function getState(baseUrl: string): Promise<UiEnvelope> {
+  const response = await fetch(new URL("/api/state", baseUrl));
+  const value: unknown = await response.json();
+  if (!response.ok || !isRecord(value) || !isRecord(value.import)) {
+    throw new Error("Packaged E2E state request failed");
+  }
+  return {
+    import: value.import as unknown as ImportState,
+    state: isRecord(value.state) ? value.state as unknown as UiState : null,
+  };
+}
+
 function firstVodId(state: UiState | null): string {
   const aggregateId = state?.aggregateSearch?.groups[0]?.items[0]?.id;
   if (typeof aggregateId === "string" && aggregateId.length > 0) return aggregateId;
@@ -742,6 +799,29 @@ interface UiState {
     favoritesCount: number;
     followCount: number;
     writable: boolean;
+  };
+  live?: {
+    sources: readonly {
+      id: string;
+      name: string;
+      enabled: boolean;
+      channelCount: number;
+      groupCount: number;
+      streamCount: number;
+      lastError: string | null;
+    }[];
+    preview: {
+      id: string;
+      channelNames: readonly string[];
+      stats: {
+        channelCount: number;
+        groupCount: number;
+        streamCount: number;
+        invalidCount: number;
+      };
+    } | null;
+    loading: boolean;
+    error: { code: string; message: string } | null;
   };
 }
 

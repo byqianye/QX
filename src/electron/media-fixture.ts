@@ -30,6 +30,7 @@ export interface MediaFixtureServer {
   readonly sniffUrl: string;
   readonly parserUrl: string;
   readonly parserFailureUrl: string;
+  readonly liveUrl: string;
   readonly doubanEndpoint: string;
   readonly subtitleVttUrl: string;
   readonly subtitleSrtUrl: string;
@@ -73,6 +74,9 @@ export function createMediaFixtureServer(host = "127.0.0.1"): MediaFixtureServer
     },
     get parserFailureUrl() {
       return `${resource.baseUrl}/parser/fail`;
+    },
+    get liveUrl() {
+      return `${resource.baseUrl}/live/source.m3u`;
     },
     get doubanEndpoint() {
       return `${resource.baseUrl}/api/v2/subject_collection/subject_real_time_hotest/items`;
@@ -126,6 +130,18 @@ async function handleRequest(
 
   if (url.pathname === "/media/fixture.m3u8") {
     servePlaylist(request, response, "/media");
+    return;
+  }
+
+  if (url.pathname === "/live/source.m3u") {
+    serveText(request, response, [
+      "#EXTM3U",
+      '#EXTINF:-1 group-title="E2E",E2E 新闻',
+      fixture.hlsUrl,
+      '#EXTINF:-1 group-title="E2E",E2E 体育',
+      fixture.mp4Url,
+      "",
+    ].join("\n"), "application/x-mpegurl; charset=utf-8");
     return;
   }
 

@@ -176,7 +176,7 @@ function handleScroll(): void {
 async function restorePage(): Promise<void> {
   restored.value = true;
   const candidate = restoreCandidate.value;
-  if (!candidate || !candidate.siteKey || candidate.navigation === "settings") {
+  if (!candidate || !candidate.siteKey || candidate.navigation === "settings" || candidate.navigation === "live") {
     restoreScroll(candidate?.scrollTop ?? 0);
     return;
   }
@@ -312,6 +312,12 @@ function play(line: number, episode: number, resumeMode?: HistoryResumeMode): vo
       @storage-refresh="post('storage-refresh', '/api/storage/refresh')"
       @storage-open="post('storage-open', '/api/storage/open')"
       @storage-switch="post('storage-switch', '/api/storage/switch', { mode: $event, confirmed: true })"
+      @live-preview="post('live-preview', '/api/live/source/preview', $event)"
+      @live-apply="post('live-apply', '/api/live/source/apply', { previewId: $event })"
+      @live-refresh="post('live-refresh', '/api/live/source/refresh', { sourceId: $event })"
+      @live-toggle="post('live-toggle', '/api/live/source/toggle', { sourceId: $event.sourceId, enabled: $event.enabled })"
+      @live-remove="post('live-remove', '/api/live/source/remove', { sourceId: $event })"
+      @live-clear="post('live-clear', '/api/live/preview/clear')"
     />
   </div>
 </template>

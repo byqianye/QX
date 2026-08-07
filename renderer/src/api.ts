@@ -26,6 +26,7 @@ export class RendererApi {
         ...(isRecord(value.import) ? { import: value.import } : {}),
         ...(isRecord(value.state) ? { state: value.state } : {}),
         ...(isRecord(value.persistence) ? { persistence: value.persistence } : {}),
+        ...(isRecord(value.live) ? { live: value.live } : {}),
         ...(typeof value.error === "string" ? { error: value.error } : {}),
         ...(typeof value.errorCode === "string" ? { errorCode: value.errorCode } : {}),
       } as unknown as RendererEnvelope;

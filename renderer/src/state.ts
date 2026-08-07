@@ -7,6 +7,8 @@ import type { FavoriteItem, FavoritesUiState } from "../../src/favorites/favorit
 import type { FollowItem, FollowUiState } from "../../src/follow/follow-types.js";
 import type { CacheUiState } from "../../src/cache/cache-types.js";
 import type { StorageUiState } from "../../src/storage/storage-types.js";
+import { EMPTY_LIVE_UI_STATE } from "../../src/live/live-types.js";
+import type { LiveUiState } from "../../src/live/live-types.js";
 
 export type ImportStatus =
   | "empty"
@@ -26,7 +28,7 @@ export type SpiderStatus =
   | "destroyed";
 
 export type RendererThemeMode = "system" | "light" | "dark";
-export type RendererNavigation = "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings";
+export type RendererNavigation = "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" | "live";
 export type PlayerHostMode = "embedded" | "detached";
 export const PLAYBACK_RESTORE_MAX_DRIFT_SECONDS = 2;
 
@@ -269,6 +271,7 @@ export interface RendererState {
   followDetail: FollowItem | null;
   cache: CacheUiState;
   storage: StorageUiState;
+  live: LiveUiState;
   error: ErrorState;
 }
 
@@ -300,12 +303,14 @@ export interface ApiSpiderState {
   followDetail?: FollowItem | null;
   cache?: CacheUiState;
   storage?: StorageUiState;
+  live?: LiveUiState;
 }
 
 export interface RendererEnvelope {
   import?: ImportState | null;
   state?: ApiSpiderState | null;
   persistence?: RendererPersistenceState | null;
+  live?: LiveUiState | null;
   error?: string;
   errorCode?: string;
 }
@@ -361,6 +366,7 @@ export function createRendererState(): RendererState {
     followDetail: null,
     cache: { totalBytes: 0, maxBytes: 0, entries: 0, byType: [] },
     storage: { mode: "normal", dataRoot: "—", normalRoot: "—", portableRoot: "—", databaseBytes: 0, cacheBytes: 0, totalBytes: 0, historyCount: 0, favoritesCount: 0, followCount: 0, writable: false, switching: false, error: null },
+    live: cloneLiveUiState(EMPTY_LIVE_UI_STATE),
     error: { error: null },
   };
 }
@@ -371,6 +377,11 @@ export function applyRendererEnvelope(
 ): RendererState {
   const importState = envelope.import ? cloneImportState(envelope.import) : current.import;
   const state = envelope.state;
+  const live = envelope.live
+    ? cloneLiveUiState(envelope.live)
+    : state?.live
+      ? cloneLiveUiState(state.live)
+      : current.live;
   const envelopeError = envelope.error
     ? { code: envelope.errorCode ?? "RENDERER_REQUEST_ERROR", message: envelope.error }
     : null;
@@ -380,6 +391,7 @@ export function applyRendererEnvelope(
       ...current,
       ready: true,
       import: importState,
+      live,
       error: {
         error: toAppError(nextError) ?? current.error.error,
       },
@@ -423,7 +435,28 @@ export function applyRendererEnvelope(
     followDetail: state.followDetail ? { ...state.followDetail } : null,
     cache: cloneCacheState(state.cache ?? current.cache),
     storage: cloneStorageState(state.storage ?? current.storage),
+    live,
     error: { error: toAppError(stateError) },
+  };
+}
+
+function cloneLiveUiState(value: LiveUiState): LiveUiState {
+  return {
+    sources: value.sources.map((source) => ({ ...source })),
+    preview: value.preview
+      ? {
+          ...value.preview,
+          source: { ...value.preview.source },
+          channelNames: [...value.preview.channelNames],
+          issues: value.preview.issues.map((issue) => ({ ...issue })),
+          stats: {
+            ...value.preview.stats,
+            protocolCounts: { ...value.preview.stats.protocolCounts },
+          },
+        }
+      : null,
+    loading: value.loading,
+    error: value.error ? { ...value.error } : null,
   };
 }
 

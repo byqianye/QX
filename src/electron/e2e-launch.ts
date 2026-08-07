@@ -118,6 +118,7 @@ try {
     QX_PLAYBACK_FALLBACK_MODE: "auto",
     QX_E2E_HLS_MASTER_URL: mediaFixture.hlsMasterUrl,
     QX_E2E_HLS_CHILD_URL: mediaFixture.hlsChildUrl,
+    QX_E2E_LIVE_URL: mediaFixture.liveUrl,
     QX_E2E_FAKE_MPV: "1",
     QX_SNIFF_ENABLED: "1",
     QX_E2E_SNIFF_URL: mediaFixture.sniffUrl,
@@ -132,6 +133,7 @@ try {
   assertPersistedHistoryPrivacy(userData);
   assertPersistedFavoritesPrivacy(userData);
   assertPersistedFollowPrivacy(userData);
+  assertPersistedLivePrivacy(userData);
   assertPersistedCacheRoot(userData);
 
   const second = await runPackagedExecutable(executable, {
@@ -149,6 +151,7 @@ try {
     QX_PLAYBACK_FALLBACK_MODE: "auto",
     QX_E2E_HLS_MASTER_URL: mediaFixture.hlsMasterUrl,
     QX_E2E_HLS_CHILD_URL: mediaFixture.hlsChildUrl,
+    QX_E2E_LIVE_URL: mediaFixture.liveUrl,
     QX_E2E_FAKE_MPV: "1",
     QX_SNIFF_ENABLED: "1",
     QX_E2E_SNIFF_URL: mediaFixture.sniffUrl,
@@ -161,6 +164,7 @@ try {
   assertPersistedHistoryPrivacy(userData);
   assertPersistedFavoritesPrivacy(userData);
   assertPersistedFollowPrivacy(userData);
+  assertPersistedLivePrivacy(userData);
   assertPersistedCacheRoot(userData);
 
   console.log(JSON.stringify({
@@ -292,6 +296,24 @@ function assertPersistedFollowPrivacy(userDataPath: string): void {
 function assertPersistedCacheRoot(userDataPath: string): void {
   if (!existsSync(join(userDataPath, "cache")) || !existsSync(join(userDataPath, "qx-yingshi.db"))) {
     throw new Error("Packaged E2E cache root or user database was not preserved");
+  }
+}
+
+function assertPersistedLivePrivacy(userDataPath: string): void {
+  const database = new DatabaseSync(join(userDataPath, "qx-yingshi.db"), { readOnly: true });
+  try {
+    const sources = database.prepare("SELECT id, name, type, location, last_error FROM live_sources").all();
+    const channels = database.prepare("SELECT id, source_id, name, attributes_json FROM live_channels").all();
+    const streams = database.prepare("SELECT id, channel_id, url, headers_json FROM live_channel_streams").all();
+    if (sources.length === 0 || channels.length === 0 || streams.length === 0) {
+      throw new Error("Packaged E2E live source rows were not persisted");
+    }
+    const serialized = JSON.stringify({ sources, channels, streams });
+    if (/token|cookie|authorization|bearer|api[_-]?key|password|secret/i.test(serialized)) {
+      throw new Error("Packaged E2E live source privacy contract failed");
+    }
+  } finally {
+    database.close();
   }
 }
 

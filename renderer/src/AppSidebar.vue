@@ -13,7 +13,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  navigate: [route: "home" | "category" | "history" | "favorites" | "follow" | "settings" | "live" | "local"];
+  navigate: [route: "home" | "category" | "history" | "favorites" | "follow" | "settings" | "live" | "local" | "downloads"];
   open: [];
   switch: [];
   close: [];
@@ -112,8 +112,15 @@ const emit = defineEmits<{
       >
         <Icon name="grid" /><span>追更</span><span v-if="followUpdates > 0" class="sidebar-badge">{{ followUpdates }}</span>
       </button>
-      <button class="sidebar-nav-item sidebar-nav-placeholder" type="button" data-action="downloads-placeholder" disabled>
-        <Icon name="grid" /><span>下载（占位）</span>
+      <button
+        class="sidebar-nav-item"
+        :class="{ selected: activePage === 'downloads' }"
+        type="button"
+        data-action="downloads"
+        :disabled="pending"
+        @click="emit('navigate', 'downloads')"
+      >
+        <Icon name="grid" /><span>下载</span>
       </button>
       <button class="sidebar-nav-item sidebar-nav-placeholder" type="button" data-action="console-placeholder" disabled>
         <Icon name="settings" /><span>控制台（占位）</span>

@@ -60,6 +60,7 @@ import { EpgMatchingService } from "../epg/epg-matching-service.js";
 import { EpgService } from "../epg/epg-service.js";
 import { DanmakuService } from "../danmaku/danmaku-service.js";
 import { LocalMediaService } from "../local-media/local-media-service.js";
+import { DownloadService, createDownloadBackend } from "../downloads/download-service.js";
 import {
   IsolatedSniffer,
   type IsolatedSnifferPlatform,
@@ -118,6 +119,7 @@ let epgService: EpgService | undefined;
 let epgMatchingService: EpgMatchingService | undefined;
 let danmakuService: DanmakuService | undefined;
 let localMediaService: LocalMediaService | undefined;
+let downloadService: DownloadService | undefined;
 let dataStorageService: DataStorageService | undefined;
 let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -189,7 +191,7 @@ function getDataStorageService(): DataStorageService {
   return dataStorageService;
 }
 function initializeDataLayer(): void {
-  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService && livePlaybackService && smartChannelService && epgService && epgMatchingService && danmakuService && localMediaService) return;
+  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService && livePlaybackService && smartChannelService && epgService && epgMatchingService && danmakuService && localMediaService && downloadService) return;
   const dataStorage = getDataStorageService();
   const directories = dataStorage.prepare();
   const opened = openSqliteDataLayer(directories.database);
@@ -276,6 +278,10 @@ function initializeDataLayer(): void {
     settings: new SettingsRepository(opened.layer),
   });
   localMediaService = new LocalMediaService({ db: opened.layer });
+  downloadService = new DownloadService({
+    db: opened.layer,
+    backend: createDownloadBackend(),
+  });
 }
 
 function createShell(): DesktopShellRuntime {
@@ -341,6 +347,7 @@ function createShell(): DesktopShellRuntime {
         storage: getDataStorageService(),
         danmaku: getDanmakuService(),
         localMedia: getLocalMediaService(),
+        ...(downloadService ? { downloads: downloadService } : {}),
         live: getLiveSourceService(),
         ...(livePlaybackService ? { livePlayback: livePlaybackService } : {}),
         ...(smartChannelService ? { smartChannels: smartChannelService } : {}),
@@ -365,6 +372,18 @@ function createShell(): DesktopShellRuntime {
             properties: ["openDirectory"],
           });
           return selected.canceled ? null : selected.filePaths[0] ?? null;
+        },
+        onDownloadFolderPicker: async () => {
+          if (process.env.QX_E2E_DOWNLOAD_DIR) return process.env.QX_E2E_DOWNLOAD_DIR;
+          const selected = await dialog.showOpenDialog({
+            title: "选择下载目录",
+            properties: ["openDirectory", "createDirectory"],
+          });
+          return selected.canceled ? null : selected.filePaths[0] ?? null;
+        },
+        onDownloadFolderOpen: async (directoryPath) => {
+          const error = await electronShell.openPath(directoryPath);
+          if (error) throw new Error("DOWNLOAD_OPEN_FOLDER_FAILED");
         },
         onPlayerOpen: openPlayerWindow,
         onPlayerAttach: closePlayerWindow,
@@ -621,6 +640,7 @@ async function closeShell(closeData = false): Promise<void> {
 }
 
 async function closeDataLayer(): Promise<void> {
+  await downloadService?.close().catch(() => undefined);
   await livePlaybackService?.close();
   epgService?.close();
   epgMatchingService?.close();
@@ -637,6 +657,7 @@ async function closeDataLayer(): Promise<void> {
   epgMatchingService = undefined;
   danmakuService = undefined;
   localMediaService = undefined;
+  downloadService = undefined;
   dataStorageService = undefined;
   const current = dataLayer;
   dataLayer = undefined;
@@ -969,6 +990,8 @@ async function runE2e(baseUrl: string): Promise<void> {
       ...(process.env.QX_E2E_FAKE_MPV === "1" ? { fakeMpv: runFakeMpvExitProbe } : {}),
       verifyLocalMedia: Boolean(process.env.QX_E2E_LOCAL_MEDIA_FILE),
       ...(process.env.QX_E2E_LOCAL_MEDIA_FILE ? { localMediaFile: process.env.QX_E2E_LOCAL_MEDIA_FILE } : {}),
+      verifyDownloads: Boolean(process.env.QX_E2E_DOWNLOAD_DIR),
+      ...(process.env.QX_E2E_DOWNLOAD_DIR ? { downloadDirectory: process.env.QX_E2E_DOWNLOAD_DIR } : {}),
       ...(process.env.QX_E2E_HLS_MASTER_URL ? { hlsMasterUrl: process.env.QX_E2E_HLS_MASTER_URL } : {}),
       ...(process.env.QX_E2E_HLS_CHILD_URL ? { hlsChildUrl: process.env.QX_E2E_HLS_CHILD_URL } : {}),
       verifySniffer: ISOLATED_SNIFFER_ENABLED,

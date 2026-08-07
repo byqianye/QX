@@ -570,10 +570,11 @@ describe("Vue renderer", () => {
     expect(wrapper.findAll('[data-od-id]').length).toBeGreaterThan(10);
     expect(wrapper.find('[data-play-url]').exists()).toBe(false);
     expect(wrapper.findAll('[data-diagnostic-step]').length).toBeGreaterThan(0);
-    expect(wrapper.findAll('[data-action$="-placeholder"]')).toHaveLength(2);
+    expect(wrapper.findAll('[data-action$="-placeholder"]')).toHaveLength(1);
     expect(wrapper.get('[data-action="live-sources"]')).toBeTruthy();
     expect(wrapper.get('[data-action="history"]')).toBeTruthy();
     expect(wrapper.get('[data-action="favorites"]')).toBeTruthy();
+    expect(wrapper.get('[data-action="downloads"]')).toBeTruthy();
     expect(wrapper.get('[data-testid="detail-drawer"]').text()).toContain("导演");
     await wrapper.get('[data-action="settings"]').trigger("click");
     expect(wrapper.findAll('[data-testid="settings-section"]').length).toBeGreaterThanOrEqual(5);

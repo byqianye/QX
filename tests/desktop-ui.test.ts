@@ -31,6 +31,8 @@ import { HistoryProgressService } from "../src/history/history-progress.js";
 import { CacheService } from "../src/cache/cache-service.js";
 import { DataDirectoryResolver, DataStorageService } from "../src/data/data-directory.js";
 import { LocalMediaService } from "../src/local-media/local-media-service.js";
+import { DownloadService } from "../src/downloads/download-service.js";
+import { FakeDownloadBackend } from "../src/downloads/download-backend.js";
 
 describe("desktop Spider UI", () => {
   const servers: DesktopSpiderUiServer[] = [];
@@ -656,6 +658,56 @@ describe("desktop Spider UI", () => {
     await resumedUi.playLocalMedia(item.id, server.url, "continue");
     expect(resumedUi.state.player.currentTime).toBe(5);
     await resumedUi.stopPlayer();
+  });
+
+  it("serves the download manager through opaque folder IDs and explicit URL actions", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "qx-desktop-downloads-"));
+    historyDirectories.push(directory);
+    const targetPath = join(directory, "downloads");
+    mkdirSync(targetPath);
+    const layer = SqliteDataLayer.create(join(directory, "qx-yingshi.db"));
+    historyLayers.push(layer);
+    const downloads = new DownloadService({
+      db: layer,
+      backend: new FakeDownloadBackend({ autoComplete: true }),
+    });
+    let openedPath: string | null = null;
+    const ui = new DesktopSpiderUiController({
+      session: new FixtureSession(),
+      downloads,
+    });
+    const server = new DesktopSpiderUiServer({
+      ui,
+      siteKey: "douban",
+      ext: "fixture-endpoint",
+      downloads,
+      onDownloadFolderPicker: async () => targetPath,
+      onDownloadFolderOpen: async (path) => { openedPath = path; },
+    });
+    servers.push(server);
+    await server.start();
+
+    const selected = await post(server.url, "/api/downloads/select-folder");
+    const target = (selected.state.downloads as { targetDirectories: Array<{ id: string }> }).targetDirectories[0];
+    if (!target) throw new Error("Expected a selected download directory");
+    expect(target.id).toMatch(/^download-dir-[a-f0-9]{24}$/);
+    expect(JSON.stringify(selected.state)).not.toContain(directory);
+
+    const added = await post(server.url, "/api/downloads/add", {
+      title: "Fixture download",
+      url: "https://media.example.test/files/fixture.mp4",
+      filename: "fixture.mp4",
+      targetDirectoryId: target.id,
+    });
+    const task = (added.state.downloads as { tasks: Array<Record<string, unknown>> }).tasks[0];
+    expect(task).toMatchObject({ status: "completed", title: "Fixture download" });
+    expect(task?.requestReference).toMatch(/^download:/);
+    expect(JSON.stringify(added.state)).not.toContain("https://media.example.test");
+    expect(JSON.stringify(added.state)).not.toContain(directory);
+
+    await post(server.url, "/api/downloads/open-folder", { targetDirectoryId: target.id });
+    expect(openedPath).toBe(targetPath);
+    await downloads.close();
   });
 
   function createHistoryService(): HistoryProgressService {

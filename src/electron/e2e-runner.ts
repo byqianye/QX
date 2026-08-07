@@ -45,6 +45,8 @@ export interface PackagedE2eOptions {
   verifyFakeMpv?: boolean;
   verifyLocalMedia?: boolean;
   localMediaFile?: string;
+  verifyDownloads?: boolean;
+  downloadDirectory?: string;
   fakeMpv?: () => Promise<boolean>;
   verifySniffer?: boolean;
   sniff?: () => Promise<SniffedMedia>;
@@ -82,6 +84,8 @@ export interface PackagedE2eChecks {
   fakeMpvExit?: boolean;
   localMedia?: boolean;
   localMediaRestart?: boolean;
+  downloads?: boolean;
+  downloadsRestart?: boolean;
   hlsTopology?: boolean;
   aggregateSearch?: boolean;
   proxyCleanup?: boolean;
@@ -1023,6 +1027,58 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
           : beforeLocal?.sourceType === "local" && beforeLocal.position === 3;
         void options.localMediaFile;
       }
+      if (options.verifyDownloads) {
+        if (!options.downloadDirectory) throw new Error("Packaged download E2E directory is not configured");
+        const beforeDownloads = await getState(options.baseUrl);
+        let downloadState = beforeDownloads.state?.downloads ?? beforeDownloads.downloads;
+        let target = downloadState?.targetDirectories[0];
+        if (!target) {
+          const selected = await post(options.baseUrl, "/api/downloads/select-folder");
+          downloadState = selected.state?.downloads ?? selected.downloads;
+          target = downloadState?.targetDirectories[0];
+        }
+        if (!target) throw new Error("Packaged download E2E did not select a target directory");
+        let downloadResult = beforeDownloads;
+        let pauseVerified = false;
+        let resumeVerified = false;
+        if (options.freshTrust && (!downloadState || downloadState.tasks.length === 0)) {
+          const addedDownload = await post(options.baseUrl, "/api/downloads/add", {
+            title: "Packaged download fixture",
+            url: "https://media.example.test/files/fixture.mp4",
+            filename: "fixture.mp4",
+            targetDirectoryId: target.id,
+          });
+          const addedTask = addedDownload.state?.downloads?.tasks[0] ?? addedDownload.downloads?.tasks[0];
+          if (!addedTask) throw new Error("Packaged download E2E did not create a task");
+          const paused = await post(options.baseUrl, "/api/downloads/pause", { taskId: addedTask.id });
+          pauseVerified = paused.state?.downloads?.tasks[0]?.status === "paused"
+            || paused.downloads?.tasks[0]?.status === "paused";
+          const resumed = await post(options.baseUrl, "/api/downloads/resume", { taskId: addedTask.id });
+          resumeVerified = resumed.state?.downloads?.tasks[0]?.status === "downloading"
+            || resumed.downloads?.tasks[0]?.status === "downloading";
+          downloadResult = await post(options.baseUrl, "/api/downloads/refresh");
+        } else {
+          downloadResult = await post(options.baseUrl, "/api/downloads/refresh");
+        }
+        const finalDownloads = downloadResult.state?.downloads ?? downloadResult.downloads;
+        const downloadTask = finalDownloads?.tasks.find((task) => task.title === "Packaged download fixture")
+          ?? finalDownloads?.tasks[0];
+        let downloadsHtml = "";
+        if (options.readWindowHtml) {
+          await post(options.baseUrl, "/api/view-state", { navigation: "downloads" });
+          downloadsHtml = await readPage(options);
+        }
+        checks.downloads = target.id.startsWith("download-dir-")
+          && downloadTask?.status === "completed"
+          && downloadTask.requestReference.startsWith("download:")
+          && !JSON.stringify({ finalDownloads, downloadsHtml }).includes(options.downloadDirectory)
+          && !JSON.stringify({ finalDownloads, downloadsHtml }).includes("https://media.example.test")
+          && (!options.freshTrust || (pauseVerified && resumeVerified))
+          && (!options.readWindowHtml || downloadsHtml.includes('data-testid="downloads-page"'));
+        checks.downloadsRestart = options.freshTrust
+          ? true
+          : downloadTask?.status === "completed" && downloadTask.title === "Packaged download fixture";
+      }
     }
 
     const repeated = await load(options.baseUrl, options.configJson);
@@ -1115,6 +1171,7 @@ async function post(
   return {
     import: value.import as unknown as ImportState,
     state: isRecord(value.state) ? value.state as unknown as UiState : null,
+    ...(isRecord(value.downloads) ? { downloads: value.downloads as unknown as DownloadState } : {}),
   };
 }
 
@@ -1195,6 +1252,7 @@ async function getState(baseUrl: string): Promise<UiEnvelope> {
   return {
     import: value.import as unknown as ImportState,
     state: isRecord(value.state) ? value.state as unknown as UiState : null,
+    ...(isRecord(value.downloads) ? { downloads: value.downloads as unknown as DownloadState } : {}),
   };
 }
 
@@ -1259,11 +1317,28 @@ function followItem(state: UiState | null, identity: string | null): Record<stri
 interface UiEnvelope {
   import: ImportState;
   state: UiState | null;
+  downloads?: DownloadState;
 }
 
 interface ImportState {
   status: string;
   trusted: boolean;
+}
+
+interface DownloadState {
+  tasks: readonly {
+    id: string;
+    title: string;
+    targetDirectoryId: string;
+    suggestedFilename: string;
+    requestReference: string;
+    status: string;
+    error: string | null;
+  }[];
+  targetDirectories: readonly { id: string; displayName: string }[];
+  backend?: string;
+  aria2Available?: boolean;
+  error?: { code: string; message: string } | null;
 }
 
 interface UiState {
@@ -1323,6 +1398,7 @@ interface UiState {
       fileReference: string;
     }[];
   };
+  downloads?: DownloadState;
   historyResume?: { position: number } | null;
   favoriteDetail?: { favoriteId?: string; groupId?: string | null } | null;
   favorites?: {

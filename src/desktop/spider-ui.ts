@@ -117,6 +117,9 @@ import {
 import { DanmakuService } from "../danmaku/danmaku-service.js";
 import { LocalMediaError, LocalMediaService, type LocalMediaStream } from "../local-media/local-media-service.js";
 import { EMPTY_LOCAL_MEDIA_UI_STATE, type LocalMediaUiState } from "../local-media/local-media-types.js";
+import { DownloadError } from "../downloads/download-backend.js";
+import { DownloadService, DownloadServiceError } from "../downloads/download-service.js";
+import { EMPTY_DOWNLOAD_UI_STATE, type DownloadUiState } from "../downloads/download-types.js";
 import {
   EMPTY_LIVE_UI_STATE,
   isLiveSourceType,
@@ -250,6 +253,7 @@ export interface DesktopSpiderUiState {
   storage: StorageUiState;
   danmaku: import("../danmaku/danmaku-types.js").DanmakuUiState;
   localMedia: LocalMediaUiState;
+  downloads: DownloadUiState;
 }
 
 export interface DesktopSpiderUiOptions {
@@ -271,6 +275,7 @@ export interface DesktopSpiderUiOptions {
   storage?: DataStorageService;
   danmaku?: DanmakuService;
   localMedia?: LocalMediaService;
+  downloads?: DownloadService;
 }
 
 export class DesktopSpiderUiController {
@@ -310,6 +315,7 @@ export class DesktopSpiderUiController {
   private readonly storageService: DataStorageService | undefined;
   private readonly danmakuService: DanmakuService | undefined;
   private readonly localMediaService: LocalMediaService | undefined;
+  private readonly downloadService: DownloadService | undefined;
   private historyResume: HistoryResumeCandidate | null = null;
   private pendingResumeSeconds = 0;
 
@@ -323,6 +329,7 @@ export class DesktopSpiderUiController {
     this.storageService = options.storage;
     this.danmakuService = options.danmaku;
     this.localMediaService = options.localMedia;
+    this.downloadService = options.downloads;
     this.parserCandidates = options.parserCandidates?.map(cloneParserCandidate) ?? [];
     this.sniffer = options.sniffer;
     this.parserAllowedOrigins = options.parserAllowedOrigins ?? [];
@@ -384,6 +391,7 @@ export class DesktopSpiderUiController {
       storage: this.storageService?.uiState() ?? EMPTY_STORAGE_UI_STATE,
       danmaku: this.danmakuService?.uiState() ?? EMPTY_DANMAKU_UI_STATE,
       localMedia: this.localMediaService?.uiState() ?? EMPTY_LOCAL_MEDIA_UI_STATE,
+      downloads: this.downloadService?.uiState() ?? EMPTY_DOWNLOAD_UI_STATE,
     };
   }
 
@@ -1471,6 +1479,7 @@ export interface DesktopSpiderUiServerOptions {
   storage?: DataStorageService;
   danmaku?: DanmakuService;
   localMedia?: LocalMediaService;
+  downloads?: DownloadService;
   live?: LiveSourceService;
   livePlayback?: LivePlaybackService;
   smartChannels?: SmartChannelService;
@@ -1480,6 +1489,8 @@ export interface DesktopSpiderUiServerOptions {
   onStorageSwitch?: (mode: StorageMode) => void;
   onLocalFilePicker?: () => Promise<readonly string[]>;
   onLocalFolderPicker?: () => Promise<string | null>;
+  onDownloadFolderPicker?: () => Promise<string | null>;
+  onDownloadFolderOpen?: (directoryPath: string) => void | Promise<void>;
 }
 
 export class DesktopSpiderUiServer {
@@ -1510,6 +1521,7 @@ export class DesktopSpiderUiServer {
   private readonly storageService: DataStorageService | undefined;
   private readonly danmakuService: DanmakuService | undefined;
   private readonly localMediaService: LocalMediaService | undefined;
+  private readonly downloadService: DownloadService | undefined;
   private readonly liveService: LiveSourceService | undefined;
   private readonly livePlayback: LivePlaybackService | undefined;
   private readonly smartChannels: SmartChannelService | undefined;
@@ -1519,6 +1531,8 @@ export class DesktopSpiderUiServer {
   private readonly onStorageSwitch: ((mode: StorageMode) => void) | undefined;
   private readonly onLocalFilePicker: (() => Promise<readonly string[]>) | undefined;
   private readonly onLocalFolderPicker: (() => Promise<string | null>) | undefined;
+  private readonly onDownloadFolderPicker: (() => Promise<string | null>) | undefined;
+  private readonly onDownloadFolderOpen: ((directoryPath: string) => void | Promise<void>) | undefined;
   private server: Server | undefined;
   private boundUrl: string | undefined;
   private boundSession: DesktopSpiderSessionPort | undefined;
@@ -1561,6 +1575,7 @@ export class DesktopSpiderUiServer {
     this.storageService = options.storage;
     this.danmakuService = options.danmaku;
     this.localMediaService = options.localMedia;
+    this.downloadService = options.downloads;
     this.liveService = options.live;
     this.livePlayback = options.livePlayback;
     this.smartChannels = options.smartChannels;
@@ -1570,6 +1585,8 @@ export class DesktopSpiderUiServer {
     this.onStorageSwitch = options.onStorageSwitch;
     this.onLocalFilePicker = options.onLocalFilePicker;
     this.onLocalFolderPicker = options.onLocalFolderPicker;
+    this.onDownloadFolderPicker = options.onDownloadFolderPicker;
+    this.onDownloadFolderOpen = options.onDownloadFolderOpen;
   }
 
   public get url(): string {
@@ -1664,6 +1681,11 @@ export class DesktopSpiderUiServer {
       }
 
       const body = await readJson(request);
+      if (url.pathname.startsWith("/api/downloads/")) {
+        await this.handleDownloadRequest(url.pathname, body);
+        this.writeCurrentState(response);
+        return;
+      }
       if (url.pathname.startsWith("/api/local-media/")) {
         await this.handleLocalMediaRequest(url.pathname, body);
         this.writeCurrentState(response);
@@ -2047,6 +2069,8 @@ export class DesktopSpiderUiServer {
       const message = error instanceof Error ? error.message : String(error);
       const errorCode = error instanceof LiveSourceError
         ? error.code
+        : error instanceof DownloadServiceError || error instanceof DownloadError
+          ? error.code
         : error instanceof LocalMediaError
           ? error.code
         : error instanceof LivePlaybackError
@@ -2065,6 +2089,44 @@ export class DesktopSpiderUiServer {
         state: ui?.state ?? null,
         ...(this.liveService || this.livePlayback ? { live: this.liveUiState() } : {}),
       }, 400);
+    }
+  }
+
+  private async handleDownloadRequest(pathname: string, body: Record<string, unknown>): Promise<void> {
+    const service = this.downloadService;
+    if (!service) throw new DownloadServiceError("DOWNLOAD_OPERATION_INVALID", "下载服务不可用。");
+    if (pathname === "/api/downloads/select-folder") {
+      if (!this.onDownloadFolderPicker) throw new DownloadServiceError("DOWNLOAD_TARGET_INVALID", "下载目录选择器不可用。");
+      const selected = await this.onDownloadFolderPicker();
+      if (selected) await service.selectTargetDirectory(selected);
+      return;
+    }
+    if (pathname === "/api/downloads/add") {
+      await service.add({
+        title: stringValue(body.title, ""),
+        requestReference: stringValue(body.url, ""),
+        suggestedFilename: stringValue(body.filename, ""),
+        targetDirectoryId: stringValue(body.targetDirectoryId, ""),
+        // This route is only reachable from the explicit Add Download action.
+        explicitUserUrl: true,
+      });
+      return;
+    }
+    if (pathname === "/api/downloads/refresh") {
+      await service.refresh();
+      return;
+    }
+    const taskId = stringValue(body.taskId, "");
+    if (pathname === "/api/downloads/pause") await service.pause(taskId);
+    else if (pathname === "/api/downloads/resume") await service.resume(taskId);
+    else if (pathname === "/api/downloads/cancel") await service.cancel(taskId);
+    else if (pathname === "/api/downloads/retry") await service.retry(taskId);
+    else if (pathname === "/api/downloads/remove") await service.remove(taskId);
+    else if (pathname === "/api/downloads/open-folder") {
+      if (!this.onDownloadFolderOpen) throw new DownloadServiceError("DOWNLOAD_TARGET_INVALID", "打开下载目录不可用。");
+      await this.onDownloadFolderOpen(service.targetDirectoryPath(stringValue(body.targetDirectoryId, "")));
+    } else {
+      throw new DownloadServiceError("DOWNLOAD_OPERATION_INVALID", "下载请求不存在。");
     }
   }
 
@@ -2525,6 +2587,7 @@ export class DesktopSpiderUiServer {
         ...(this.storageService ? { storage: this.storageService } : {}),
         ...(this.danmakuService ? { danmaku: this.danmakuService } : {}),
         ...(this.localMediaService ? { localMedia: this.localMediaService } : {}),
+        ...(this.downloadService ? { downloads: this.downloadService } : {}),
         ...(this.onStorageOpen ? { onStorageOpen: this.onStorageOpen } : {}),
         ...(this.onStorageSwitch ? { onStorageSwitch: this.onStorageSwitch } : {}),
       });
@@ -2562,8 +2625,9 @@ export class DesktopSpiderUiServer {
     const persistence = this.stateStore?.rendererState();
     const live = this.liveUiState();
     const localMedia = this.localMediaService?.uiState(this.boundUrl);
+    const downloads = this.downloadService?.uiState();
     const state = visibleState
-      ? { ...visibleState, live, ...(localMedia ? { localMedia } : {}) }
+      ? { ...visibleState, live, ...(localMedia ? { localMedia } : {}), ...(downloads ? { downloads } : {}) }
       : null;
     if (this.importer) {
       writeJson(response, {
@@ -2571,6 +2635,7 @@ export class DesktopSpiderUiServer {
         state,
         live,
         ...(localMedia ? { localMedia } : {}),
+        ...(downloads ? { downloads } : {}),
         ...(persistence ? { persistence } : {}),
       });
     } else {
@@ -2578,6 +2643,7 @@ export class DesktopSpiderUiServer {
         state,
         live,
         ...(localMedia ? { localMedia } : {}),
+        ...(downloads ? { downloads } : {}),
         ...(persistence ? { persistence } : {}),
       });
     }
@@ -3363,7 +3429,7 @@ function isThemeMode(value: unknown): value is "system" | "light" | "dark" {
   return value === "system" || value === "light" || value === "dark";
 }
 
-function isNavigation(value: unknown): value is "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" | "live" | "local" {
+function isNavigation(value: unknown): value is "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" | "live" | "local" | "downloads" {
   return value === "home"
     || value === "category"
     || value === "search"
@@ -3373,7 +3439,8 @@ function isNavigation(value: unknown): value is "home" | "category" | "search" |
     || value === "follow"
     || value === "settings"
     || value === "live"
-    || value === "local";
+    || value === "local"
+    || value === "downloads";
 }
 
 function isCacheClearScope(value: unknown): value is CacheClearScope {

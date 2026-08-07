@@ -76,7 +76,7 @@ describe("live playback session", () => {
     expect(service.proxySessionCount).toBe(0);
     expect(service.uiState(EMPTY_LIVE_UI_STATE).session?.state).toBe("stopped");
     await service.close();
-    expect(layer.schemaVersion).toBe(9);
+    expect(layer.schemaVersion).toBe(10);
   });
 
   it("cancels stale channel work and never lets a late response replace the newest generation", async () => {

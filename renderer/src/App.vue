@@ -413,6 +413,15 @@ function playLocal(itemId: string, resumeMode?: HistoryResumeMode): void {
       @local-player-detach="detachPlayer"
       @local-player-stop="stopPlayer"
       @local-player-sync="syncPlayer"
+      @download-select-folder="post('download-select-folder', '/api/downloads/select-folder')"
+      @download-add="post('download-add', '/api/downloads/add', { title: $event.title, url: $event.url, filename: $event.filename, targetDirectoryId: $event.targetDirectoryId })"
+      @download-refresh="post('download-refresh', '/api/downloads/refresh')"
+      @download-pause="post('download-pause', '/api/downloads/pause', { taskId: $event })"
+      @download-resume="post('download-resume', '/api/downloads/resume', { taskId: $event })"
+      @download-cancel="post('download-cancel', '/api/downloads/cancel', { taskId: $event })"
+      @download-retry="post('download-retry', '/api/downloads/retry', { taskId: $event })"
+      @download-remove="post('download-remove', '/api/downloads/remove', { taskId: $event })"
+      @download-open-folder="post('download-open-folder', '/api/downloads/open-folder', { targetDirectoryId: $event })"
     />
   </div>
 </template>

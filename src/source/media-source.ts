@@ -10,6 +10,8 @@ export interface SourceCapabilities {
   filters: boolean;
   pagination: boolean;
   engine: SourceEngine;
+  /** Explicitly provided legal download endpoint capability; false/undefined means playback is not downloadable. */
+  download?: boolean;
 }
 
 export interface SourceInitContext {

@@ -9,7 +9,7 @@ import {
   type DatabaseErrorCode,
 } from "./errors.js";
 
-export const SUPPORTED_SCHEMA_VERSION = 9;
+export const SUPPORTED_SCHEMA_VERSION = 10;
 
 interface Migration {
   version: number;
@@ -446,6 +446,45 @@ const migrations: readonly Migration[] = [
         ON local_media_items(display_name COLLATE NOCASE, id);
       CREATE INDEX local_media_items_missing
         ON local_media_items(missing, updated_at DESC);
+    `,
+  },
+  {
+    version: 10,
+    name: "download-manager",
+    sql: `
+      CREATE TABLE download_target_directories (
+        id TEXT PRIMARY KEY NOT NULL,
+        directory_path TEXT NOT NULL UNIQUE,
+        display_name TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT;
+
+      CREATE TABLE download_tasks (
+        id TEXT PRIMARY KEY NOT NULL,
+        source_id TEXT,
+        content_id TEXT,
+        title TEXT NOT NULL,
+        target_directory_id TEXT NOT NULL,
+        suggested_filename TEXT NOT NULL,
+        request_reference TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('queued', 'starting', 'downloading', 'paused', 'completed', 'failed', 'cancelled', 'removed')),
+        total_bytes INTEGER,
+        completed_bytes INTEGER,
+        speed INTEGER,
+        created_at INTEGER NOT NULL,
+        started_at INTEGER,
+        completed_at INTEGER,
+        updated_at INTEGER NOT NULL,
+        error TEXT,
+        backend_id TEXT,
+        FOREIGN KEY (target_directory_id) REFERENCES download_target_directories(id) ON DELETE RESTRICT
+      ) STRICT;
+
+      CREATE INDEX download_tasks_status_updated
+        ON download_tasks(status, updated_at DESC, id);
+      CREATE INDEX download_tasks_target_updated
+        ON download_tasks(target_directory_id, updated_at DESC, id);
     `,
   },
 ];

@@ -1332,6 +1332,68 @@ npm run electron:e2e:package
 checkpoint: complete G63 local media
 ```
 
+## G64 (completed)
+
+### Goal
+
+Add a bounded download manager with a `DownloadBackend` contract, external
+aria2 adapter, deterministic fake backend, SQLite task/target metadata,
+explicit HTTP/HTTPS eligibility, safe filenames, opaque target identities,
+restart handling, and the Downloads page.
+
+### Status
+
+Completed. G64 uses SQLite migration v10. aria2 is optional and externally
+configured through `QX_ARIA2_PATH`; the application does not ship, fetch, or
+automatically install a downloader. Packaged E2E uses an explicit fake backend
+fixture and verifies first-run completion, restart metadata, UI routing, and
+redaction.
+
+### Dependency
+
+- G63 checkpoint `38f1944`: `checkpoint: complete G63 local media`
+
+### Scope and acceptance
+
+- Download tasks support queued, starting, downloading, paused, completed,
+  failed, cancelled, and removed states with add/pause/resume/cancel/retry/
+  remove/status/shutdown operations.
+- Only a source-declared legal download endpoint or an explicit user-entered
+  HTTP/HTTPS URL may create a task. Playback/sniff URLs, ordinary HLS, BT,
+  magnet, and P2P inputs are not auto-converted.
+- Folder selection is main-process owned. The renderer receives opaque folder
+  ids; filenames reject traversal, absolute/drive/UNC paths, reserved device
+  names, invalid characters, trailing dot/space, and collisions.
+- Public task state, diagnostics, and UI errors do not expose absolute paths,
+  actual request URLs, Cookie, Authorization, token, or secret values.
+- Downloads exposes Active, Completed, and Failed views and the required task
+  controls while reusing the existing shell and player boundaries.
+- Missing aria2, RPC auth, crash, shutdown, restart, migration, server route,
+  renderer, package, and packaged first/restart E2E paths are covered.
+
+### Verification commands
+
+```powershell
+git diff --check
+npm run typecheck
+npm test
+npm run renderer:build
+npm run electron:build
+npm run electron:package:win
+npm run electron:e2e:package
+```
+
+### Documentation
+
+- `docs/spike-64-download-manager.md`
+- `docs/design/open-design/stage-5/downloads-spec.md`
+
+### Checkpoint
+
+```text
+checkpoint: complete G64 download manager
+```
+
 ## Stage 4 (completed)
 
 直播与 EPG 闭环已完成：授权 M3U/TXT 导入、Live 浏览与播放、XMLTV、EPG

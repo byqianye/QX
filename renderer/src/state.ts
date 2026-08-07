@@ -13,6 +13,8 @@ import { EMPTY_DANMAKU_UI_STATE } from "../../src/danmaku/danmaku-types.js";
 import type { DanmakuUiState } from "../../src/danmaku/danmaku-types.js";
 import { EMPTY_LOCAL_MEDIA_UI_STATE } from "../../src/local-media/local-media-types.js";
 import type { LocalMediaUiState } from "../../src/local-media/local-media-types.js";
+import { EMPTY_DOWNLOAD_UI_STATE } from "../../src/downloads/download-types.js";
+import type { DownloadUiState } from "../../src/downloads/download-types.js";
 
 export type ImportStatus =
   | "empty"
@@ -32,7 +34,7 @@ export type SpiderStatus =
   | "destroyed";
 
 export type RendererThemeMode = "system" | "light" | "dark";
-export type RendererNavigation = "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" | "live" | "local";
+export type RendererNavigation = "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" | "live" | "local" | "downloads";
 export type PlayerHostMode = "embedded" | "detached";
 export const PLAYBACK_RESTORE_MAX_DRIFT_SECONDS = 2;
 
@@ -277,6 +279,7 @@ export interface RendererState {
   storage: StorageUiState;
   danmaku: DanmakuUiState;
   localMedia: LocalMediaUiState;
+  downloads: DownloadUiState;
   live: LiveUiState;
   error: ErrorState;
 }
@@ -312,6 +315,7 @@ export interface ApiSpiderState {
   danmaku?: DanmakuUiState;
   live?: LiveUiState;
   localMedia?: LocalMediaUiState;
+  downloads?: DownloadUiState;
 }
 
 export interface RendererEnvelope {
@@ -320,6 +324,7 @@ export interface RendererEnvelope {
   persistence?: RendererPersistenceState | null;
   live?: LiveUiState | null;
   localMedia?: LocalMediaUiState | null;
+  downloads?: DownloadUiState | null;
   error?: string;
   errorCode?: string;
 }
@@ -377,6 +382,7 @@ export function createRendererState(): RendererState {
     storage: { mode: "normal", dataRoot: "—", normalRoot: "—", portableRoot: "—", databaseBytes: 0, cacheBytes: 0, totalBytes: 0, historyCount: 0, favoritesCount: 0, followCount: 0, writable: false, switching: false, error: null },
     danmaku: cloneDanmakuState(EMPTY_DANMAKU_UI_STATE),
     localMedia: cloneLocalMediaState(EMPTY_LOCAL_MEDIA_UI_STATE),
+    downloads: cloneDownloadState(EMPTY_DOWNLOAD_UI_STATE),
     live: cloneLiveUiState(EMPTY_LIVE_UI_STATE),
     error: { error: null },
   };
@@ -398,6 +404,11 @@ export function applyRendererEnvelope(
     : state?.localMedia
       ? cloneLocalMediaState(state.localMedia)
       : current.localMedia;
+  const downloads = envelope.downloads
+    ? cloneDownloadState(envelope.downloads)
+    : state?.downloads
+      ? cloneDownloadState(state.downloads)
+      : current.downloads;
   const envelopeError = envelope.error
     ? { code: envelope.errorCode ?? "RENDERER_REQUEST_ERROR", message: envelope.error }
     : null;
@@ -409,6 +420,7 @@ export function applyRendererEnvelope(
       import: importState,
       live,
       localMedia,
+      downloads,
       error: {
         error: toAppError(nextError) ?? current.error.error,
       },
@@ -454,6 +466,7 @@ export function applyRendererEnvelope(
     storage: cloneStorageState(state.storage ?? current.storage),
     danmaku: cloneDanmakuState(state.danmaku ?? current.danmaku),
     localMedia,
+    downloads,
     live,
     error: { error: toAppError(stateError) },
   };
@@ -730,6 +743,16 @@ function cloneLocalMediaState(state: LocalMediaUiState): LocalMediaUiState {
     scan: { ...state.scan },
     error: state.error ? { ...state.error } : null,
     limits: { ...state.limits },
+  };
+}
+
+function cloneDownloadState(state: DownloadUiState): DownloadUiState {
+  return {
+    tasks: state.tasks.map((task) => ({ ...task })),
+    targetDirectories: state.targetDirectories.map((directory) => ({ ...directory })),
+    backend: state.backend,
+    aria2Available: state.aria2Available,
+    error: state.error ? { ...state.error } : null,
   };
 }
 

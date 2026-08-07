@@ -15,6 +15,7 @@ import CacheManagement from "./CacheManagement.vue";
 import StorageManagement from "./StorageManagement.vue";
 import LiveSourcesView from "./LiveSourcesView.vue";
 import LocalMediaView from "./LocalMediaView.vue";
+import DownloadsView from "./DownloadsView.vue";
 import EpgSourcesView from "./EpgSourcesView.vue";
 import MediaGrid from "./MediaGrid.vue";
 import PlaybackSelector from "./PlaybackSelector.vue";
@@ -145,15 +146,25 @@ const emit = defineEmits<{
   localPlayerDetach: [];
   localPlayerStop: [];
   localPlayerSync: [value: PlayerMediaSync];
+  downloadSelectFolder: [];
+  downloadAdd: [payload: { title: string; url: string; filename: string; targetDirectoryId: string }];
+  downloadRefresh: [];
+  downloadPause: [taskId: string];
+  downloadResume: [taskId: string];
+  downloadCancel: [taskId: string];
+  downloadRetry: [taskId: string];
+  downloadRemove: [taskId: string];
+  downloadOpenFolder: [targetDirectoryId: string];
 }>();
 
-const view = ref<"browse" | "history" | "favorites" | "follow" | "settings" | "live" | "local">(props.initialNavigation === "settings"
+const view = ref<"browse" | "history" | "favorites" | "follow" | "settings" | "live" | "local" | "downloads">(props.initialNavigation === "settings"
   ? "settings"
   : props.initialNavigation === "live" ? "live"
   : props.initialNavigation === "history" ? "history"
     : props.initialNavigation === "favorites" ? "favorites"
       : props.initialNavigation === "follow" ? "follow"
-        : props.initialNavigation === "local" ? "local" : "browse");
+        : props.initialNavigation === "local" ? "local"
+          : props.initialNavigation === "downloads" ? "downloads" : "browse");
 const theme = ref<"system" | "light" | "dark">(props.initialTheme ?? "light");
 const systemTheme = ref<"light" | "dark">("light");
 const debugOpen = ref(false);
@@ -201,7 +212,7 @@ const selectedLine = computed(() => {
 
 const canStart = computed(() => props.state.spider.status === "idle"
   || (props.state.spider.status === "error" && !props.state.spider.sidecarRunning));
-const activePage = computed(() => view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow" || view.value === "live" || view.value === "local" ? view.value : props.state.browse.page);
+const activePage = computed(() => view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow" || view.value === "live" || view.value === "local" || view.value === "downloads" ? view.value : props.state.browse.page);
 const retryable = computed(() => props.state.error.error?.retryable === true);
 const hasPlayback = computed(() => props.state.detail.playbackCatalog !== null || props.state.playback.player.source !== null);
 const playerDetached = computed(() => props.state.playback.session?.host === "detached");
@@ -240,13 +251,13 @@ watch(() => props.state.browse.page, (page) => {
 watch(theme, () => {
   emit("viewState", {
     theme: theme.value,
-    navigation: view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow" || view.value === "live" || view.value === "local"
+    navigation: view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow" || view.value === "live" || view.value === "local" || view.value === "downloads"
       ? view.value
       : navigationFromPage(props.state.browse.page),
   });
 });
 
-function navigate(route: "home" | "category" | "history" | "favorites" | "follow" | "settings" | "live" | "local"): void {
+function navigate(route: "home" | "category" | "history" | "favorites" | "follow" | "settings" | "live" | "local" | "downloads"): void {
   if (route === "settings") {
     view.value = "settings";
     persistNavigation("settings");
@@ -276,6 +287,12 @@ function navigate(route: "home" | "category" | "history" | "favorites" | "follow
   if (route === "local") {
     view.value = "local";
     persistNavigation("local");
+    return;
+  }
+  if (route === "downloads") {
+    view.value = "downloads";
+    persistNavigation("downloads");
+    emit("downloadRefresh");
     return;
   }
   view.value = "browse";
@@ -400,8 +417,8 @@ function navigationFromPage(page: string): RendererNavigation {
       <div class="workspace-content">
         <header class="workspace-header">
           <div>
-            <span class="section-kicker">{{ view === "live" ? "直播源管理" : view === "settings" ? "工作区设置" : view === "history" ? "播放历史" : view === "favorites" ? "收藏管理" : view === "follow" ? "追更状态" : "媒体工作台" }}</span>
-            <h1>{{ view === "live" ? "直播源" : view === "settings" ? "设置" : view === "history" ? "History" : view === "favorites" ? "Favorites" : view === "follow" ? "追更" : (props.state.spider.api ? displaySource(props.state.spider.api) : "QX 影视") }}</h1>
+            <span class="section-kicker">{{ view === "live" ? "直播源管理" : view === "downloads" ? "下载任务" : view === "settings" ? "工作区设置" : view === "history" ? "播放历史" : view === "favorites" ? "收藏管理" : view === "follow" ? "追更状态" : "媒体工作台" }}</span>
+            <h1>{{ view === "live" ? "直播源" : view === "downloads" ? "Downloads" : view === "settings" ? "设置" : view === "history" ? "History" : view === "favorites" ? "Favorites" : view === "follow" ? "追更" : (props.state.spider.api ? displaySource(props.state.spider.api) : "QX 影视") }}</h1>
             <p data-testid="status" class="workspace-status" :class="{ loading: props.state.browse.loading || props.pending !== null }">
               {{ statusLabels[props.state.spider.status] }}{{ props.state.browse.loading || props.pending !== null ? " · 加载中" : "" }}
             </p>
@@ -414,7 +431,7 @@ function navigationFromPage(page: string): RendererNavigation {
         <PlaybackDebugPanel v-if="debugOpen" :snapshot="debugSnapshot" @close="closeDebug" />
 
         <SourceSwitcher
-          v-if="view !== 'live' && view !== 'local'"
+          v-if="view !== 'live' && view !== 'local' && view !== 'downloads'"
           :source="props.state.spider.source"
           :api="props.state.spider.api"
           :status="props.state.spider.status"
@@ -422,7 +439,22 @@ function navigationFromPage(page: string): RendererNavigation {
           @change="emit('switch')"
         />
 
-        <template v-if="view === 'local'">
+        <template v-if="view === 'downloads'">
+          <DownloadsView
+            :state="props.state.downloads"
+            :pending="props.pending"
+            @select-folder="emit('downloadSelectFolder')"
+            @add="emit('downloadAdd', $event)"
+            @refresh="emit('downloadRefresh')"
+            @pause="emit('downloadPause', $event)"
+            @resume="emit('downloadResume', $event)"
+            @cancel="emit('downloadCancel', $event)"
+            @retry="emit('downloadRetry', $event)"
+            @remove="emit('downloadRemove', $event)"
+            @open-folder="emit('downloadOpenFolder', $event)"
+          />
+        </template>
+        <template v-else-if="view === 'local'">
           <LocalMediaView
             :state="props.state.localMedia"
             :history="props.state.history"

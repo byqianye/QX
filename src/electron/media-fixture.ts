@@ -175,7 +175,7 @@ async function handleRequest(
   }
 
   if (url.pathname === "/epg/guide.xml") {
-    const etag = "\"g58-epg-v1\"";
+    const etag = `"g58-epg-v${Math.floor(Date.now() / HOUR_MS)}"`;
     if (request.headers["if-none-match"] === etag) {
       response.writeHead(304, { etag, "access-control-allow-origin": "*" });
       response.end();
@@ -791,25 +791,36 @@ function serveText(
 }
 
 function serveEpgFixture(request: IncomingMessage, response: ServerResponse, etag: string): void {
+  const currentStart = Math.floor(Date.now() / HOUR_MS) * HOUR_MS;
+  const nextStart = currentStart + HOUR_MS;
+  const movieStop = currentStart + 2 * HOUR_MS;
   const body = Buffer.from([
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
     "<tv generator-info-name=\"QX G58 fixture\">",
     "<channel id=\"fixture-news\"><display-name>Fixture 新闻</display-name></channel>",
     "<channel id=\"fixture-movie\"><display-name>Fixture 电影</display-name></channel>",
-    "<programme channel=\"fixture-news\" start=\"20260807120000 +0000\" stop=\"20260807130000 +0000\"><title>Fixture News Current</title><category>News</category></programme>",
-    "<programme channel=\"fixture-news\" start=\"20260807130000 +0000\" stop=\"20260807140000 +0000\"><title>Fixture News Next</title></programme>",
-    "<programme channel=\"fixture-movie\" start=\"20260807120000 +0000\" stop=\"20260807140000 +0000\"><title>Fixture Movie Current</title></programme>",
+    `<programme channel=\"fixture-news\" start=\"${formatXmltvTime(currentStart)}\" stop=\"${formatXmltvTime(nextStart)}\"><title>Fixture News Current</title><category>News</category></programme>`,
+    `<programme channel=\"fixture-news\" start=\"${formatXmltvTime(nextStart)}\" stop=\"${formatXmltvTime(movieStop)}\"><title>Fixture News Next</title></programme>`,
+    `<programme channel=\"fixture-movie\" start=\"${formatXmltvTime(currentStart)}\" stop=\"${formatXmltvTime(movieStop)}\"><title>Fixture Movie Current</title></programme>`,
     "</tv>",
   ].join(""), "utf8");
   response.writeHead(200, {
     "content-type": "application/xml; charset=utf-8",
     "content-length": body.length,
     etag,
-    "last-modified": "Wed, 07 Aug 2026 12:00:00 GMT",
+    "last-modified": new Date(currentStart).toUTCString(),
     "access-control-allow-origin": "*",
   });
   if (request.method === "HEAD") response.end();
   else response.end(body);
+}
+
+const HOUR_MS = 60 * 60 * 1000;
+
+function formatXmltvTime(value: number): string {
+  const date = new Date(value);
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())} +0000`;
 }
 
 function parseRange(value: string, length: number): { start: number; end: number } | null {

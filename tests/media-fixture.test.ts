@@ -109,9 +109,9 @@ describe("local media fixture server", () => {
     const first = await fetch(fixture.epgUrl);
     expect(first.status).toBe(200);
     expect(first.headers.get("content-type")).toContain("application/xml");
-    expect(first.headers.get("etag")).toBe('"g58-epg-v1"');
+    expect(first.headers.get("etag")).toMatch(/^"g58-epg-v\d+"$/u);
     expect(await first.text()).toContain("Fixture News Current");
-    const notModified = await fetch(fixture.epgUrl, { headers: { "if-none-match": '"g58-epg-v1"' } });
+    const notModified = await fetch(fixture.epgUrl, { headers: { "if-none-match": first.headers.get("etag")! } });
     expect(notModified.status).toBe(304);
   });
 

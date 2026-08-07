@@ -194,6 +194,9 @@ export class EpgMatchingService {
 
   public setTimeline(liveChannelId: string, fromAt?: number, toAt?: number): void {
     this.requireLiveChannel(liveChannelId);
+    if (fromAt === undefined && toAt === undefined && this.timelineRequest?.liveChannelId === liveChannelId) {
+      return;
+    }
     const now = this.now();
     const requestedFrom = finiteNumber(fromAt, now - this.timelineBeforeMs);
     const requestedTo = finiteNumber(toAt, now + this.timelineAfterMs);

@@ -1666,6 +1666,45 @@ npm run electron:e2e:package
 checkpoint: complete G69 backup restore
 ```
 
+## R70 (completed)
+
+### Goal
+
+固化 G69 之后的发布基线，并修复 packaged first/restart E2E 中遗留的 Smart
+Channel failover EPG continuity 回归。
+
+### Status
+
+Completed. The fixture now generates current-window XMLTV data, EPG timeline
+windows are preserved across same-channel failover selection, and packaged
+first/restart E2E passes with `liveFailoverEpgContinuity=true`.
+
+### Dependency
+
+- G69 checkpoint `71cad93`
+
+### Verification commands
+
+```powershell
+git diff --check
+npm run typecheck
+npm test -- --maxWorkers=1 --minWorkers=1 --reporter=dot
+npm run renderer:build
+npm run electron:build
+npm run electron:e2e:package
+```
+
+### Documentation
+
+- `docs/spike-r70-release-baseline.md`
+- `verification/R70/README.md`
+
+### Checkpoint
+
+```text
+checkpoint: complete R70 release baseline
+```
+
 ## Stage 4 (completed)
 
 直播与 EPG 闭环已完成：授权 M3U/TXT 导入、Live 浏览与播放、XMLTV、EPG

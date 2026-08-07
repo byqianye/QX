@@ -107,6 +107,15 @@ describe("EPG matching and programme timeline", () => {
     expect(timelineValue?.items.map((item) => item.title)).toEqual(["News Current", "News Next"]);
     expect(timelineValue!.toAt - timelineValue!.fromAt).toBe(4 * 60 * 60 * 1000);
 
+    matching.setTimeline(news!.id);
+    const preservedTimeline = matching.uiState(liveService.uiState().catalog, epgService.uiState()).epg.timeline;
+    expect(preservedTimeline).toMatchObject({
+      liveChannelId: news!.id,
+      fromAt: NOW - 60 * 60 * 1000,
+      toAt: NOW + 3 * 60 * 60 * 1000,
+    });
+    expect(preservedTimeline?.items.map((item) => item.title)).toEqual(["News Current", "News Next"]);
+
     expect(matching.confirmHighConfidence(timeline.catalog)).toBe(2);
     expect(epgRepository.listMappings().filter((mapping) => mapping.userConfirmed)).toHaveLength(3);
   });

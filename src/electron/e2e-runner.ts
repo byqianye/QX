@@ -1,5 +1,7 @@
 import type { SniffedMedia } from "./isolated-sniffer.js";
 
+const HOUR_MS = 60 * 60 * 1000;
+
 export interface PackagedE2eOptions {
   baseUrl: string;
   configUrl: string;
@@ -380,11 +382,12 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
           && confirmedA.mapping.method === "explicit"
           && confirmedE?.mapping?.userConfirmed === true;
 
+        const epgWindowStart = Math.floor(Date.now() / HOUR_MS) * HOUR_MS;
         const timelineResponse = channelA
           ? await post(options.baseUrl, "/api/epg/timeline", {
               liveChannelId: channelA.id,
-              fromAt: Date.UTC(2026, 7, 7, 11),
-              toAt: Date.UTC(2026, 7, 7, 14),
+              fromAt: epgWindowStart,
+              toAt: epgWindowStart + 3 * HOUR_MS,
             })
           : null;
         const timeline = timelineResponse?.state?.live?.epg?.timeline;

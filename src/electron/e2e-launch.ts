@@ -22,6 +22,7 @@ import { createMediaFixtureServer } from "./media-fixture.js";
 const workDirectory = mkdtempSync(join(tmpdir(), "qx-packaged-e2e-"));
 const configFile = join(workDirectory, "config.json");
 const userData = join(workDirectory, "user-data");
+const localMediaFile = join(workDirectory, "local-fixture.mp4");
 const firstResult = join(workDirectory, "first-result.json");
 const secondResult = join(workDirectory, "second-result.json");
 let config = "";
@@ -72,6 +73,7 @@ function playbackRuleEnvironment(configJson: string): Record<string, string> {
 }
 
 try {
+  writeFileSync(localMediaFile, Buffer.alloc(64));
   await mediaFixture.start();
   config = JSON.stringify({
     spider: "csp_Douban.jvm.jar",
@@ -114,6 +116,7 @@ try {
     QX_E2E_RESULT_PATH: firstResult,
     QX_E2E_USER_DATA: userData,
     QX_E2E_PLAYBACK_CONFIG: playbackConfig,
+    QX_E2E_LOCAL_MEDIA_FILE: localMediaFile,
     QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,
     QX_PLAYBACK_FALLBACK_MODE: "auto",
     QX_LIVE_FAILOVER_MODE: "auto",
@@ -155,6 +158,7 @@ try {
     QX_E2E_RESULT_PATH: secondResult,
     QX_E2E_USER_DATA: userData,
     QX_E2E_PLAYBACK_CONFIG: playbackConfig,
+    QX_E2E_LOCAL_MEDIA_FILE: localMediaFile,
     QX_E2E_EXPECTED_FAVORITE_ID: firstFavoriteId,
     QX_E2E_EXPECTED_FOLLOW_ID: firstFollowIdentity,
     QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,

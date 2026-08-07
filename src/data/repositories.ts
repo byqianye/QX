@@ -35,6 +35,8 @@ export interface HistoryRecord {
   updatedAt: number;
   completed: boolean;
   sourceDisplayName: string | null;
+  /** Omitted for legacy/remote rows; local playback is explicitly marked. */
+  sourceType?: "remote" | "local";
 }
 
 export interface PlaybackProgressRecord {
@@ -153,8 +155,8 @@ export class HistoryRepository {
         INSERT INTO history(
           identity, source_id, vod_id, season_id, episode_id, title, poster,
           episode, episode_name, playback_line, position, duration, updated_at,
-          completed, source_display_name
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          completed, source_display_name, source_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(identity) DO UPDATE SET
           source_id = excluded.source_id,
           vod_id = excluded.vod_id,
@@ -169,7 +171,8 @@ export class HistoryRepository {
           duration = excluded.duration,
           updated_at = excluded.updated_at,
           completed = excluded.completed,
-          source_display_name = excluded.source_display_name
+          source_display_name = excluded.source_display_name,
+          source_type = excluded.source_type
       `).run(
         record.identity,
         record.sourceId,
@@ -186,6 +189,7 @@ export class HistoryRepository {
         record.updatedAt,
         record.completed ? 1 : 0,
         record.sourceDisplayName,
+        record.sourceType ?? "remote",
       );
     } catch (error) {
       throw databaseError("DATABASE_WRITE_FAILED", error);
@@ -1356,6 +1360,7 @@ function historyFromRow(row: Record<string, unknown>): HistoryRecord {
     updatedAt: numberValue(row.updated_at),
     completed: booleanValue(row.completed),
     sourceDisplayName: nullableString(row.source_display_name),
+    ...(stringValue(row.source_type) === "local" ? { sourceType: "local" } : {}),
   };
 }
 

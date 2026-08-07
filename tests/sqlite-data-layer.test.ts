@@ -38,7 +38,7 @@ describe("SQLite data layer", () => {
     const opened = openSqliteDataLayer(paths.database);
     layers.push(opened.layer);
     expect(opened.diagnostic).toBeNull();
-    expect(opened.layer.schemaVersion).toBe(8);
+    expect(opened.layer.schemaVersion).toBe(9);
     const tables = opened.layer.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
     ).all().map((row) => row.name);
@@ -67,6 +67,8 @@ describe("SQLite data layer", () => {
       "epg_channel_aliases",
       "smart_channels",
       "smart_channel_members",
+      "local_media_roots",
+      "local_media_items",
       "data_migrations",
     ]));
     expect(opened.layer.prepare("PRAGMA table_info(favorites)").all().map((row) => row.name)).toEqual(expect.arrayContaining([
@@ -89,7 +91,7 @@ describe("SQLite data layer", () => {
 
     const second = openSqliteDataLayer(path);
     layers.push(second.layer);
-    expect(second.layer.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toMatchObject({ count: 8 });
+    expect(second.layer.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toMatchObject({ count: 9 });
     const settings = new SettingsRepository(second.layer);
     const injectionLikeKey = "' OR 1=1; --";
     settings.set(injectionLikeKey, { value: "safe" });
@@ -147,6 +149,16 @@ describe("SQLite data layer", () => {
         check_error TEXT,
         enabled INTEGER NOT NULL DEFAULT 1
       ) STRICT;
+      CREATE TABLE history(
+        identity TEXT PRIMARY KEY NOT NULL,
+        source_id TEXT NOT NULL,
+        vod_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        position REAL NOT NULL,
+        duration REAL NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed INTEGER NOT NULL
+      ) STRICT;
     `);
     legacy.prepare(`
       INSERT INTO favorites(favorite_id, source_id, vod_id, title, group_id, sort_order, added_at, updated_at)
@@ -156,7 +168,7 @@ describe("SQLite data layer", () => {
 
     const opened = openSqliteDataLayer(path);
     layers.push(opened.layer);
-    expect(opened.layer.schemaVersion).toBe(8);
+    expect(opened.layer.schemaVersion).toBe(9);
     expect(opened.layer.prepare("SELECT group_id FROM favorites WHERE favorite_id = ?").get("favorite-legacy"))
       .toMatchObject({ group_id: "default" });
     expect(opened.layer.prepare("SELECT group_id FROM favorite_groups WHERE group_id = ?").get("default"))
@@ -176,7 +188,7 @@ describe("SQLite data layer", () => {
     layers.push(opened.layer);
     expect(opened).toMatchObject({ recovered: true, diagnostic: { code: "DATABASE_VERSION_TOO_NEW" } });
     expect(existsSync(path)).toBe(true);
-    expect(opened.layer.schemaVersion).toBe(8);
+    expect(opened.layer.schemaVersion).toBe(9);
   });
 
   it("rolls back a failed schema migration instead of recording a false version", () => {

@@ -14,6 +14,7 @@ import HistoryView from "./HistoryView.vue";
 import CacheManagement from "./CacheManagement.vue";
 import StorageManagement from "./StorageManagement.vue";
 import LiveSourcesView from "./LiveSourcesView.vue";
+import LocalMediaView from "./LocalMediaView.vue";
 import EpgSourcesView from "./EpgSourcesView.vue";
 import MediaGrid from "./MediaGrid.vue";
 import PlaybackSelector from "./PlaybackSelector.vue";
@@ -131,14 +132,28 @@ const emit = defineEmits<{
   epgMappingConfirmHigh: [];
   epgAliasSet: [payload: { liveChannelId: string; alias: string }];
   epgAliasRemove: [payload: { liveChannelId: string; alias: string }];
+  localOpenFile: [];
+  localAddFolder: [];
+  localRescan: [rootId?: string];
+  localCancelScan: [rootId?: string];
+  localRemoveFolder: [rootId: string];
+  localRemoveItem: [itemId: string];
+  localRemoveHistory: [identity: string];
+  localLocate: [itemId: string];
+  localPlay: [itemId: string, resumeMode?: "continue" | "beginning"];
+  localDrop: [paths: string[]];
+  localPlayerDetach: [];
+  localPlayerStop: [];
+  localPlayerSync: [value: PlayerMediaSync];
 }>();
 
-const view = ref<"browse" | "history" | "favorites" | "follow" | "settings" | "live">(props.initialNavigation === "settings"
+const view = ref<"browse" | "history" | "favorites" | "follow" | "settings" | "live" | "local">(props.initialNavigation === "settings"
   ? "settings"
   : props.initialNavigation === "live" ? "live"
   : props.initialNavigation === "history" ? "history"
     : props.initialNavigation === "favorites" ? "favorites"
-      : props.initialNavigation === "follow" ? "follow" : "browse");
+      : props.initialNavigation === "follow" ? "follow"
+        : props.initialNavigation === "local" ? "local" : "browse");
 const theme = ref<"system" | "light" | "dark">(props.initialTheme ?? "light");
 const systemTheme = ref<"light" | "dark">("light");
 const debugOpen = ref(false);
@@ -186,7 +201,7 @@ const selectedLine = computed(() => {
 
 const canStart = computed(() => props.state.spider.status === "idle"
   || (props.state.spider.status === "error" && !props.state.spider.sidecarRunning));
-const activePage = computed(() => view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow" || view.value === "live" ? view.value : props.state.browse.page);
+const activePage = computed(() => view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow" || view.value === "live" || view.value === "local" ? view.value : props.state.browse.page);
 const retryable = computed(() => props.state.error.error?.retryable === true);
 const hasPlayback = computed(() => props.state.detail.playbackCatalog !== null || props.state.playback.player.source !== null);
 const playerDetached = computed(() => props.state.playback.session?.host === "detached");
@@ -225,13 +240,13 @@ watch(() => props.state.browse.page, (page) => {
 watch(theme, () => {
   emit("viewState", {
     theme: theme.value,
-    navigation: view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow" || view.value === "live"
+    navigation: view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow" || view.value === "live" || view.value === "local"
       ? view.value
       : navigationFromPage(props.state.browse.page),
   });
 });
 
-function navigate(route: "home" | "category" | "history" | "favorites" | "follow" | "settings" | "live"): void {
+function navigate(route: "home" | "category" | "history" | "favorites" | "follow" | "settings" | "live" | "local"): void {
   if (route === "settings") {
     view.value = "settings";
     persistNavigation("settings");
@@ -258,6 +273,11 @@ function navigate(route: "home" | "category" | "history" | "favorites" | "follow
     emit("followRefresh");
     return;
   }
+  if (route === "local") {
+    view.value = "local";
+    persistNavigation("local");
+    return;
+  }
   view.value = "browse";
   persistNavigation(route);
   if (route === "home") emit("home");
@@ -272,6 +292,10 @@ function submitSearch(query: string): void {
 
 function selectCategory(key: "home" | "category"): void {
   navigate(key);
+}
+
+function handleLocalPlay(itemId: string, resumeMode?: "continue" | "beginning"): void {
+  emit("localPlay", itemId, resumeMode);
 }
 
 function playFirstEpisode(): void {
@@ -390,7 +414,7 @@ function navigationFromPage(page: string): RendererNavigation {
         <PlaybackDebugPanel v-if="debugOpen" :snapshot="debugSnapshot" @close="closeDebug" />
 
         <SourceSwitcher
-          v-if="view !== 'live'"
+          v-if="view !== 'live' && view !== 'local'"
           :source="props.state.spider.source"
           :api="props.state.spider.api"
           :status="props.state.spider.status"
@@ -398,7 +422,29 @@ function navigationFromPage(page: string): RendererNavigation {
           @change="emit('switch')"
         />
 
-        <template v-if="view === 'live'">
+        <template v-if="view === 'local'">
+          <LocalMediaView
+            :state="props.state.localMedia"
+            :history="props.state.history"
+            :player="props.state.playback.player"
+            :danmaku="props.state.danmaku"
+            :pending="props.pending"
+            @open-file="emit('localOpenFile')"
+            @add-folder="emit('localAddFolder')"
+            @rescan="emit('localRescan', $event)"
+            @cancel-scan="emit('localCancelScan', $event)"
+            @remove-folder="emit('localRemoveFolder', $event)"
+            @remove-item="emit('localRemoveItem', $event)"
+            @remove-history="emit('localRemoveHistory', $event)"
+            @locate="emit('localLocate', $event)"
+            @play="handleLocalPlay"
+            @drop="emit('localDrop', $event)"
+            @player-detach="emit('localPlayerDetach')"
+            @player-stop="emit('localPlayerStop')"
+            @player-sync="emit('localPlayerSync', $event)"
+          />
+        </template>
+        <template v-else-if="view === 'live'">
           <LiveSourcesView
             :state="props.state.live"
             :pending="props.pending"

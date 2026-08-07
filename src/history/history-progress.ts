@@ -47,6 +47,7 @@ export interface CreateHistoryContextInput {
   episode?: number | null;
   episodeName?: string | null;
   playbackLine?: string | null;
+  sourceType?: "remote" | "local";
 }
 
 export interface HistoryProgressServiceOptions {
@@ -71,6 +72,7 @@ export function sourceIdForHistory(source: string): string {
 
 export function sourceDisplayNameForHistory(source: string): string {
   const text = cleanText(source);
+  if (text.startsWith("local:")) return "本地媒体";
   try {
     const url = new URL(text);
     if (url.protocol === "http:" || url.protocol === "https:") return url.host.slice(0, 96);
@@ -114,6 +116,7 @@ export function createHistoryContext(input: CreateHistoryContextInput): HistoryP
     episodeName: safeHistoryLabel(input.episodeName),
     playbackLine: safeHistoryLabel(input.playbackLine),
     sourceDisplayName: sourceDisplayNameForHistory(input.source),
+    ...(input.sourceType === "local" ? { sourceType: "local" as const } : {}),
   };
 }
 
@@ -361,6 +364,7 @@ function historyRecordFrom(context: HistoryPlaybackContext, progress: PlaybackPr
     updatedAt: progress.updatedAt,
     completed: progress.completed,
     sourceDisplayName: context.sourceDisplayName,
+    ...(context.sourceType === "local" ? { sourceType: "local" as const } : {}),
   };
 }
 

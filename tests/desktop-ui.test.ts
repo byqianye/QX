@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -30,6 +30,7 @@ import { SqliteDataLayer } from "../src/data/sqlite.js";
 import { HistoryProgressService } from "../src/history/history-progress.js";
 import { CacheService } from "../src/cache/cache-service.js";
 import { DataDirectoryResolver, DataStorageService } from "../src/data/data-directory.js";
+import { LocalMediaService } from "../src/local-media/local-media-service.js";
 
 describe("desktop Spider UI", () => {
   const servers: DesktopSpiderUiServer[] = [];
@@ -574,6 +575,87 @@ describe("desktop Spider UI", () => {
     });
     expect(rejected.status).toBe(400);
     expect(await rejected.text()).toContain("STORAGE_CONFIRMATION_REQUIRED");
+  });
+
+  it("plays an authorized local file through the existing player and records local history", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "qx-desktop-local-media-"));
+    historyDirectories.push(directory);
+    const layer = SqliteDataLayer.create(join(directory, "qx-yingshi.db"));
+    historyLayers.push(layer);
+    const mediaPath = join(directory, "fixture.mp4");
+    const folderPath = join(directory, "library");
+    const droppedPath = join(directory, "dropped.webm");
+    mkdirSync(folderPath);
+    writeFileSync(mediaPath, Buffer.alloc(32));
+    writeFileSync(join(folderPath, "library.webm"), Buffer.alloc(12));
+    writeFileSync(droppedPath, Buffer.alloc(8));
+    const history = new HistoryProgressService({
+      db: layer,
+      history: new HistoryRepository(layer),
+      progress: new PlaybackProgressRepository(layer),
+      settings: new SettingsRepository(layer),
+    });
+    const localMedia = new LocalMediaService({ db: layer });
+    const ui = new DesktopSpiderUiController({
+      session: new FixtureSession(),
+      history,
+      localMedia,
+    });
+    const server = new DesktopSpiderUiServer({
+      ui,
+      siteKey: "douban",
+      ext: "fixture-endpoint",
+      history,
+      localMedia,
+      onLocalFilePicker: async () => [mediaPath],
+      onLocalFolderPicker: async () => folderPath,
+    });
+    servers.push(server);
+    await server.start();
+
+    const opened = await post(server.url, "/api/local-media/open-file");
+    const item = (opened.state.localMedia as { items: Array<{ id: string; fileReference: string }> }).items[0];
+    if (!item) throw new Error("Expected local media item");
+    expect(item).toMatchObject({ fileReference: expect.stringMatching(/^local-file:/) });
+    expect(JSON.stringify(opened.state)).not.toContain(directory);
+    const folderAdded = await post(server.url, "/api/local-media/add-folder");
+    expect((folderAdded.state?.localMedia as { folders: Array<{ displayName: string }> }).folders)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ displayName: "library" })]));
+    const dropped = await post(server.url, "/api/local-media/drop", { paths: [droppedPath] });
+    expect((dropped.state?.localMedia as { items: Array<{ displayName: string }> }).items)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ displayName: "dropped.webm" })]));
+    const played = await post(server.url, "/api/local-media/play", { itemId: item.id });
+    const source = (played.state.player as { source: { url: string } }).source;
+    expect(source.url).toContain("/api/local-media/stream/");
+    const media = await fetch(source.url, { headers: { range: "bytes=0-3" } });
+    expect(media.status).toBe(206);
+    expect((await media.arrayBuffer()).byteLength).toBe(4);
+
+    await post(server.url, "/api/player/sync", {
+      status: "playing",
+      currentTime: 5,
+      duration: 100,
+      event: { type: "first-frame" },
+    });
+    await post(server.url, "/api/player/sync", {
+      status: "paused",
+      currentTime: 5,
+      duration: 100,
+      event: { type: "user-pause" },
+    });
+    expect(history.uiState().items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceType: "local", position: 5 }),
+    ]));
+
+    await ui.stopPlayer();
+    const resumedUi = new DesktopSpiderUiController({
+      session: new FixtureSession(),
+      history,
+      localMedia,
+    });
+    await resumedUi.playLocalMedia(item.id, server.url, "continue");
+    expect(resumedUi.state.player.currentTime).toBe(5);
+    await resumedUi.stopPlayer();
   });
 
   function createHistoryService(): HistoryProgressService {

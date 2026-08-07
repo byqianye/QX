@@ -9,7 +9,7 @@ import {
   type DatabaseErrorCode,
 } from "./errors.js";
 
-export const SUPPORTED_SCHEMA_VERSION = 8;
+export const SUPPORTED_SCHEMA_VERSION = 9;
 
 interface Migration {
   version: number;
@@ -397,6 +397,55 @@ const migrations: readonly Migration[] = [
         ON smart_channel_members(smart_channel_id, enabled, priority, id);
       CREATE INDEX smart_channel_members_live
         ON smart_channel_members(live_channel_id, smart_channel_id);
+    `,
+  },
+  {
+    version: 9,
+    name: "local-media-library",
+    sql: `
+      ALTER TABLE history ADD COLUMN source_type TEXT NOT NULL DEFAULT 'remote'
+        CHECK (source_type IN ('remote', 'local'));
+
+      CREATE INDEX history_source_type_updated
+        ON history(source_type, updated_at DESC);
+
+      CREATE TABLE local_media_roots (
+        id TEXT PRIMARY KEY NOT NULL,
+        root_path TEXT NOT NULL UNIQUE,
+        display_name TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        last_scan_at INTEGER,
+        scan_status TEXT NOT NULL DEFAULT 'idle',
+        last_error TEXT
+      ) STRICT;
+
+      CREATE TABLE local_media_items (
+        id TEXT PRIMARY KEY NOT NULL,
+        root_id TEXT,
+        file_reference TEXT NOT NULL UNIQUE,
+        display_name TEXT NOT NULL,
+        extension TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        modified_at INTEGER NOT NULL,
+        media_type TEXT NOT NULL CHECK (media_type IN ('video', 'audio')),
+        duration REAL,
+        width INTEGER,
+        height INTEGER,
+        poster TEXT,
+        subtitle_tracks_json TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        missing INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (root_id) REFERENCES local_media_roots(id) ON DELETE CASCADE
+      ) STRICT;
+
+      CREATE INDEX local_media_items_root_updated
+        ON local_media_items(root_id, updated_at DESC, id);
+      CREATE INDEX local_media_items_display_name
+        ON local_media_items(display_name COLLATE NOCASE, id);
+      CREATE INDEX local_media_items_missing
+        ON local_media_items(missing, updated_at DESC);
     `,
   },
 ];

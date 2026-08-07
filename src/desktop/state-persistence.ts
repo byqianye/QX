@@ -8,7 +8,7 @@ import {
 import { dirname } from "node:path";
 
 export type ThemeMode = "system" | "light" | "dark";
-export type PersistedNavigation = "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" | "live";
+export type PersistedNavigation = "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" | "live" | "local";
 
 export interface PersistedCategory {
   typeId: string;
@@ -372,7 +372,7 @@ function isThemeMode(value: unknown): value is ThemeMode {
 
 function isNavigation(value: unknown): value is PersistedNavigation {
   return value === "home" || value === "category" || value === "search" || value === "detail"
-    || value === "history" || value === "favorites" || value === "follow" || value === "settings" || value === "live";
+    || value === "history" || value === "favorites" || value === "follow" || value === "settings" || value === "live" || value === "local";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

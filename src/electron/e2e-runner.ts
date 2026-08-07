@@ -43,6 +43,8 @@ export interface PackagedE2eOptions {
   verifySniffFallback?: boolean;
   verifyAggregateSearch?: boolean;
   verifyFakeMpv?: boolean;
+  verifyLocalMedia?: boolean;
+  localMediaFile?: string;
   fakeMpv?: () => Promise<boolean>;
   verifySniffer?: boolean;
   sniff?: () => Promise<SniffedMedia>;
@@ -78,6 +80,8 @@ export interface PackagedE2eChecks {
   parserFallback?: boolean;
   sniffFallback?: boolean;
   fakeMpvExit?: boolean;
+  localMedia?: boolean;
+  localMediaRestart?: boolean;
   hlsTopology?: boolean;
   aggregateSearch?: boolean;
   proxyCleanup?: boolean;
@@ -972,6 +976,53 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
           && fallback.state?.player?.status === "loading"
           && playerSourceUrl(fallback.state)?.endsWith("/media/fixture.m3u8") === true;
       }
+      if (options.verifyLocalMedia) {
+        if (!options.localMediaFile) throw new Error("Packaged local media E2E file is not configured");
+        const beforeLocal = playbackDetail.state?.history?.items.find((item) => item.sourceType === "local");
+        const openedLocal = await post(options.baseUrl, "/api/local-media/open-file");
+        const localItems = openedLocal.state?.localMedia?.items ?? [];
+        const localItem = localItems.find((item) => item.displayName === "local-fixture.mp4") ?? localItems[0];
+        const playedLocal = localItem
+          ? await post(options.baseUrl, "/api/local-media/play", { itemId: localItem.id })
+          : null;
+        const localUrl = playedLocal ? playerSourceUrl(playedLocal.state) : null;
+        const rangeResponse = localUrl
+          ? await fetch(localUrl, { headers: { range: "bytes=0-3" } })
+          : null;
+        const localPlaying = playedLocal
+          ? await post(options.baseUrl, "/api/player/sync", {
+              status: "playing",
+              currentTime: 3,
+              duration: 100,
+              event: { type: "first-frame" },
+            })
+          : null;
+        const localPaused = localPlaying
+          ? await post(options.baseUrl, "/api/player/sync", {
+              status: "paused",
+              currentTime: 3,
+              duration: 100,
+              event: { type: "user-pause" },
+            })
+          : null;
+        let localHtml = "";
+        if (options.readWindowHtml) {
+          await post(options.baseUrl, "/api/view-state", { navigation: "local" });
+          localHtml = await readPage(options);
+        }
+        const localHistory = localPaused?.state?.history?.items.find((item) => item.sourceType === "local");
+        checks.localMedia = localItem !== undefined
+          && openedLocal.state?.localMedia?.items.some((item) => item.fileReference.startsWith("local-file:")) === true
+          && rangeResponse?.status === 206
+          && (await rangeResponse.arrayBuffer()).byteLength === 4
+          && localUrl?.includes("/api/local-media/stream/") === true
+          && localHistory?.position === 3
+          && (!options.readWindowHtml || localHtml.includes('data-testid="local-media-page"'));
+        checks.localMediaRestart = options.freshTrust
+          ? true
+          : beforeLocal?.sourceType === "local" && beforeLocal.position === 3;
+        void options.localMediaFile;
+      }
     }
 
     const repeated = await load(options.baseUrl, options.configJson);
@@ -1262,8 +1313,15 @@ interface UiState {
     bufferingCount?: { value?: number | null; samples?: number };
   };
   history?: {
-    items: readonly { position: number; duration: number }[];
+    items: readonly { position: number; duration: number; sourceType?: "remote" | "local" }[];
     paused: boolean;
+  };
+  localMedia?: {
+    items: readonly {
+      id: string;
+      displayName: string;
+      fileReference: string;
+    }[];
   };
   historyResume?: { position: number } | null;
   favoriteDetail?: { favoriteId?: string; groupId?: string | null } | null;

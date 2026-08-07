@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
-import { existsSync, readFileSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { resolve as resolvePath } from "node:path";
 
@@ -70,6 +70,7 @@ import {
 import {
   createHistoryContext,
   HistoryProgressService,
+  historyIdentity,
   sourceIdForHistory,
   sourceDisplayNameForHistory,
 } from "../history/history-progress.js";
@@ -114,6 +115,8 @@ import {
   type DanmakuSettingsPatch,
 } from "../danmaku/danmaku-types.js";
 import { DanmakuService } from "../danmaku/danmaku-service.js";
+import { LocalMediaError, LocalMediaService, type LocalMediaStream } from "../local-media/local-media-service.js";
+import { EMPTY_LOCAL_MEDIA_UI_STATE, type LocalMediaUiState } from "../local-media/local-media-types.js";
 import {
   EMPTY_LIVE_UI_STATE,
   isLiveSourceType,
@@ -246,6 +249,7 @@ export interface DesktopSpiderUiState {
   cache: CacheUiState;
   storage: StorageUiState;
   danmaku: import("../danmaku/danmaku-types.js").DanmakuUiState;
+  localMedia: LocalMediaUiState;
 }
 
 export interface DesktopSpiderUiOptions {
@@ -266,6 +270,7 @@ export interface DesktopSpiderUiOptions {
   cache?: CacheService;
   storage?: DataStorageService;
   danmaku?: DanmakuService;
+  localMedia?: LocalMediaService;
 }
 
 export class DesktopSpiderUiController {
@@ -304,6 +309,7 @@ export class DesktopSpiderUiController {
   private readonly cacheService: CacheService | undefined;
   private readonly storageService: DataStorageService | undefined;
   private readonly danmakuService: DanmakuService | undefined;
+  private readonly localMediaService: LocalMediaService | undefined;
   private historyResume: HistoryResumeCandidate | null = null;
   private pendingResumeSeconds = 0;
 
@@ -316,6 +322,7 @@ export class DesktopSpiderUiController {
     this.cacheService = options.cache;
     this.storageService = options.storage;
     this.danmakuService = options.danmaku;
+    this.localMediaService = options.localMedia;
     this.parserCandidates = options.parserCandidates?.map(cloneParserCandidate) ?? [];
     this.sniffer = options.sniffer;
     this.parserAllowedOrigins = options.parserAllowedOrigins ?? [];
@@ -376,6 +383,7 @@ export class DesktopSpiderUiController {
       cache: this.cacheService?.uiState() ?? EMPTY_CACHE_UI_STATE,
       storage: this.storageService?.uiState() ?? EMPTY_STORAGE_UI_STATE,
       danmaku: this.danmakuService?.uiState() ?? EMPTY_DANMAKU_UI_STATE,
+      localMedia: this.localMediaService?.uiState() ?? EMPTY_LOCAL_MEDIA_UI_STATE,
     };
   }
 
@@ -636,6 +644,70 @@ export class DesktopSpiderUiController {
     resumeMode?: HistoryResumeMode,
   ): Promise<DesktopSpiderUiState> {
     return this.playPlayer(flag, id, vipFlags, timeoutMs, undefined, resumeMode);
+  }
+
+  public async playLocalMedia(
+    itemId: string,
+    baseUrl: string,
+    resumeMode?: HistoryResumeMode,
+  ): Promise<DesktopSpiderUiState> {
+    const localMedia = this.localMediaService;
+    if (!localMedia) throw new LocalMediaError("LOCAL_MEDIA_UNAVAILABLE", "本地媒体服务不可用。");
+    const prepared = localMedia.preparePlayback(itemId, baseUrl);
+    const context = createHistoryContext({
+      source: `local:${itemId}`,
+      sourceType: "local",
+      vodId: itemId,
+      episodeId: itemId,
+      title: prepared.item.displayName,
+      playbackLine: "本地媒体",
+    });
+    if (!context) throw new LocalMediaError("LOCAL_MEDIA_HISTORY_INVALID", "本地媒体历史身份无效。");
+    const existing = this.historyService?.get(historyIdentity(context.identity));
+    this.historyResume = existing && (existing.position > 0 || existing.completed)
+      ? {
+          ...existing,
+          lineIndex: null,
+          episodeIndex: null,
+          lineName: "本地媒体",
+          episodeName: prepared.item.displayName,
+          canResume: existing.position > 0 || existing.completed,
+        }
+      : null;
+    if (resumeMode === "beginning" && existing) this.historyService?.deleteProgress(existing.identity);
+    this.pendingResumeSeconds = resumeMode === "continue" && existing ? existing.position : 0;
+    await this.stopPlayer();
+    this.currentPlaybackRequest = null;
+    this.fallbackCoordinator.cancel("切换到本地媒体");
+    this.page = "home";
+    this.detailItem = null;
+    this.clearPlaybackCatalog();
+    this.playbackSelection = null;
+    this.localStatus = null;
+    this.localError = null;
+    this.historyService?.begin(context);
+    const loaded = this.playerController.load({
+      parse: 0,
+      url: prepared.url,
+      headers: {},
+      ...(prepared.subtitles.length > 0 ? { subtitles: prepared.subtitles } : {}),
+    });
+    if (loaded.error) throw new LocalMediaError(loaded.error.code, loaded.error.message);
+    if (this.pendingResumeSeconds > 0) this.playerController.seek(this.pendingResumeSeconds);
+    this.playbackSession = {
+      id: randomUUID(),
+      host: "embedded",
+      lineIndex: null,
+      episodeIndex: null,
+      lineName: "本地媒体",
+      episodeName: prepared.item.displayName,
+      media: {
+        detailId: prepared.item.id,
+        title: prepared.item.displayName,
+        url: prepared.url,
+      },
+    };
+    return this.state;
   }
 
   public setAggregateSearch(snapshot: AggregateSearchSnapshot): DesktopSpiderUiState {
@@ -1398,6 +1470,7 @@ export interface DesktopSpiderUiServerOptions {
   cache?: CacheService;
   storage?: DataStorageService;
   danmaku?: DanmakuService;
+  localMedia?: LocalMediaService;
   live?: LiveSourceService;
   livePlayback?: LivePlaybackService;
   smartChannels?: SmartChannelService;
@@ -1405,6 +1478,8 @@ export interface DesktopSpiderUiServerOptions {
   epgMatching?: EpgMatchingService;
   onStorageOpen?: () => void | Promise<void>;
   onStorageSwitch?: (mode: StorageMode) => void;
+  onLocalFilePicker?: () => Promise<readonly string[]>;
+  onLocalFolderPicker?: () => Promise<string | null>;
 }
 
 export class DesktopSpiderUiServer {
@@ -1434,6 +1509,7 @@ export class DesktopSpiderUiServer {
   private readonly cacheService: CacheService | undefined;
   private readonly storageService: DataStorageService | undefined;
   private readonly danmakuService: DanmakuService | undefined;
+  private readonly localMediaService: LocalMediaService | undefined;
   private readonly liveService: LiveSourceService | undefined;
   private readonly livePlayback: LivePlaybackService | undefined;
   private readonly smartChannels: SmartChannelService | undefined;
@@ -1441,6 +1517,8 @@ export class DesktopSpiderUiServer {
   private readonly epgMatching: EpgMatchingService | undefined;
   private readonly onStorageOpen: (() => void | Promise<void>) | undefined;
   private readonly onStorageSwitch: ((mode: StorageMode) => void) | undefined;
+  private readonly onLocalFilePicker: (() => Promise<readonly string[]>) | undefined;
+  private readonly onLocalFolderPicker: (() => Promise<string | null>) | undefined;
   private server: Server | undefined;
   private boundUrl: string | undefined;
   private boundSession: DesktopSpiderSessionPort | undefined;
@@ -1482,6 +1560,7 @@ export class DesktopSpiderUiServer {
     this.cacheService = options.cache;
     this.storageService = options.storage;
     this.danmakuService = options.danmaku;
+    this.localMediaService = options.localMedia;
     this.liveService = options.live;
     this.livePlayback = options.livePlayback;
     this.smartChannels = options.smartChannels;
@@ -1489,6 +1568,8 @@ export class DesktopSpiderUiServer {
     this.epgMatching = options.epgMatching;
     this.onStorageOpen = options.onStorageOpen;
     this.onStorageSwitch = options.onStorageSwitch;
+    this.onLocalFilePicker = options.onLocalFilePicker;
+    this.onLocalFolderPicker = options.onLocalFolderPicker;
   }
 
   public get url(): string {
@@ -1549,6 +1630,10 @@ export class DesktopSpiderUiServer {
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     try {
       const url = new URL(request.url ?? "/", this.url);
+      if (request.method === "GET" && this.localMediaService && url.pathname.startsWith("/api/local-media/")) {
+        this.writeLocalMediaStream(request, response, url.pathname);
+        return;
+      }
       if (request.method === "GET"
         && this.rendererDirectory
         && !url.pathname.startsWith("/api/")) {
@@ -1579,6 +1664,11 @@ export class DesktopSpiderUiServer {
       }
 
       const body = await readJson(request);
+      if (url.pathname.startsWith("/api/local-media/")) {
+        await this.handleLocalMediaRequest(url.pathname, body);
+        this.writeCurrentState(response);
+        return;
+      }
       if (url.pathname.startsWith("/api/danmaku/")) {
         await this.handleDanmakuRequest(url.pathname, body);
         this.writeCurrentState(response);
@@ -1957,6 +2047,8 @@ export class DesktopSpiderUiServer {
       const message = error instanceof Error ? error.message : String(error);
       const errorCode = error instanceof LiveSourceError
         ? error.code
+        : error instanceof LocalMediaError
+          ? error.code
         : error instanceof LivePlaybackError
           ? error.code
           : error instanceof EpgMappingError
@@ -1974,6 +2066,144 @@ export class DesktopSpiderUiServer {
         ...(this.liveService || this.livePlayback ? { live: this.liveUiState() } : {}),
       }, 400);
     }
+  }
+
+  private async handleLocalMediaRequest(pathname: string, body: Record<string, unknown>): Promise<void> {
+    const service = this.localMediaService;
+    if (!service) throw new LocalMediaError("LOCAL_MEDIA_UNAVAILABLE", "本地媒体服务不可用。");
+    if (pathname === "/api/local-media/open-file") {
+      if (!this.onLocalFilePicker) throw new LocalMediaError("LOCAL_MEDIA_PICKER_UNAVAILABLE", "本地文件选择器不可用。");
+      await service.openFiles(await this.onLocalFilePicker());
+      return;
+    }
+    if (pathname === "/api/local-media/add-folder") {
+      if (!this.onLocalFolderPicker) throw new LocalMediaError("LOCAL_MEDIA_PICKER_UNAVAILABLE", "本地目录选择器不可用。");
+      const path = await this.onLocalFolderPicker();
+      if (path) await service.addFolder(path);
+      return;
+    }
+    if (pathname === "/api/local-media/drop") {
+      await service.importDrop(stringList(body.paths));
+      return;
+    }
+    if (pathname === "/api/local-media/rescan") {
+      const rootId = typeof body.rootId === "string" && body.rootId.length > 0 ? body.rootId : undefined;
+      await service.rescan(rootId);
+      return;
+    }
+    if (pathname === "/api/local-media/cancel-scan") {
+      service.cancelScan(typeof body.rootId === "string" ? body.rootId : undefined);
+      return;
+    }
+    if (pathname === "/api/local-media/remove-folder") {
+      await service.removeFolder(stringValue(body.rootId, ""));
+      return;
+    }
+    if (pathname === "/api/local-media/remove-item") {
+      service.removeItem(stringValue(body.itemId, ""));
+      return;
+    }
+    if (pathname === "/api/local-media/locate") {
+      if (!this.onLocalFilePicker) throw new LocalMediaError("LOCAL_MEDIA_PICKER_UNAVAILABLE", "本地文件选择器不可用。");
+      const paths = await this.onLocalFilePicker();
+      const path = paths[0];
+      if (!path) return;
+      await service.locateItem(stringValue(body.itemId, ""), path);
+      return;
+    }
+    if (pathname === "/api/local-media/play") {
+      const ui = this.activeUi();
+      if (!ui) throw new LocalMediaError("LOCAL_MEDIA_UI_UNAVAILABLE", "请先完成媒体源导入后再播放本地媒体。");
+      await ui.playLocalMedia(stringValue(body.itemId, ""), this.url, historyResumeMode(body.resume));
+      return;
+    }
+    if (pathname === "/api/local-media/active") {
+      service.setActiveItem(typeof body.itemId === "string" ? body.itemId : null);
+      return;
+    }
+    throw new LocalMediaError("LOCAL_MEDIA_ROUTE_NOT_FOUND", "本地媒体请求不存在。");
+  }
+
+  private writeLocalMediaStream(
+    request: IncomingMessage,
+    response: ServerResponse,
+    pathname: string,
+  ): void {
+    const service = this.localMediaService;
+    if (!service) {
+      writeJson(response, { error: "Local media is unavailable" }, 404);
+      return;
+    }
+    const parts = pathname.split("/").filter(Boolean);
+    const kind = parts[2];
+    try {
+      const itemId = decodePathPart(parts[3] ?? "");
+      let stream;
+      if (kind === "stream") {
+        const initial = service.resolveMediaStream(itemId);
+        const range = initial.kind === "file" ? parseRange(request.headers.range, initial.size) : null;
+        if (request.headers.range && initial.kind === "file" && !range) {
+          response.writeHead(416, { "content-range": `bytes */${initial.size}` });
+          response.end();
+          return;
+        }
+        stream = range ? service.resolveMediaStream(itemId, range) : initial;
+        this.writeLocalStreamResponse(response, stream, range);
+        if (stream.kind === "file") {
+          const start = range?.start ?? 0;
+          const end = range?.end === null || range?.end === undefined ? stream.size - 1 : range.end;
+          createReadStream(stream.path, { start, end }).pipe(response);
+        } else response.end(stream.body);
+        return;
+      }
+      if (kind === "resource") {
+        stream = service.resolvePlaylistResource(itemId, decodePathPart(parts[4] ?? ""));
+      } else if (kind === "subtitle") {
+        stream = service.resolveSubtitle(itemId, decodePathPart(parts[4] ?? ""));
+      } else {
+        throw new LocalMediaError("LOCAL_MEDIA_ROUTE_NOT_FOUND", "本地媒体请求不存在。");
+      }
+      const range = parseRange(request.headers.range, stream.size);
+      if (request.headers.range && !range) {
+        response.writeHead(416, { "content-range": `bytes */${stream.size}` });
+        response.end();
+        return;
+      }
+      this.writeLocalStreamResponse(response, stream, range);
+      const start = range?.start ?? 0;
+      const end = range?.end === null || range?.end === undefined ? stream.size - 1 : range.end;
+      createReadStream(stream.path, { start, end }).pipe(response);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "本地媒体资源不可用。";
+      const code = error instanceof LocalMediaError ? error.code : errorCodeFromMessage(message);
+      writeJson(response, { error: message, ...(code ? { errorCode: code } : {}) }, 404);
+    }
+  }
+
+  private writeLocalStreamResponse(
+    response: ServerResponse,
+    stream: LocalMediaStream,
+    range: { start: number; end: number | null } | null,
+  ): void {
+    if (stream.kind === "text") {
+      response.writeHead(200, {
+        "content-type": stream.contentType,
+        "cache-control": "no-store",
+        "content-length": Buffer.byteLength(stream.body),
+        "x-content-type-options": "nosniff",
+      });
+      return;
+    }
+    const start = range?.start ?? 0;
+    const end = range?.end === null || range?.end === undefined ? stream.size - 1 : range.end;
+    response.writeHead(range ? 206 : 200, {
+      "content-type": stream.contentType,
+      "content-length": end - start + 1,
+      "accept-ranges": "bytes",
+      ...(range ? { "content-range": `bytes ${start}-${end}/${stream.size}` } : {}),
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+    });
   }
 
   private async handleDanmakuRequest(pathname: string, body: Record<string, unknown>): Promise<void> {
@@ -2294,6 +2524,7 @@ export class DesktopSpiderUiServer {
         ...(this.cacheService ? { cache: this.cacheService } : {}),
         ...(this.storageService ? { storage: this.storageService } : {}),
         ...(this.danmakuService ? { danmaku: this.danmakuService } : {}),
+        ...(this.localMediaService ? { localMedia: this.localMediaService } : {}),
         ...(this.onStorageOpen ? { onStorageOpen: this.onStorageOpen } : {}),
         ...(this.onStorageSwitch ? { onStorageSwitch: this.onStorageSwitch } : {}),
       });
@@ -2330,18 +2561,23 @@ export class DesktopSpiderUiServer {
     const visibleState = this.visibleState(ui);
     const persistence = this.stateStore?.rendererState();
     const live = this.liveUiState();
-    const state = visibleState ? { ...visibleState, live } : null;
+    const localMedia = this.localMediaService?.uiState(this.boundUrl);
+    const state = visibleState
+      ? { ...visibleState, live, ...(localMedia ? { localMedia } : {}) }
+      : null;
     if (this.importer) {
       writeJson(response, {
         import: this.importer.state,
         state,
         live,
+        ...(localMedia ? { localMedia } : {}),
         ...(persistence ? { persistence } : {}),
       });
     } else {
       writeJson(response, {
         state,
         live,
+        ...(localMedia ? { localMedia } : {}),
         ...(persistence ? { persistence } : {}),
       });
     }
@@ -2465,6 +2701,37 @@ function rendererContentSecurityPolicy(): string {
 function errorCodeFromMessage(message: string): string | null {
   const match = /^([A-Z][A-Z0-9_]*):/.exec(message);
   return match?.[1] ?? null;
+}
+
+function decodePathPart(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw new LocalMediaError("LOCAL_MEDIA_ROUTE_NOT_FOUND", "本地媒体请求不存在。");
+  }
+}
+
+function parseRange(
+  value: string | undefined,
+  size: number,
+): { start: number; end: number | null } | null {
+  if (!value) return null;
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(value.trim());
+  if (!match) return null;
+  const startValue = match[1] ?? "";
+  const endValue = match[2] ?? "";
+  if (!startValue && !endValue) return null;
+  if (!startValue) {
+    const suffix = Number(endValue);
+    if (!Number.isInteger(suffix) || suffix <= 0 || size <= 0) return null;
+    return { start: Math.max(0, size - suffix), end: size - 1 };
+  }
+  const start = Number(startValue);
+  if (!Number.isInteger(start) || start < 0 || start >= size) return null;
+  if (!endValue) return { start, end: null };
+  const end = Number(endValue);
+  if (!Number.isInteger(end) || end < start) return null;
+  return { start, end: Math.min(end, size - 1) };
 }
 
 function publicPlaybackState(playback: DesktopSpiderPlaybackState): DesktopSpiderPlaybackState {
@@ -3096,7 +3363,7 @@ function isThemeMode(value: unknown): value is "system" | "light" | "dark" {
   return value === "system" || value === "light" || value === "dark";
 }
 
-function isNavigation(value: unknown): value is "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" | "live" {
+function isNavigation(value: unknown): value is "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" | "live" | "local" {
   return value === "home"
     || value === "category"
     || value === "search"
@@ -3105,7 +3372,8 @@ function isNavigation(value: unknown): value is "home" | "category" | "search" |
     || value === "favorites"
     || value === "follow"
     || value === "settings"
-    || value === "live";
+    || value === "live"
+    || value === "local";
 }
 
 function isCacheClearScope(value: unknown): value is CacheClearScope {

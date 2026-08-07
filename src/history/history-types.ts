@@ -15,6 +15,7 @@ export interface HistoryPlaybackContext {
   episodeName: string | null;
   playbackLine: string | null;
   sourceDisplayName: string | null;
+  sourceType?: "remote" | "local";
 }
 
 export interface HistoryCatalogEpisode {

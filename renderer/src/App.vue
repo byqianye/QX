@@ -218,7 +218,7 @@ function handleScroll(): void {
 async function restorePage(): Promise<void> {
   restored.value = true;
   const candidate = restoreCandidate.value;
-  if (!candidate || !candidate.siteKey || candidate.navigation === "settings" || candidate.navigation === "live") {
+  if (!candidate || candidate.navigation === "local" || !candidate.siteKey || candidate.navigation === "settings" || candidate.navigation === "live") {
     restoreScroll(candidate?.scrollTop ?? 0);
     return;
   }
@@ -274,6 +274,13 @@ function play(line: number, episode: number, resumeMode?: HistoryResumeMode): vo
     lineIndex: line,
     episodeIndex: episode,
     vipFlags: [],
+    ...(resumeMode ? { resume: resumeMode } : {}),
+  });
+}
+
+function playLocal(itemId: string, resumeMode?: HistoryResumeMode): void {
+  post("local-play", "/api/local-media/play", {
+    itemId,
     ...(resumeMode ? { resume: resumeMode } : {}),
   });
 }
@@ -393,6 +400,19 @@ function play(line: number, episode: number, resumeMode?: HistoryResumeMode): vo
       @epg-mapping-confirm-high="post('epg-mapping-confirm-high', '/api/epg/mapping/confirm-high')"
       @epg-alias-set="post('epg-alias-set', '/api/epg/alias/set', $event)"
       @epg-alias-remove="post('epg-alias-remove', '/api/epg/alias/remove', $event)"
+      @local-open-file="post('local-open-file', '/api/local-media/open-file')"
+      @local-add-folder="post('local-add-folder', '/api/local-media/add-folder')"
+      @local-rescan="post('local-rescan', '/api/local-media/rescan', $event ? { rootId: $event } : {})"
+      @local-cancel-scan="post('local-cancel-scan', '/api/local-media/cancel-scan', $event ? { rootId: $event } : {})"
+      @local-remove-folder="post('local-remove-folder', '/api/local-media/remove-folder', { rootId: $event })"
+      @local-remove-item="post('local-remove-item', '/api/local-media/remove-item', { itemId: $event })"
+      @local-remove-history="post('local-remove-history', '/api/history/delete', { identity: $event })"
+      @local-locate="post('local-locate', '/api/local-media/locate', { itemId: $event })"
+      @local-play="playLocal"
+      @local-drop="post('local-drop', '/api/local-media/drop', { paths: $event })"
+      @local-player-detach="detachPlayer"
+      @local-player-stop="stopPlayer"
+      @local-player-sync="syncPlayer"
     />
   </div>
 </template>

@@ -59,6 +59,7 @@ import { SmartChannelService } from "../live/smart-channels.js";
 import { EpgMatchingService } from "../epg/epg-matching-service.js";
 import { EpgService } from "../epg/epg-service.js";
 import { DanmakuService } from "../danmaku/danmaku-service.js";
+import { LocalMediaService } from "../local-media/local-media-service.js";
 import {
   IsolatedSniffer,
   type IsolatedSnifferPlatform,
@@ -116,6 +117,7 @@ let smartChannelService: SmartChannelService | undefined;
 let epgService: EpgService | undefined;
 let epgMatchingService: EpgMatchingService | undefined;
 let danmakuService: DanmakuService | undefined;
+let localMediaService: LocalMediaService | undefined;
 let dataStorageService: DataStorageService | undefined;
 let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -172,6 +174,11 @@ function getDanmakuService(): DanmakuService {
   if (!danmakuService) throw new Error("Danmaku service is unavailable");
   return danmakuService;
 }
+function getLocalMediaService(): LocalMediaService {
+  initializeDataLayer();
+  if (!localMediaService) throw new Error("Local media service is unavailable");
+  return localMediaService;
+}
 function getDataStorageService(): DataStorageService {
   if (!dataStorageService) {
     dataStorageService = new DataStorageService(new DataDirectoryResolver(app.getPath("userData"), {
@@ -182,7 +189,7 @@ function getDataStorageService(): DataStorageService {
   return dataStorageService;
 }
 function initializeDataLayer(): void {
-  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService && livePlaybackService && smartChannelService && epgService && epgMatchingService && danmakuService) return;
+  if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService && liveSourceService && livePlaybackService && smartChannelService && epgService && epgMatchingService && danmakuService && localMediaService) return;
   const dataStorage = getDataStorageService();
   const directories = dataStorage.prepare();
   const opened = openSqliteDataLayer(directories.database);
@@ -268,6 +275,7 @@ function initializeDataLayer(): void {
   danmakuService = new DanmakuService({
     settings: new SettingsRepository(opened.layer),
   });
+  localMediaService = new LocalMediaService({ db: opened.layer });
 }
 
 function createShell(): DesktopShellRuntime {
@@ -332,6 +340,7 @@ function createShell(): DesktopShellRuntime {
         cache: getCacheService(),
         storage: getDataStorageService(),
         danmaku: getDanmakuService(),
+        localMedia: getLocalMediaService(),
         live: getLiveSourceService(),
         ...(livePlaybackService ? { livePlayback: livePlaybackService } : {}),
         ...(smartChannelService ? { smartChannels: smartChannelService } : {}),
@@ -341,6 +350,22 @@ function createShell(): DesktopShellRuntime {
           await electronShell.openPath(getDataStorageService().directories().dataRoot);
         },
         onStorageSwitch: requestStorageSwitch,
+        onLocalFilePicker: async () => {
+          if (process.env.QX_E2E_LOCAL_MEDIA_FILE) return [process.env.QX_E2E_LOCAL_MEDIA_FILE];
+          const selected = await dialog.showOpenDialog({
+            title: "打开本地媒体",
+            properties: ["openFile", "multiSelections"],
+            filters: [{ name: "媒体文件", extensions: ["mp4", "mkv", "webm", "mov", "m4v", "m3u8", "mp3", "wav", "flac", "ogg", "m4a"] }],
+          });
+          return selected.canceled ? [] : selected.filePaths;
+        },
+        onLocalFolderPicker: async () => {
+          const selected = await dialog.showOpenDialog({
+            title: "添加本地媒体目录",
+            properties: ["openDirectory"],
+          });
+          return selected.canceled ? null : selected.filePaths[0] ?? null;
+        },
         onPlayerOpen: openPlayerWindow,
         onPlayerAttach: closePlayerWindow,
         onPlayerStop: closePlayerWindow,
@@ -611,6 +636,7 @@ async function closeDataLayer(): Promise<void> {
   epgService = undefined;
   epgMatchingService = undefined;
   danmakuService = undefined;
+  localMediaService = undefined;
   dataStorageService = undefined;
   const current = dataLayer;
   dataLayer = undefined;
@@ -941,6 +967,8 @@ async function runE2e(baseUrl: string): Promise<void> {
       verifyAggregateSearch: true,
       verifyFakeMpv: process.env.QX_E2E_FAKE_MPV === "1",
       ...(process.env.QX_E2E_FAKE_MPV === "1" ? { fakeMpv: runFakeMpvExitProbe } : {}),
+      verifyLocalMedia: Boolean(process.env.QX_E2E_LOCAL_MEDIA_FILE),
+      ...(process.env.QX_E2E_LOCAL_MEDIA_FILE ? { localMediaFile: process.env.QX_E2E_LOCAL_MEDIA_FILE } : {}),
       ...(process.env.QX_E2E_HLS_MASTER_URL ? { hlsMasterUrl: process.env.QX_E2E_HLS_MASTER_URL } : {}),
       ...(process.env.QX_E2E_HLS_CHILD_URL ? { hlsChildUrl: process.env.QX_E2E_HLS_CHILD_URL } : {}),
       verifySniffer: ISOLATED_SNIFFER_ENABLED,

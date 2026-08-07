@@ -1269,6 +1269,69 @@ npm run electron:e2e:package
 checkpoint: complete G62 danmaku
 ```
 
+## G63 (completed)
+
+### Goal
+
+Add a safe local-media path for user-selected files, user-selected folders,
+and in-window drag/drop. Register opaque local identities, scan authorized
+folders with cancellation and bounded depth/file counts, serve supported local
+media and safe relative m3u8 resources, match same-directory subtitles, and
+reuse history for local progress/resume and missing-file recovery.
+
+### Status
+
+Completed. G63 uses SQLite migration v9 and the existing PlayerBackend/player,
+subtitle, history, portable-mode, and Electron lifecycle boundaries. HTMLVideo
+and local HLS remain available independently; formats requiring mpv return the
+typed `MPV_UNAVAILABLE` contract when mpv is not configured. No online metadata
+lookup, arbitrary renderer path access, or third-party media discovery was
+added.
+
+### Dependency
+
+- G62 checkpoint `b0a0b272`: `checkpoint: complete G62 danmaku`
+
+### Scope and acceptance
+
+- File picker, folder picker, user drop, opaque id/pathIdentity, supported
+  extension registration, controlled media/Range routes, and m3u8 traversal
+  rejection are covered.
+- Folder scan has cancellation, depth/file/drop limits, hidden/system skips,
+  canonical-root checks, symlink/junction escape protection, and incremental
+  rescan behavior without whole-disk guessing.
+- Same-directory subtitle matching reuses the G47 formats. Local history uses
+  `sourceType=local` and stable `local:<item-id>` identity, records progress,
+  supports resume, and preserves missing history for Locate or Remove.
+- Local Media has sidebar navigation, file/folder/drop actions, tabs, search,
+  folder/item controls, missing/error/resume states, and the existing player.
+- Restart, portable data-root reuse, path redaction, focused tests, renderer
+  tests, Electron build/package, and packaged first/restart E2E pass.
+
+### Verification commands
+
+```powershell
+git diff --check
+npm run typecheck
+npm test
+npm run renderer:build
+npm run electron:build
+npm run electron:package:win
+npm run electron:e2e:package
+```
+
+### Documentation
+
+- `docs/spike-63-local-media.md`
+- `docs/design/open-design/stage-5/design-extension.md`
+- `docs/design/open-design/stage-5/local-media-spec.md`
+
+### Checkpoint
+
+```text
+checkpoint: complete G63 local media
+```
+
 ## Stage 4 (completed)
 
 直播与 EPG 闭环已完成：授权 M3U/TXT 导入、Live 浏览与播放、XMLTV、EPG

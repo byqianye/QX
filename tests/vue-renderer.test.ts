@@ -128,6 +128,86 @@ describe("Vue renderer", () => {
     expect(codedError.error.error?.diagnosticId).toMatch(/^diag-/);
   });
 
+  it("renders the local media page and emits opaque media actions", async () => {
+    const state = createRendererState();
+    state.localMedia = {
+      ...state.localMedia,
+      ready: true,
+      items: [{
+        id: "local-item-1",
+        pathIdentity: "local-file:local-item-1",
+        fileReference: "local-file:local-item-1",
+        displayName: "fixture.mp4",
+        extension: "mp4",
+        size: 12,
+        modifiedAt: 1,
+        mediaType: "video",
+        createdAt: 1,
+        updatedAt: 1,
+        missing: false,
+        rootId: null,
+        subtitleTracks: [],
+      }],
+    };
+    const wrapper = mount(SpiderView, {
+      props: { state, pending: null, lineIndex: 0, order: "forward", initialNavigation: "local" },
+    });
+    expect(wrapper.get('[data-testid="local-media-page"]')).toBeTruthy();
+    await wrapper.get('[data-action="local-open-file"]').trigger("click");
+    expect(wrapper.emitted("localOpenFile")).toEqual([[]]);
+    await wrapper.get('[data-testid="local-media-list"] .button-primary').trigger("click");
+    expect(wrapper.emitted("localPlay")).toEqual([["local-item-1", undefined]]);
+  });
+
+  it("offers history removal without guessing a missing local file", async () => {
+    const state = createRendererState();
+    state.localMedia = {
+      ...state.localMedia,
+      ready: true,
+      items: [{
+        id: "missing-local-item",
+        pathIdentity: "local-file:missing-local-item",
+        fileReference: "local-file:missing-local-item",
+        displayName: "missing.mp4",
+        extension: "mp4",
+        size: 12,
+        modifiedAt: 1,
+        mediaType: "video",
+        createdAt: 1,
+        updatedAt: 1,
+        missing: true,
+        rootId: null,
+        subtitleTracks: [],
+      }],
+    };
+    state.history = {
+      paused: false,
+      items: [{
+        identity: "local-history-1",
+        sourceId: "local-source",
+        vodId: "missing-local-item",
+        seasonId: null,
+        episodeId: "missing-local-item",
+        title: "missing.mp4",
+        poster: null,
+        episode: null,
+        episodeName: "missing.mp4",
+        playbackLine: "本地媒体",
+        position: 12,
+        duration: 100,
+        updatedAt: 1,
+        completed: false,
+        sourceDisplayName: "本地媒体",
+        sourceType: "local",
+      }],
+    };
+    const wrapper = mount(SpiderView, {
+      props: { state, pending: null, lineIndex: 0, order: "forward", initialNavigation: "local" },
+    });
+    await wrapper.get('[data-action="local-remove-history"]').trigger("click");
+    expect(wrapper.emitted("localRemoveHistory")).toEqual([["local-history-1"]]);
+  });
+
   it("serves the Vue artifact with a local-only script CSP and local assets", async () => {
     const directory = mkdtempSync(join(tmpdir(), "qx-vue-renderer-"));
     directories.push(directory);

@@ -13,7 +13,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  navigate: [route: "home" | "category" | "history" | "favorites" | "follow" | "settings" | "live"];
+  navigate: [route: "home" | "category" | "history" | "favorites" | "follow" | "settings" | "live" | "local"];
   open: [];
   switch: [];
   close: [];
@@ -71,6 +71,16 @@ const emit = defineEmits<{
         @click="emit('navigate', 'live')"
       >
         <Icon name="play" /><span>直播源</span>
+      </button>
+      <button
+        class="sidebar-nav-item"
+        :class="{ selected: activePage === 'local' }"
+        type="button"
+        data-action="local-media"
+        :disabled="pending"
+        @click="emit('navigate', 'local')"
+      >
+        <Icon name="grid" /><span>本地媒体</span>
       </button>
       <button
         class="sidebar-nav-item"

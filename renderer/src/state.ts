@@ -11,6 +11,8 @@ import { EMPTY_LIVE_UI_STATE } from "../../src/live/live-types.js";
 import type { LiveUiState } from "../../src/live/live-types.js";
 import { EMPTY_DANMAKU_UI_STATE } from "../../src/danmaku/danmaku-types.js";
 import type { DanmakuUiState } from "../../src/danmaku/danmaku-types.js";
+import { EMPTY_LOCAL_MEDIA_UI_STATE } from "../../src/local-media/local-media-types.js";
+import type { LocalMediaUiState } from "../../src/local-media/local-media-types.js";
 
 export type ImportStatus =
   | "empty"
@@ -30,7 +32,7 @@ export type SpiderStatus =
   | "destroyed";
 
 export type RendererThemeMode = "system" | "light" | "dark";
-export type RendererNavigation = "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" | "live";
+export type RendererNavigation = "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" | "live" | "local";
 export type PlayerHostMode = "embedded" | "detached";
 export const PLAYBACK_RESTORE_MAX_DRIFT_SECONDS = 2;
 
@@ -274,6 +276,7 @@ export interface RendererState {
   cache: CacheUiState;
   storage: StorageUiState;
   danmaku: DanmakuUiState;
+  localMedia: LocalMediaUiState;
   live: LiveUiState;
   error: ErrorState;
 }
@@ -308,6 +311,7 @@ export interface ApiSpiderState {
   storage?: StorageUiState;
   danmaku?: DanmakuUiState;
   live?: LiveUiState;
+  localMedia?: LocalMediaUiState;
 }
 
 export interface RendererEnvelope {
@@ -315,6 +319,7 @@ export interface RendererEnvelope {
   state?: ApiSpiderState | null;
   persistence?: RendererPersistenceState | null;
   live?: LiveUiState | null;
+  localMedia?: LocalMediaUiState | null;
   error?: string;
   errorCode?: string;
 }
@@ -371,6 +376,7 @@ export function createRendererState(): RendererState {
     cache: { totalBytes: 0, maxBytes: 0, entries: 0, byType: [] },
     storage: { mode: "normal", dataRoot: "—", normalRoot: "—", portableRoot: "—", databaseBytes: 0, cacheBytes: 0, totalBytes: 0, historyCount: 0, favoritesCount: 0, followCount: 0, writable: false, switching: false, error: null },
     danmaku: cloneDanmakuState(EMPTY_DANMAKU_UI_STATE),
+    localMedia: cloneLocalMediaState(EMPTY_LOCAL_MEDIA_UI_STATE),
     live: cloneLiveUiState(EMPTY_LIVE_UI_STATE),
     error: { error: null },
   };
@@ -387,6 +393,11 @@ export function applyRendererEnvelope(
     : state?.live
       ? cloneLiveUiState(state.live)
       : current.live;
+  const localMedia = envelope.localMedia
+    ? cloneLocalMediaState(envelope.localMedia)
+    : state?.localMedia
+      ? cloneLocalMediaState(state.localMedia)
+      : current.localMedia;
   const envelopeError = envelope.error
     ? { code: envelope.errorCode ?? "RENDERER_REQUEST_ERROR", message: envelope.error }
     : null;
@@ -397,6 +408,7 @@ export function applyRendererEnvelope(
       ready: true,
       import: importState,
       live,
+      localMedia,
       error: {
         error: toAppError(nextError) ?? current.error.error,
       },
@@ -441,6 +453,7 @@ export function applyRendererEnvelope(
     cache: cloneCacheState(state.cache ?? current.cache),
     storage: cloneStorageState(state.storage ?? current.storage),
     danmaku: cloneDanmakuState(state.danmaku ?? current.danmaku),
+    localMedia,
     live,
     error: { error: toAppError(stateError) },
   };
@@ -703,6 +716,21 @@ function cloneCacheState(state: CacheUiState): CacheUiState {
 
 function cloneStorageState(state: StorageUiState): StorageUiState {
   return { ...state };
+}
+
+function cloneLocalMediaState(state: LocalMediaUiState): LocalMediaUiState {
+  return {
+    ready: state.ready,
+    folders: state.folders.map((folder) => ({ ...folder })),
+    items: state.items.map((item) => ({
+      ...item,
+      subtitleTracks: item.subtitleTracks.map((track) => ({ ...track })),
+    })),
+    activeItemId: state.activeItemId,
+    scan: { ...state.scan },
+    error: state.error ? { ...state.error } : null,
+    limits: { ...state.limits },
+  };
 }
 
 function cloneDanmakuState(state: DanmakuUiState): DanmakuUiState {

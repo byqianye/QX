@@ -17,6 +17,8 @@ describe("unified app diagnostics", () => {
     ["MPV_PROCESS_EXITED", "player", true],
     ["MPV_IPC_ERROR", "player", true],
     ["JAVA_RUNTIME_NOT_FOUND", "java", false],
+    ["BUNDLED_JRE_MISSING", "java", false],
+    ["RUNTIME_INTEGRITY_FAILED", "electron", false],
     ["UI_SERVER_START_ERROR", "electron", false],
     ["STATE_PERSISTENCE_WRITE_FAILED", "persistence", false],
     ["CLEANUP_ERROR", "cleanup", false],

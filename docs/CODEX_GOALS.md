@@ -1705,6 +1705,74 @@ npm run electron:e2e:package
 checkpoint: complete R70 release baseline
 ```
 
+## G70 (completed)
+
+### Goal
+
+为 Windows x64 发布包固定携带并校验 JRE、CPython、mpv、aria2，发布启动链不依赖宿主机运行时。
+
+### Status
+
+Completed. Release-mode packaging copies all four fixed runtimes, writes executable hashes to `runtime-manifest.json`, rejects missing/tampered packaged runtimes, and keeps external Java/Python fallback development-only.
+
+### Dependency
+
+- R70 checkpoint `4d42fd4`
+
+### Verification commands
+
+```powershell
+npm run typecheck
+npx vitest run tests/runtime-manifest.test.ts tests/electron-shell.test.ts tests/diagnostics.test.ts --maxWorkers=1 --minWorkers=1 --reporter=dot
+npm run electron:e2e:package
+npm run electron:verify:no-jdk
+```
+
+### Documentation
+
+- `docs/spike-70-release-runtimes.md`
+- `verification/G70/README.md`
+
+### Checkpoint
+
+```text
+checkpoint: complete G70 bundled release runtimes
+```
+
+## G71 (completed)
+
+### Goal
+
+接入包内 mpv 与 aria2，固定其默认路径、参数边界、localhost RPC、随机 secret/port 与退出清理，并完成真实本地 fixture smoke。
+
+### Status
+
+Completed. Bundled path resolution and explicit override tests pass; mpv real IPC smoke and aria2 real localhost download smoke pass.
+
+### Dependency
+
+- G70
+
+### Verification commands
+
+```powershell
+npm run typecheck
+npx vitest run tests/player-backend.test.ts tests/downloads.test.ts --maxWorkers=1 --minWorkers=1 --reporter=dot
+npm run mpv:smoke
+npm run aria2:smoke
+```
+
+### Documentation
+
+- `docs/spike-71-bundled-media-runtimes.md`
+- `verification/G71/README.md`
+
+### Checkpoint
+
+```text
+checkpoint: complete G71 bundled media runtimes
+```
+
 ## Stage 4 (completed)
 
 直播与 EPG 闭环已完成：授权 M3U/TXT 导入、Live 浏览与播放、XMLTV、EPG

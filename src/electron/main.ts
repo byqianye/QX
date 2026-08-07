@@ -404,7 +404,7 @@ function initializeDataLayer(): void {
   localMediaService = new LocalMediaService({ db: opened.layer });
   downloadService = new DownloadService({
     db: opened.layer,
-    backend: createDownloadBackend(),
+    backend: createDownloadBackend({ ...process.env, QX_RUNTIME_DIRECTORY: runtimeDirectory() }),
   });
   pushService = new PushService({
     settings: settingsRepository,
@@ -441,7 +441,11 @@ function createShell(): DesktopShellRuntime {
     resolveRuntime: () => resolveElectronRuntime(
       runtimeDirectory(),
       forceExternalJavaDisabled() ? () => null : resolveJavaExecutable,
-      { allowBundledJre: !forceBundledJreDisabled() },
+      {
+        allowBundledJre: !forceBundledJreDisabled(),
+        allowExternalJava: !app.isPackaged && !forceExternalJavaDisabled(),
+        requireBundledRuntimeManifest: app.isPackaged,
+      },
     ),
     createServer: (runtime) => {
       const router = new EngineRouter({ maxActiveSessions: 4, idleSessionMs: 30_000 });
@@ -468,7 +472,8 @@ function createShell(): DesktopShellRuntime {
               hostJar: runtime.hostJar,
               spiderJar: runtime.spiderJar,
               spiderClass: runtime.spiderClass,
-              pythonExecutable: process.env.QX_PYTHON ?? "python",
+              pythonExecutable: runtime.pythonExecutable ?? (app.isPackaged ? "" : process.env.QX_PYTHON ?? "python"),
+              ...(app.isPackaged ? { pythonEnvironment: packagedPythonEnvironment() } : {}),
               ...(jellyfinConfig ? { jellyfinConfig } : {}),
               requestTimeoutMs: REQUEST_TIMEOUT_MS,
               startupTimeoutMs: STARTUP_TIMEOUT_MS,
@@ -794,6 +799,13 @@ function forceExternalJavaDisabled(): boolean {
 
 function forceBundledJreDisabled(): boolean {
   return process.env.QX_ELECTRON_FORCE_NO_BUNDLED_JRE === "1";
+}
+
+function packagedPythonEnvironment(): NodeJS.ProcessEnv {
+  const environment = { ...process.env };
+  for (const name of ["PYTHONHOME", "PYTHONPATH", "PYTHONUSERBASE", "VIRTUAL_ENV"]) delete environment[name];
+  environment.PYTHONNOUSERSITE = "1";
+  return environment;
 }
 
 async function closeShell(closeData = false): Promise<void> {

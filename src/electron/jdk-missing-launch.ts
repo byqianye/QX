@@ -18,6 +18,12 @@ const config = JSON.stringify({
     type: 3,
     api: "csp_Douban",
     ext: process.env.QX_DOUBAN_ENDPOINT ?? defaultDoubanEndpoint,
+  }, {
+    key: "douban-alt",
+    name: "Douban alternate",
+    type: 3,
+    api: "csp_Douban",
+    ext: process.env.QX_DOUBAN_ENDPOINT ?? defaultDoubanEndpoint,
   }],
 });
 const workDirectory = mkdtempSync(join(tmpdir(), "qx-jre-runtime-"));
@@ -57,7 +63,7 @@ try {
   const missingJreValue = readResult(missingJreResult);
   if (missingJre.code !== 0
     || missingJreValue.status !== "blocked"
-    || missingJreValue.reason !== "JAVA_RUNTIME_NOT_FOUND") {
+    || missingJreValue.reason !== "BUNDLED_JRE_MISSING") {
     throw new Error(`Missing bundled JRE validation failed: ${JSON.stringify({ missingJre, missingJreValue })}`);
   }
 

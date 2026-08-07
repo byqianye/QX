@@ -90,8 +90,9 @@ export function sourceForCode(code: string): AppErrorSource {
   if (code.startsWith("STATE_PERSISTENCE_") || code.startsWith("DATABASE_") || code === "LEGACY_MIGRATION_FAILED") return "persistence";
   if (code.startsWith("JELLYFIN_")) return "source";
   if (code.startsWith("JVM_SPIDER_")) return "spider";
-  if (code.startsWith("JVM_ARTIFACT") || code.startsWith("JVM_") || code.startsWith("JAVA_") || code.startsWith("JDK_") || code.startsWith("JRE_")) return "java";
+  if (code.startsWith("JVM_ARTIFACT") || code.startsWith("JVM_") || code.startsWith("JAVA_") || code.startsWith("JDK_") || code.startsWith("JRE_") || code === "BUNDLED_JRE_MISSING") return "java";
   if (code.startsWith("ELECTRON_") || code.startsWith("UI_") || code.startsWith("APP_") || code.startsWith("E2E_")) return "electron";
+  if (code === "RUNTIME_INTEGRITY_FAILED") return "electron";
   if (code.startsWith("CLEANUP_") || code.startsWith("RESOURCE_CLEANUP")) return "cleanup";
   if (code.startsWith("PLAYBACK_PROXY_")) return "proxy";
   if (code.startsWith("PARSE_")) return "player";

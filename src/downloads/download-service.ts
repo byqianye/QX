@@ -333,7 +333,10 @@ export function createDownloadBackend(environment: NodeJS.ProcessEnv = process.e
     // The fake backend is intentionally opt-in and only used for contract/E2E fixtures.
     return new FakeDownloadBackend({ completeOnStatus: true });
   }
-  const backend = new Aria2Backend({ env: environment });
+  const backend = new Aria2Backend({
+    env: environment,
+    ...(environment.QX_RUNTIME_DIRECTORY ? { runtimeDirectory: environment.QX_RUNTIME_DIRECTORY } : {}),
+  });
   return backend.available ? backend : new UnavailableDownloadBackend();
 }
 

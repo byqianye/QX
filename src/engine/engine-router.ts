@@ -25,6 +25,7 @@ export interface EngineRouterRuntime {
   spiderJar: string;
   spiderClass: string;
   pythonExecutable?: string;
+  pythonEnvironment?: NodeJS.ProcessEnv;
   jellyfinConfig?: JellyfinConfig;
   requestTimeoutMs?: number;
   startupTimeoutMs?: number;
@@ -77,6 +78,7 @@ export class EngineRouter {
       return new PythonDesktopClient({
         api: binding.api,
         pythonExecutable: runtime.pythonExecutable ?? "python",
+        ...(runtime.pythonEnvironment ? { env: runtime.pythonEnvironment } : {}),
         script: binding.script,
         ...(runtime.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: runtime.requestTimeoutMs }),
         ...(runtime.startupTimeoutMs === undefined ? {} : { startupTimeoutMs: runtime.startupTimeoutMs }),

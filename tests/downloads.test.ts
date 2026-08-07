@@ -7,6 +7,7 @@ import { SqliteDataLayer } from "../src/data/sqlite.js";
 import {
   Aria2Backend,
   FakeDownloadBackend,
+  resolveAria2Path,
 } from "../src/downloads/download-backend.js";
 import {
   DownloadService,
@@ -23,6 +24,18 @@ describe("G64 download manager", () => {
       const directory = directories.pop();
       if (directory) rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  it("resolves the bundled aria2 executable when no explicit override exists", () => {
+    expect(resolveAria2Path({
+      env: { QX_RUNTIME_DIRECTORY: "C:\\runtime" },
+      exists: (value) => value === "C:\\runtime\\aria2\\aria2c.exe",
+    })).toBe("C:\\runtime\\aria2\\aria2c.exe");
+    expect(resolveAria2Path({
+      executablePath: "C:\\custom\\aria2c.exe",
+      env: { QX_RUNTIME_DIRECTORY: "C:\\runtime" },
+      exists: (value) => value === "C:\\custom\\aria2c.exe" || value === "C:\\runtime\\aria2\\aria2c.exe",
+    })).toBe("C:\\custom\\aria2c.exe");
   });
 
   it("registers an opaque target directory and sanitizes traversal/reserved filenames", async () => {

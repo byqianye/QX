@@ -1,6 +1,7 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomInt, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
+import { join } from "node:path";
 
 import type { DownloadBackendKind, DownloadStatus } from "./download-types.js";
 
@@ -214,6 +215,7 @@ export type Aria2Spawn = (
 export interface Aria2BackendOptions {
   executablePath?: string;
   env?: NodeJS.ProcessEnv;
+  runtimeDirectory?: string;
   exists?: (path: string) => boolean;
   spawnProcess?: Aria2Spawn;
   fetchImpl?: typeof fetch;
@@ -250,7 +252,7 @@ export class Aria2Backend implements DownloadBackend {
     this.available = this.executablePath !== null;
     this.spawnProcess = options.spawnProcess ?? defaultAria2Spawn;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
-    this.rpcPort = positiveInteger(options.rpcPort, 16_800);
+    this.rpcPort = positiveInteger(options.rpcPort, randomInt(30_000, 60_000));
     this.rpcSecret = options.rpcSecret ?? randomBytes(32).toString("hex");
     this.requestTimeoutMs = positiveInteger(options.requestTimeoutMs, 5_000);
     this.shutdownTimeoutMs = positiveInteger(options.shutdownTimeoutMs, 1_000);
@@ -397,7 +399,7 @@ export class Aria2Backend implements DownloadBackend {
       return;
     }
     if (this.startPromise) return this.startPromise;
-    this.startPromise = Promise.resolve().then(() => {
+    this.startPromise = Promise.resolve().then(async () => {
       const process = this.spawnProcess(this.executablePath!, [
         "--enable-rpc=true",
         "--rpc-listen-all=false",
@@ -414,6 +416,7 @@ export class Aria2Backend implements DownloadBackend {
       this.processExited = false;
       process.on("exit", () => { this.processExited = true; });
       process.on("error", () => { this.processExited = true; });
+      await this.waitForRpcReady();
     });
     try {
       await this.startPromise;
@@ -427,6 +430,23 @@ export class Aria2Backend implements DownloadBackend {
       this.process = undefined;
       this.processExited = false;
     }
+  }
+
+  private async waitForRpcReady(): Promise<void> {
+    const deadline = Date.now() + this.requestTimeoutMs;
+    let lastError: unknown;
+    while (Date.now() < deadline) {
+      try {
+        await this.rpc("aria2.getVersion", []);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (this.processExited) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    if (lastError instanceof Error) throw lastError;
+    throw new DownloadError("ARIA2_RPC_FAILED", "aria2 JSON-RPC listener did not become ready");
   }
 
   private async rpc(method: string, params: readonly unknown[]): Promise<unknown> {
@@ -480,10 +500,13 @@ export class UnavailableDownloadBackend implements DownloadBackend {
   }
 }
 
-export function resolveAria2Path(options: Pick<Aria2BackendOptions, "executablePath" | "env" | "exists"> = {}): string | null {
+export function resolveAria2Path(options: Pick<Aria2BackendOptions, "executablePath" | "env" | "runtimeDirectory" | "exists"> = {}): string | null {
   const exists = options.exists ?? existsSync;
   const configured = options.executablePath?.trim() || options.env?.QX_ARIA2_PATH?.trim() || process.env.QX_ARIA2_PATH?.trim();
-  return configured && exists(configured) ? configured : null;
+  if (configured && exists(configured)) return configured;
+  const runtimeDirectory = options.runtimeDirectory?.trim() || options.env?.QX_RUNTIME_DIRECTORY?.trim() || process.env.QX_RUNTIME_DIRECTORY?.trim();
+  const bundled = runtimeDirectory ? join(runtimeDirectory, "aria2", "aria2c.exe") : null;
+  return bundled && exists(bundled) ? bundled : null;
 }
 
 function defaultAria2Spawn(

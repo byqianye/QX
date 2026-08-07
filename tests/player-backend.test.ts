@@ -269,6 +269,15 @@ describe("player backend contract", () => {
     expect(resolveMpvPath({ env: {}, probePaths: [], exists: () => false })).toBeNull();
   });
 
+  it("prefers the bundled runtime path before development probe paths", () => {
+    const exists = (value: string) => value === "C:\\runtime\\mpv\\mpv.exe" || value === "probe";
+    expect(resolveMpvPath({
+      env: { QX_RUNTIME_DIRECTORY: "C:\\runtime" },
+      probePaths: ["probe"],
+      exists,
+    })).toBe("C:\\runtime\\mpv\\mpv.exe");
+  });
+
   it("starts one isolated mpv process with argument arrays and IPC commands", async () => {
     const calls: { path: string; args: readonly string[]; shell: false }[] = [];
     const fixture = createMpv({

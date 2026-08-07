@@ -1,4 +1,5 @@
-import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { copyFile, cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
@@ -13,6 +14,7 @@ import {
   resolveJlinkExecutable,
   type JavaRuntimeInspection,
 } from "./jre.js";
+import { buildRuntimeManifest } from "./runtime-manifest.js";
 
 const outputDirectory = join(process.cwd(), "dist", "electron-runtime");
 
@@ -31,19 +33,25 @@ try {
 
   const jreDirectory = join(outputDirectory, "jre");
   buildMinimalJre(buildJdk.javaExecutable, jreDirectory);
+  await copyBundledRuntime("python", join(outputDirectory, "python"), resolveAssetRoot("QX_PYTHON_RUNTIME", "python-runtime"));
+  await copyBundledRuntime("mpv", join(outputDirectory, "mpv"), resolveAssetRoot("QX_MPV_RUNTIME", "mpv"));
+  await copyBundledRuntime("aria2", join(outputDirectory, "aria2"), resolveAssetRoot("QX_ARIA2_RUNTIME", "aria2/aria2-1.37.0-win-64bit-build1"));
+  const manifest = buildRuntimeManifest(outputDirectory);
+  if (process.env.QX_RELEASE_BUILD === "1" && Object.values(manifest.runtimes).some((runtime) => !runtime.bundled)) {
+    const missing = Object.values(manifest.runtimes).filter((runtime) => !runtime.bundled).map((runtime) => runtime.id);
+    throw new Error(`Release runtime assets missing: ${missing.join(", ")}`);
+  }
   await writeFile(
     join(outputDirectory, "runtime-manifest.json"),
     `${JSON.stringify({
-      spike: "18",
-      target: "windows-x64",
-      jre: {
-        distribution: PINNED_TEMURIN.distribution,
-        version: PINNED_TEMURIN.version,
-        modules: MINIMAL_JRE_MODULES,
+      ...manifest,
+      build: {
         toolchainSource: buildJdk.source,
         toolchainVendor: buildJdk.inspection.vendor,
         toolchainVersion: buildJdk.inspection.version,
         toolchainDataModel: buildJdk.inspection.dataModel,
+        temurin: PINNED_TEMURIN,
+        jreModules: MINIMAL_JRE_MODULES,
       },
     }, null, 2)}\n`,
     "utf8",
@@ -113,4 +121,27 @@ function runTool(executable: string, args: string[], label: string): void {
 
   const details = String(result.stderr || result.stdout || result.error?.message || "unknown error").trim();
   throw new Error(`${label} failed: ${details}`);
+}
+
+async function copyBundledRuntime(id: string, destination: string, source: string): Promise<void> {
+  const executable = id === "python" ? join(source, "python.exe")
+    : id === "mpv" ? join(source, "mpv.exe")
+      : join(source, "aria2c.exe");
+  if (!resolvePathExists(executable)) {
+    if (process.env.QX_RELEASE_BUILD === "1") throw new Error(`Missing ${id} runtime asset: ${executable}`);
+    console.warn(`Development runtime asset unavailable: ${id} (${source})`);
+    return;
+  }
+  await rm(destination, { recursive: true, force: true });
+  await mkdir(destination, { recursive: true });
+  await cp(source, destination, { recursive: true });
+}
+
+function resolveAssetRoot(variable: string, fallback: string): string {
+  const configured = process.env[variable]?.trim();
+  return configured ? configured : join(process.cwd(), "dist", "release-assets", fallback);
+}
+
+function resolvePathExists(path: string): boolean {
+  return existsSync(path);
 }

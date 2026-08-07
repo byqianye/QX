@@ -435,6 +435,7 @@ export class PlayerBackendChain extends ControllerBackedBackend {
 export interface MpvPathResolutionOptions {
   mpvPath?: string;
   env?: NodeJS.ProcessEnv;
+  runtimeDirectory?: string;
   probePaths?: readonly string[];
   exists?: (path: string) => boolean;
 }
@@ -446,6 +447,11 @@ export function resolveMpvPath(options: MpvPathResolutionOptions = {}): string |
   if (configured) return exists(configured) ? configured : null;
   const environmentPath = nonEmpty(env.QX_MPV_PATH);
   if (environmentPath) return exists(environmentPath) ? environmentPath : null;
+  const bundledPath = nonEmpty(options.runtimeDirectory ?? env.QX_RUNTIME_DIRECTORY);
+  if (bundledPath) {
+    const candidate = join(bundledPath, "mpv", "mpv.exe");
+    if (exists(candidate)) return candidate;
+  }
   for (const candidate of options.probePaths ?? defaultMpvProbePaths(env)) {
     if (nonEmpty(candidate) && exists(candidate)) return candidate;
   }

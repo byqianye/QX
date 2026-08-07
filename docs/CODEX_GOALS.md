@@ -3,7 +3,8 @@
 ## 项目阶段
 
 - Stage 0：Spike 0–19 ✅ 已完成
-- Stage 1：G20–G78 🚧 进行中
+- Stage 1：G20–G78 目标模式进行中
+- 当前子阶段 Stage 3：数据与用户功能阶段 🚧 进行中
 
 ---
 
@@ -658,6 +659,47 @@ parse 和 Proxy 都不是开放代理；sniff 不提供 Node、文件系统或�
 
 ```text
 checkpoint: complete G49 playback enhancement acceptance
+```
+
+## G50（已完成）
+
+### 目标
+
+建立正式 SQLite 数据层、schema migration、主进程 repository 边界、旧 JSON 一次性迁移和安全恢复路径，作为 G51—G55 的数据基础。
+
+### 状态
+
+已完成。采用 Node `node:sqlite` `DatabaseSync`（运行时要求 Node `>=22.5.0`），开发版和 Windows x64 packaged app 均可加载。桌面状态与配置历史已切换到 SQLite；旧 desktop state、config history、可选 source/stream health JSON 通过 transaction 和 `data_migrations` 标记迁移，缺失文件不提前标记，失败保留原文件。数据库损坏、高版本、迁移失败和写入失败均映射为脱敏稳定错误码；恢复库路径稳定，可在重启后复用；敏感配置字段不会原样进入 SQLite；播放进度 writer 已提供 debounce、interval 和关闭/暂停/停止/换集 flush seam。
+
+### 依赖
+
+- G49 播放增强综合验收
+
+### 范围
+
+- `src/data/`：普通模式数据目录、`node:sqlite`、schema migration、recovery、repositories、进度写入和旧数据迁移；
+- `src/electron/main.ts`：主进程初始化、SQLite 配置历史/桌面状态接入和 close 生命周期；
+- Renderer 继续只接收类型化 API/state，不直接访问 SQLite；
+- `docs/spike-50-sqlite-data-layer.md` 与 G50 专项测试。
+
+### 验收结果
+
+- G50 专项、迁移 rollback、DB lock（含 transaction 起始锁）、corrupt DB、too-new DB、prepared statement、Renderer 数据边界、repository CRUD、旧数据迁移与 handle close 测试通过；
+- `npm run typecheck`：通过；
+- `npm test`：通过；
+- `npm run electron:build`：通过；
+- `npm run electron:package:win`：通过；
+- `npm run electron:e2e:package`：首次启动与重启均通过，SQLite 状态从 packaged DB 恢复；
+- 未 push；G51—G55 尚未在本 Goal 中实现。
+
+### 文档
+
+- `docs/spike-50-sqlite-data-layer.md`
+
+### checkpoint
+
+```text
+checkpoint: complete G50 SQLite data layer
 ```
 
 DEX-1 ~ DEX-5（实验支线）

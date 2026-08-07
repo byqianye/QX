@@ -4,15 +4,15 @@ import { join } from "node:path";
 import { app, BrowserWindow, dialog, screen, session as electronSession } from "electron";
 
 import { JsonFileTrustPersistence, ImportTrustStore } from "../config/trust.js";
-import { ConfigHistoryStore, JsonFileConfigHistoryPersistence } from "../config/history.js";
+import { ConfigHistoryStore } from "../config/history.js";
 import { DesktopSpiderImportController } from "../desktop/spider-import.js";
 import { DesktopSpiderSession } from "../desktop/spider-session.js";
 import { DesktopSpiderUiServer } from "../desktop/spider-ui.js";
 import type { ParserCandidate } from "../desktop/parse-chain.js";
 import type { PlaybackRule, PlaybackRuleAction, PlaybackRuleMatch, PlaybackRuleScope } from "../desktop/playback-rules.js";
 import {
-  JsonFileDesktopStateStore,
   restoreWindowBounds,
+  type DesktopStateStorePort,
   type PersistedWindowState,
 } from "../desktop/state-persistence.js";
 import type { DesktopSpiderClientPort } from "../desktop/spider-client-port.js";
@@ -27,6 +27,15 @@ import {
 import { runFakeMpvExitProbe } from "./fake-mpv-probe.js";
 import { resolveElectronRuntime } from "./runtime.js";
 import { DesktopShellRuntime } from "./shell-runtime.js";
+import { DataDirectoryResolver } from "../data/data-directory.js";
+import { SqliteConfigHistoryPersistence } from "../data/config-history-persistence.js";
+import { SqliteDesktopStateStore } from "../data/desktop-state-store.js";
+import { LegacyDataMigrator } from "../data/legacy-migration.js";
+import { databaseError, isDataLayerError, type DataLayerError } from "../data/errors.js";
+import {
+  openSqliteDataLayer,
+  type SqliteDataLayer,
+} from "../data/sqlite.js";
 import {
   IsolatedSniffer,
   type IsolatedSnifferPlatform,
@@ -67,11 +76,45 @@ let cleanupPromise: Promise<void> | undefined;
 let quitting = false;
 let lastClient: DesktopSpiderClientPort | undefined;
 let engineRouter: EngineRouter | undefined;
-let desktopStateStore: JsonFileDesktopStateStore | undefined;
+let dataLayer: SqliteDataLayer | undefined;
+let desktopStateStore: DesktopStateStorePort | undefined;
+let configHistoryStore: ConfigHistoryStore | undefined;
 let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
 
-function getDesktopStateStore(): JsonFileDesktopStateStore {
-  return desktopStateStore ??= new JsonFileDesktopStateStore(join(app.getPath("userData"), "desktop-state.json"));
+function getDesktopStateStore(): DesktopStateStorePort {
+  initializeDataLayer();
+  if (!desktopStateStore) throw new Error("Desktop state store is unavailable");
+  return desktopStateStore;
+}
+
+function getConfigHistoryStore(): ConfigHistoryStore {
+  initializeDataLayer();
+  if (!configHistoryStore) throw new Error("Config history store is unavailable");
+  return configHistoryStore;
+}
+function initializeDataLayer(): void {
+  if (dataLayer && desktopStateStore && configHistoryStore) return;
+  const directories = new DataDirectoryResolver(app.getPath("userData")).resolve();
+  const opened = openSqliteDataLayer(directories.database);
+  dataLayer = opened.layer;
+  const legacy = new LegacyDataMigrator(opened.layer).migrate({
+    desktopState: join(directories.dataRoot, "desktop-state.json"),
+    configHistory: join(directories.dataRoot, "config-history.json"),
+    sourceHealth: join(directories.dataRoot, "source-health.json"),
+    streamHealth: join(directories.dataRoot, "stream-health.json"),
+  });
+  let historyDiagnostic: DataLayerError | null = null;
+  try {
+    configHistoryStore = new ConfigHistoryStore(new SqliteConfigHistoryPersistence(opened.layer));
+  } catch (error) {
+    // A malformed history row must not prevent the rest of the application from starting.
+    configHistoryStore = new ConfigHistoryStore();
+    historyDiagnostic = isDataLayerError(error)
+      ? error
+      : databaseError("DATABASE_CORRUPT", error);
+  }
+  const diagnostic = opened.diagnostic ?? legacy.diagnostic ?? historyDiagnostic;
+  desktopStateStore = new SqliteDesktopStateStore(opened.layer, diagnostic);
 }
 
 function createShell(): DesktopShellRuntime {
@@ -79,9 +122,7 @@ function createShell(): DesktopShellRuntime {
   const trustStore = new ImportTrustStore(
     new JsonFileTrustPersistence(join(app.getPath("userData"), "trusted-sources.json")),
   );
-  const configHistory = new ConfigHistoryStore(
-    new JsonFileConfigHistoryPersistence(join(app.getPath("userData"), "config-history.json")),
-  );
+  const configHistory = getConfigHistoryStore();
 
   return new DesktopShellRuntime({
     resolveRuntime: () => resolveElectronRuntime(
@@ -374,7 +415,7 @@ function forceBundledJreDisabled(): boolean {
   return process.env.QX_ELECTRON_FORCE_NO_BUNDLED_JRE === "1";
 }
 
-async function closeShell(): Promise<void> {
+async function closeShell(closeData = false): Promise<void> {
   if (!cleanupPromise) {
       cleanupPromise = (async () => {
         await closePlayerWindow();
@@ -383,6 +424,18 @@ async function closeShell(): Promise<void> {
       })();
   }
   await cleanupPromise;
+  if (closeData) closeDataLayer();
+}
+
+function closeDataLayer(): void {
+  const current = dataLayer;
+  dataLayer = undefined;
+  if (!current) return;
+  try {
+    current.close();
+  } catch {
+    // Shutdown must remain idempotent; the data layer already mapped operation errors.
+  }
 }
 
 async function openPlayerWindow(): Promise<void> {
@@ -467,7 +520,7 @@ async function createMainWindow(): Promise<void> {
         started.error?.message ?? "桌面 UI server 启动失败。",
       );
     }
-    await closeShell();
+    await closeShell(true);
     app.quit();
     return;
   }
@@ -522,17 +575,22 @@ async function createMainWindow(): Promise<void> {
     } else {
       dialog.showErrorBox(APP_NAME, errorMessage(error));
     }
-    await closeShell();
+    await closeShell(true);
     app.quit();
   }
 }
 
 app.on("before-quit", (event) => {
-  if (quitting || !shell || shell.state.status === "closed") return;
+  if (quitting) return;
+  if (!shell || shell.state.status === "closed") {
+    quitting = true;
+    closeDataLayer();
+    return;
+  }
   event.preventDefault();
   quitting = true;
   persistWindowStateNow();
-  void closeShell().finally(() => app.quit());
+  void closeShell(true).finally(() => app.quit());
 });
 
 app.on("window-all-closed", () => {
@@ -549,7 +607,7 @@ void app.whenReady().then(createMainWindow).catch(async (error: unknown) => {
   } else {
     dialog.showErrorBox(APP_NAME, errorMessage(error));
   }
-  await closeShell();
+  await closeShell(true);
   app.quit();
 });
 
@@ -646,7 +704,7 @@ async function runE2e(baseUrl: string): Promise<void> {
     writeE2eResult({ status: "failed", reason: "E2E_RUNNER_ERROR", message: errorMessage(error) });
     process.exitCode = 1;
   }
-  await closeShell();
+  await closeShell(true);
   app.quit();
 }
 
@@ -698,7 +756,7 @@ async function runNetworkTimeoutE2e(baseUrl: string): Promise<void> {
     writeE2eResult({ status: "failed", reason: "NETWORK_PROBE_ERROR", message: errorMessage(error) });
     process.exitCode = 1;
   }
-  await closeShell();
+  await closeShell(true);
   app.quit();
 }
 

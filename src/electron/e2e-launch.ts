@@ -9,6 +9,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
+import { DatabaseSync } from "node:sqlite";
 
 import {
   resolvePackagedExecutable,
@@ -185,7 +186,19 @@ function assertRun(name: string, process: PackagedProcessResult, result: Record<
 }
 
 function assertPersistedDesktopState(userDataPath: string, expectedSiteKey: string): void {
-  const value = JSON.parse(readFileSync(join(userDataPath, "desktop-state.json"), "utf8")) as Record<string, unknown>;
+  const database = new DatabaseSync(join(userDataPath, "qx-yingshi.db"), { readOnly: true });
+  let value: Record<string, unknown>;
+  try {
+    const row = database.prepare(
+      "SELECT value_json FROM settings WHERE key = ?",
+    ).get("desktop-state") as { value_json?: unknown } | undefined;
+    if (typeof row?.value_json !== "string") {
+      throw new Error("Packaged E2E desktop state row was not persisted");
+    }
+    value = JSON.parse(row.value_json) as Record<string, unknown>;
+  } finally {
+    database.close();
+  }
   const page = value.page as Record<string, unknown> | undefined;
   const window = value.window as Record<string, unknown> | undefined;
   if (value.version !== 1

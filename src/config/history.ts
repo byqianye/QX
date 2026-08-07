@@ -92,6 +92,20 @@ export type ConfigRefreshLoader =
 export type ConfigSpiderHashLoader =
   (config: TvBoxConfig) => Promise<Readonly<Record<string, string>>>;
 
+export function normalizeConfigHistorySource(source: string): string {
+  try {
+    const url = new URL(source);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      url.search = "";
+      url.hash = "";
+      return url.toString();
+    }
+  } catch {
+    // Keep non-URL source identifiers such as inline hashes.
+  }
+  return source.replace(/([?&](?:token|access[_-]?token|refresh[_-]?token|api[_-]?key)=)[^&#\s]*/gi, "$1[redacted]");
+}
+
 export class ConfigHistoryStore {
   private readonly maxVersions: number;
   private readonly versionsBySource = new Map<string, ConfigVersion[]>();
@@ -104,12 +118,14 @@ export class ConfigHistoryStore {
     this.maxVersions = Math.max(1, Math.floor(maxVersions));
     const state = persistence?.read() ?? { versions: [], activeVersionIds: {} };
     for (const version of state.versions) {
-      const list = this.versionsBySource.get(version.source) ?? [];
-      list.push(cloneVersion(version));
-      this.versionsBySource.set(version.source, list);
+      const source = normalizeConfigHistorySource(version.source);
+      const list = this.versionsBySource.get(source) ?? [];
+      list.push(cloneVersion({ ...version, source }));
+      this.versionsBySource.set(source, list);
     }
     for (const [source, id] of Object.entries(state.activeVersionIds)) {
-      if (this.findVersion(source, id)) this.activeVersionIds.set(source, id);
+      const normalizedSource = normalizeConfigHistorySource(source);
+      if (this.findVersion(normalizedSource, id)) this.activeVersionIds.set(normalizedSource, id);
     }
   }
 
@@ -120,10 +136,11 @@ export class ConfigHistoryStore {
     validators: Partial<ConfigValidators> = {},
     spiderHashes: Readonly<Record<string, string>> = {},
   ): ConfigVersion {
+    const normalizedSource = normalizeConfigHistorySource(source);
     // Parse before mutating any state. A corrupt refresh must leave the last
     // successful version intact.
     const config = parseTvBoxConfig(rawJson);
-    const previous = this.latestSuccessful(source);
+    const previous = this.latestSuccessful(normalizedSource);
     const versionHash = digest(rawJson);
     const normalizedSpiderHashes = cloneSpiderHashes(spiderHashes);
     const sameVersion = previous !== null
@@ -142,7 +159,7 @@ export class ConfigHistoryStore {
         }
       : {
           id: randomUUID(),
-          source,
+          source: normalizedSource,
           sourceKind,
           rawJson,
           config,
@@ -155,40 +172,42 @@ export class ConfigHistoryStore {
           spiderHashes: normalizedSpiderHashes,
           change: diffConfigs(previous?.config, config, previous?.spiderHashes, normalizedSpiderHashes),
         };
-    const list = this.versionsBySource.get(source) ?? [];
+    const list = this.versionsBySource.get(normalizedSource) ?? [];
     if (sameVersion) {
       list[list.length - 1] = cloneVersion(existing);
     } else {
       list.push(cloneVersion(existing));
     }
     while (list.length > this.maxVersions) list.shift();
-    this.versionsBySource.set(source, list);
-    this.activeVersionIds.set(source, existing.id);
+    this.versionsBySource.set(normalizedSource, list);
+    this.activeVersionIds.set(normalizedSource, existing.id);
     this.persist();
     return cloneVersion(existing);
   }
 
   public latestSuccessful(source: string): ConfigVersion | null {
-    const list = this.versionsBySource.get(source);
+    const list = this.versionsBySource.get(normalizeConfigHistorySource(source));
     const last = list?.[list.length - 1];
     return last ? cloneVersion(last) : null;
   }
 
   public cached(source: string): ConfigVersion | null {
-    if (!this.activeVersionIds.has(source)) return null;
-    const activeId = this.activeVersionIds.get(source);
+    const normalizedSource = normalizeConfigHistorySource(source);
+    if (!this.activeVersionIds.has(normalizedSource)) return null;
+    const activeId = this.activeVersionIds.get(normalizedSource);
     if (activeId) {
-      const active = this.findVersion(source, activeId);
+      const active = this.findVersion(normalizedSource, activeId);
       if (active) return cloneVersion(active);
     }
-    return this.latestSuccessful(source);
+    return this.latestSuccessful(normalizedSource);
   }
 
   public setActive(source: string, versionId: string | null): void {
+    const normalizedSource = normalizeConfigHistorySource(source);
     if (versionId === null) {
-      this.activeVersionIds.delete(source);
-    } else if (this.findVersion(source, versionId)) {
-      this.activeVersionIds.set(source, versionId);
+      this.activeVersionIds.delete(normalizedSource);
+    } else if (this.findVersion(normalizedSource, versionId)) {
+      this.activeVersionIds.set(normalizedSource, versionId);
     } else {
       throw new Error(`Config history version not found: ${versionId}`);
     }
@@ -196,7 +215,7 @@ export class ConfigHistoryStore {
   }
 
   public versions(source: string): readonly ConfigVersion[] {
-    return (this.versionsBySource.get(source) ?? []).map(cloneVersion);
+    return (this.versionsBySource.get(normalizeConfigHistorySource(source)) ?? []).map(cloneVersion);
   }
 
   public sources(): readonly string[] {
@@ -204,31 +223,33 @@ export class ConfigHistoryStore {
   }
 
   public rollback(source: string, versionId: string): ConfigVersion {
-    const version = this.findVersion(source, versionId);
+    const normalizedSource = normalizeConfigHistorySource(source);
+    const version = this.findVersion(normalizedSource, versionId);
     if (!version) throw new Error(`Config history version not found: ${versionId}`);
-    this.activeVersionIds.set(source, versionId);
+    this.activeVersionIds.set(normalizedSource, versionId);
     this.persist();
     return cloneVersion(version);
   }
 
   public delete(source: string, versionId?: string): void {
+    const normalizedSource = normalizeConfigHistorySource(source);
     if (versionId === undefined) {
-      this.versionsBySource.delete(source);
-      this.activeVersionIds.delete(source);
+      this.versionsBySource.delete(normalizedSource);
+      this.activeVersionIds.delete(normalizedSource);
       this.persist();
       return;
     }
-    const list = this.versionsBySource.get(source) ?? [];
+    const list = this.versionsBySource.get(normalizedSource) ?? [];
     const next = list.filter((version) => version.id !== versionId);
     if (next.length === list.length) return;
     if (next.length === 0) {
-      this.versionsBySource.delete(source);
-      this.activeVersionIds.delete(source);
+      this.versionsBySource.delete(normalizedSource);
+      this.activeVersionIds.delete(normalizedSource);
     } else {
-      this.versionsBySource.set(source, next);
-      if (this.activeVersionIds.get(source) === versionId) {
+      this.versionsBySource.set(normalizedSource, next);
+      if (this.activeVersionIds.get(normalizedSource) === versionId) {
         const fallback = next[next.length - 1];
-        if (fallback) this.activeVersionIds.set(source, fallback.id);
+        if (fallback) this.activeVersionIds.set(normalizedSource, fallback.id);
       }
     }
     this.persist();

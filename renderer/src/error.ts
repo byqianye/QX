@@ -35,6 +35,12 @@ const TITLES: Record<string, string> = {
   MPV_SUBTITLE_FORMAT_UNSUPPORTED: "mpv 只接受已转换的字幕格式",
   STATE_PERSISTENCE_CORRUPT: "桌面状态已恢复",
   STATE_PERSISTENCE_WRITE_FAILED: "桌面状态未保存",
+  DATABASE_OPEN_FAILED: "数据库已切换到安全恢复模式",
+  DATABASE_MIGRATION_FAILED: "数据库迁移失败",
+  DATABASE_CORRUPT: "数据库文件已隔离",
+  DATABASE_VERSION_TOO_NEW: "数据库版本过新",
+  DATABASE_WRITE_FAILED: "数据库未能保存",
+  LEGACY_MIGRATION_FAILED: "旧数据迁移失败",
   RENDERER_REQUEST_ERROR: "界面请求失败",
 };
 
@@ -81,7 +87,7 @@ export function formatDiagnostic(error: AppError): string {
 export function sourceForCode(code: string): AppErrorSource {
   if (code.startsWith("IMPORT_") || code === "UNSUPPORTED_SPIDER_ENGINE") return "config";
   if (code.includes("TRUST")) return "trust";
-  if (code.startsWith("STATE_PERSISTENCE_")) return "persistence";
+  if (code.startsWith("STATE_PERSISTENCE_") || code.startsWith("DATABASE_") || code === "LEGACY_MIGRATION_FAILED") return "persistence";
   if (code.startsWith("JELLYFIN_")) return "source";
   if (code.startsWith("JVM_SPIDER_")) return "spider";
   if (code.startsWith("JVM_ARTIFACT") || code.startsWith("JVM_") || code.startsWith("JAVA_") || code.startsWith("JDK_") || code.startsWith("JRE_")) return "java";

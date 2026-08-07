@@ -59,8 +59,18 @@ export interface DesktopStatePatch {
   window?: Partial<PersistedWindowState>;
 }
 
+export type StatePersistenceDiagnosticCode =
+  | "STATE_PERSISTENCE_CORRUPT"
+  | "STATE_PERSISTENCE_WRITE_FAILED"
+  | "DATABASE_OPEN_FAILED"
+  | "DATABASE_MIGRATION_FAILED"
+  | "DATABASE_CORRUPT"
+  | "DATABASE_VERSION_TOO_NEW"
+  | "DATABASE_WRITE_FAILED"
+  | "LEGACY_MIGRATION_FAILED";
+
 export interface StatePersistenceDiagnostic {
-  code: "STATE_PERSISTENCE_CORRUPT" | "STATE_PERSISTENCE_WRITE_FAILED";
+  code: StatePersistenceDiagnosticCode;
   message: string;
 }
 
@@ -272,8 +282,16 @@ export function restoreWindowBounds(
 }
 
 function parseState(value: unknown): DesktopPersistedState | null {
+  return parseDesktopState(value);
+}
+
+export function parseDesktopState(value: unknown): DesktopPersistedState | null {
   if (!isRecord(value) || value.version !== 1) return null;
   return normalizeState(value);
+}
+
+export function normalizeDesktopState(value: unknown): DesktopPersistedState {
+  return parseDesktopState(value) ?? cloneState(DEFAULT_DESKTOP_STATE);
 }
 
 function normalizeState(value: Record<string, unknown>): DesktopPersistedState {

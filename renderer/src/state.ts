@@ -6,6 +6,7 @@ import type { HistoryResumeCandidate, HistoryUiState } from "../../src/history/h
 import type { FavoriteItem, FavoritesUiState } from "../../src/favorites/favorites-types.js";
 import type { FollowItem, FollowUiState } from "../../src/follow/follow-types.js";
 import type { CacheUiState } from "../../src/cache/cache-types.js";
+import type { StorageUiState } from "../../src/storage/storage-types.js";
 
 export type ImportStatus =
   | "empty"
@@ -267,6 +268,7 @@ export interface RendererState {
   follow: FollowUiState;
   followDetail: FollowItem | null;
   cache: CacheUiState;
+  storage: StorageUiState;
   error: ErrorState;
 }
 
@@ -297,6 +299,7 @@ export interface ApiSpiderState {
   follow?: FollowUiState;
   followDetail?: FollowItem | null;
   cache?: CacheUiState;
+  storage?: StorageUiState;
 }
 
 export interface RendererEnvelope {
@@ -357,6 +360,7 @@ export function createRendererState(): RendererState {
     follow: { items: [], checking: false, updateCount: 0 },
     followDetail: null,
     cache: { totalBytes: 0, maxBytes: 0, entries: 0, byType: [] },
+    storage: { mode: "normal", dataRoot: "—", normalRoot: "—", portableRoot: "—", databaseBytes: 0, cacheBytes: 0, totalBytes: 0, historyCount: 0, favoritesCount: 0, followCount: 0, writable: false, switching: false, error: null },
     error: { error: null },
   };
 }
@@ -418,6 +422,7 @@ export function applyRendererEnvelope(
     follow: cloneFollowState(state.follow ?? current.follow),
     followDetail: state.followDetail ? { ...state.followDetail } : null,
     cache: cloneCacheState(state.cache ?? current.cache),
+    storage: cloneStorageState(state.storage ?? current.storage),
     error: { error: toAppError(stateError) },
   };
 }
@@ -554,6 +559,10 @@ function cloneCacheState(state: CacheUiState): CacheUiState {
     entries: state.entries,
     byType: state.byType.map((item) => ({ ...item })),
   };
+}
+
+function cloneStorageState(state: StorageUiState): StorageUiState {
+  return { ...state };
 }
 
 function emptyPlaybackHealth(): PlaybackHealthSnapshot {

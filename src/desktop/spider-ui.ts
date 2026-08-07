@@ -87,6 +87,8 @@ import {
   type CacheUiState,
 } from "../cache/cache-types.js";
 import { CacheService } from "../cache/cache-service.js";
+import { DataStorageService } from "../data/data-directory.js";
+import { EMPTY_STORAGE_UI_STATE, type StorageMode, type StorageUiState } from "../storage/storage-types.js";
 import {
   EMPTY_FOLLOW_UI_STATE,
   type FollowContentInput,
@@ -219,6 +221,7 @@ export interface DesktopSpiderUiState {
   follow: FollowUiState;
   followDetail: FollowItem | null;
   cache: CacheUiState;
+  storage: StorageUiState;
 }
 
 export interface DesktopSpiderUiOptions {
@@ -237,6 +240,7 @@ export interface DesktopSpiderUiOptions {
   favorites?: FavoritesService;
   follow?: FollowService;
   cache?: CacheService;
+  storage?: DataStorageService;
 }
 
 export class DesktopSpiderUiController {
@@ -273,6 +277,7 @@ export class DesktopSpiderUiController {
   private readonly favoritesService: FavoritesService | undefined;
   private readonly followService: FollowService | undefined;
   private readonly cacheService: CacheService | undefined;
+  private readonly storageService: DataStorageService | undefined;
   private historyResume: HistoryResumeCandidate | null = null;
   private pendingResumeSeconds = 0;
 
@@ -283,6 +288,7 @@ export class DesktopSpiderUiController {
     this.favoritesService = options.favorites;
     this.followService = options.follow;
     this.cacheService = options.cache;
+    this.storageService = options.storage;
     this.parserCandidates = options.parserCandidates?.map(cloneParserCandidate) ?? [];
     this.sniffer = options.sniffer;
     this.parserAllowedOrigins = options.parserAllowedOrigins ?? [];
@@ -341,6 +347,7 @@ export class DesktopSpiderUiController {
       follow: this.followService?.uiState(sourceIdForHistory(view.source)) ?? EMPTY_FOLLOW_UI_STATE,
       followDetail: this.followForDetail(),
       cache: this.cacheService?.uiState() ?? EMPTY_CACHE_UI_STATE,
+      storage: this.storageService?.uiState() ?? EMPTY_STORAGE_UI_STATE,
     };
   }
 
@@ -431,6 +438,10 @@ export class DesktopSpiderUiController {
 
   public clearCache(scope: CacheClearScope): DesktopSpiderUiState {
     this.cacheService?.clear(scope);
+    return this.state;
+  }
+
+  public refreshStorage(): DesktopSpiderUiState {
     return this.state;
   }
 
@@ -1333,6 +1344,9 @@ export interface DesktopSpiderUiServerOptions {
   favorites?: FavoritesService;
   follow?: FollowService;
   cache?: CacheService;
+  storage?: DataStorageService;
+  onStorageOpen?: () => void | Promise<void>;
+  onStorageSwitch?: (mode: StorageMode) => void;
 }
 
 export class DesktopSpiderUiServer {
@@ -1360,6 +1374,9 @@ export class DesktopSpiderUiServer {
   private readonly favoritesService: FavoritesService | undefined;
   private readonly followService: FollowService | undefined;
   private readonly cacheService: CacheService | undefined;
+  private readonly storageService: DataStorageService | undefined;
+  private readonly onStorageOpen: (() => void | Promise<void>) | undefined;
+  private readonly onStorageSwitch: ((mode: StorageMode) => void) | undefined;
   private server: Server | undefined;
   private boundUrl: string | undefined;
   private boundSession: DesktopSpiderSessionPort | undefined;
@@ -1399,6 +1416,9 @@ export class DesktopSpiderUiServer {
     this.favoritesService = options.favorites;
     this.followService = options.follow;
     this.cacheService = options.cache;
+    this.storageService = options.storage;
+    this.onStorageOpen = options.onStorageOpen;
+    this.onStorageSwitch = options.onStorageSwitch;
   }
 
   public get url(): string {
@@ -1680,6 +1700,28 @@ export class DesktopSpiderUiServer {
         return;
       }
 
+      if (url.pathname.startsWith("/api/storage/")) {
+        const storageService = this.storageService;
+        if (!storageService) throw new Error("STORAGE_UNAVAILABLE");
+        if (url.pathname === "/api/storage/refresh") {
+          // State is read below; keeping this endpoint explicit makes the UI intent clear.
+        } else if (url.pathname === "/api/storage/open") {
+          if (!this.onStorageOpen) throw new Error("STORAGE_OPEN_UNAVAILABLE");
+          await this.onStorageOpen();
+        } else if (url.pathname === "/api/storage/switch") {
+          const mode = body.mode;
+          if (!isStorageMode(mode)) throw new Error("STORAGE_MODE_INVALID");
+          if (body.confirmed !== true) throw new Error("STORAGE_CONFIRMATION_REQUIRED");
+          if (!this.onStorageSwitch) throw new Error("STORAGE_SWITCH_UNAVAILABLE");
+          this.onStorageSwitch(mode);
+        } else {
+          writeJson(response, { error: "Not found" }, 404);
+          return;
+        }
+        this.writeCurrentState(response);
+        return;
+      }
+
       const ui = this.activeUi();
       if (!ui) throw new Error("Import confirmation is required before Spider actions");
       switch (url.pathname) {
@@ -1861,6 +1903,9 @@ export class DesktopSpiderUiServer {
         ...(this.favoritesService ? { favorites: this.favoritesService } : {}),
         ...(this.followService ? { follow: this.followService } : {}),
         ...(this.cacheService ? { cache: this.cacheService } : {}),
+        ...(this.storageService ? { storage: this.storageService } : {}),
+        ...(this.onStorageOpen ? { onStorageOpen: this.onStorageOpen } : {}),
+        ...(this.onStorageSwitch ? { onStorageSwitch: this.onStorageSwitch } : {}),
       });
       this.importedUiBySession.set(session, this.importedUi);
     }
@@ -2556,6 +2601,10 @@ function isNavigation(value: unknown): value is "home" | "category" | "search" |
 
 function isCacheClearScope(value: unknown): value is CacheClearScope {
   return value === "expired" || value === "images" || value === "search" || value === "all";
+}
+
+function isStorageMode(value: unknown): value is StorageMode {
+  return value === "normal" || value === "portable";
 }
 
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {

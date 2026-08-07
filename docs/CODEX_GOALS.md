@@ -909,6 +909,44 @@ Storage / Cache UI 接入同一套 CacheService。
 checkpoint: complete G54 cache management
 ```
 
+## G55（已完成）
+
+### 目标
+
+正式实现 normal / portable data mode，统一 DataRoot、Database、Cache、Logs、Temp、
+Backups、Settings 路径，并提供用户确认的安全迁移。
+
+### 范围
+
+- packaged `QX影视.exe` 同目录存在 `data/` 才进入 portable；开发环境即使源码目录
+  存在 `data/` 也保持 normal。
+- 启动时统一创建目录并检查 DataRoot、Cache 可写；portable 失败返回
+  `PORTABLE_DATA_NOT_WRITABLE`，提供 normal / 其他目录 / 退出选择。
+- 迁移使用临时目录、SQLite integrity check、目标旧数据 `backups/mode-switch-*`，
+  成功后才切换；portable 返回 normal 时旧 `data/` 改名保留，不自动删除。
+- Settings 增加 Storage / Portable 状态、脱敏 Data Root、数据库/缓存/总大小、打开
+  目录和确认切换；Electron 使用单实例锁，第二实例只聚焦已有窗口。
+
+### 验收与验证
+
+- `tests/data-directory.test.ts` 覆盖 normal、portable、开发环境、可写性、数据库/缓存
+  迁移、回切、备份、失败保留、完整性校验和数据目录结构。
+- `tests/desktop-ui.test.ts`、`tests/vue-renderer.test.ts` 覆盖 Storage API/UI 与确认。
+- `tests/electron-e2e.test.ts`、packaged E2E 覆盖脱敏 storage state、restart、cache root、
+  database 保留与进程清理。
+- `docs/spike-55-portable-data.md` 记录 Resolver、迁移原子性边界、备份和非目标。
+
+### 状态
+
+已完成。业务数据只通过 DataDirectoryResolver/DataStorageService 解析，切换需要重启
+以避免旧 SQLite handle 继续写入。
+
+### 检查点
+
+```text
+checkpoint: complete G55 portable data mode
+```
+
 DEX-1 ~ DEX-5（实验支线）
 
 - DEX-1：Android Emulator 探针

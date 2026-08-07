@@ -309,6 +309,9 @@ function play(line: number, episode: number, resumeMode?: HistoryResumeMode): vo
       @follow-and-favorite="post('follow-and-favorite-detail', '/api/follow/favorite-detail')"
       @cache-refresh="post('cache-refresh', '/api/cache/refresh')"
       @cache-clear="post('cache-clear', '/api/cache/clear', { scope: $event })"
+      @storage-refresh="post('storage-refresh', '/api/storage/refresh')"
+      @storage-open="post('storage-open', '/api/storage/open')"
+      @storage-switch="post('storage-switch', '/api/storage/switch', { mode: $event, confirmed: true })"
     />
   </div>
 </template>

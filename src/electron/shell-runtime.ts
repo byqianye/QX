@@ -10,7 +10,11 @@ export interface DesktopShellServerPort {
   close(): Promise<void>;
 }
 
-export type DesktopShellErrorCode = ElectronRuntimeErrorCode | "UI_SERVER_START_ERROR";
+export type DesktopShellErrorCode = ElectronRuntimeErrorCode
+  | "UI_SERVER_START_ERROR"
+  | "PORTABLE_DATA_NOT_WRITABLE"
+  | "DATA_ROOT_NOT_WRITABLE"
+  | "DATA_MIGRATION_FAILED";
 
 export interface DesktopShellState {
   status: "idle" | "starting" | "running" | "error" | "closed";
@@ -93,7 +97,7 @@ export class DesktopShellRuntime {
       this.stateValue = {
         status: "error",
         url: null,
-        error: { code: "UI_SERVER_START_ERROR", message: errorMessage(error) },
+        error: { code: startupErrorCode(error), message: errorMessage(error) },
       };
       return this.state;
     } finally {
@@ -104,4 +108,15 @@ export class DesktopShellRuntime {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function startupErrorCode(error: unknown): DesktopShellErrorCode {
+  const code = typeof error === "object" && error !== null && "code" in error
+    ? (error as { code?: unknown }).code
+    : null;
+  return code === "PORTABLE_DATA_NOT_WRITABLE"
+    || code === "DATA_ROOT_NOT_WRITABLE"
+    || code === "DATA_MIGRATION_FAILED"
+    ? code
+    : "UI_SERVER_START_ERROR";
 }

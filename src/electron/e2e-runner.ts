@@ -22,6 +22,7 @@ export interface PackagedE2eOptions {
   verifyFavorites?: boolean;
   verifyFollow?: boolean;
   verifyCache?: boolean;
+  verifyStorage?: boolean;
   expectedFavoriteId?: string;
   expectedFollowIdentity?: string;
   verifyParserFallback?: boolean;
@@ -83,6 +84,7 @@ export interface PackagedE2eChecks {
   follow?: boolean;
   followRestart?: boolean;
   cache?: boolean;
+  storage?: boolean;
 }
 
 export interface PackagedE2eResult {
@@ -206,6 +208,13 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       checks.cache = validCacheState(refreshedCache.state?.cache)
         && validCacheState(clearedCache.state?.cache)
         && clearedCache.state?.cache?.entries === 0;
+    }
+    if (options.verifyStorage) {
+      const storage = await post(options.baseUrl, "/api/storage/refresh");
+      checks.storage = validStorageState(storage.state?.storage)
+        && storage.state?.storage?.mode === "normal"
+        && !storage.state.storage.dataRoot.includes("\\")
+        && !storage.state.storage.dataRoot.includes(":");
     }
 
     if (options.playback) {
@@ -633,6 +642,16 @@ function validCacheState(value: UiState["cache"]): value is NonNullable<UiState[
       && typeof item.bytes === "number");
 }
 
+function validStorageState(value: UiState["storage"]): value is NonNullable<UiState["storage"]> {
+  return isRecord(value)
+    && (value.mode === "normal" || value.mode === "portable")
+    && typeof value.dataRoot === "string"
+    && typeof value.databaseBytes === "number"
+    && typeof value.cacheBytes === "number"
+    && typeof value.totalBytes === "number"
+    && typeof value.writable === "boolean";
+}
+
 function followItem(state: UiState | null, identity: string | null): Record<string, unknown> | null {
   if (!state || !identity || !state.follow) return null;
   const item = state.follow.items.find((candidate) => candidate.identity === identity);
@@ -710,6 +729,19 @@ interface UiState {
     maxBytes: number;
     entries: number;
     byType: readonly { type: string; count: number; bytes: number }[];
+  };
+  storage?: {
+    mode: "normal" | "portable";
+    dataRoot: string;
+    normalRoot: string;
+    portableRoot: string;
+    databaseBytes: number;
+    cacheBytes: number;
+    totalBytes: number;
+    historyCount: number;
+    favoritesCount: number;
+    followCount: number;
+    writable: boolean;
   };
 }
 

@@ -29,6 +29,7 @@ import { CacheRepository, HistoryRepository, PlaybackProgressRepository, Setting
 import { SqliteDataLayer } from "../src/data/sqlite.js";
 import { HistoryProgressService } from "../src/history/history-progress.js";
 import { CacheService } from "../src/cache/cache-service.js";
+import { DataDirectoryResolver, DataStorageService } from "../src/data/data-directory.js";
 
 describe("desktop Spider UI", () => {
   const servers: DesktopSpiderUiServer[] = [];
@@ -537,6 +538,42 @@ describe("desktop Spider UI", () => {
     });
     expect(rejected.status).toBe(400);
     expect(await rejected.text()).toContain("CACHE_CLEAR_SCOPE_INVALID");
+  });
+
+  it("exposes storage state, folder opening, and confirmed mode switching", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "qx-desktop-storage-"));
+    historyDirectories.push(directory);
+    const resolver = new DataDirectoryResolver(join(directory, "user-data"));
+    resolver.prepare();
+    const storage = new DataStorageService(resolver);
+    let opened = 0;
+    let switched: string | null = null;
+    const ui = new DesktopSpiderUiController({ session: new FixtureSession(), storage });
+    const server = new DesktopSpiderUiServer({
+      ui,
+      siteKey: "douban",
+      ext: "fixture-endpoint",
+      storage,
+      onStorageOpen: () => { opened += 1; },
+      onStorageSwitch: (mode) => { switched = mode; },
+    });
+    servers.push(server);
+    await server.start();
+
+    const refreshed = await post(server.url, "/api/storage/refresh");
+    expect(refreshed.state?.storage).toMatchObject({ mode: "normal", dataRoot: "…/user-data" });
+    await post(server.url, "/api/storage/open");
+    await post(server.url, "/api/storage/switch", { mode: "portable", confirmed: true });
+    expect(opened).toBe(1);
+    expect(switched).toBe("portable");
+
+    const rejected = await fetch(new URL("/api/storage/switch", server.url), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "portable", confirmed: false }),
+    });
+    expect(rejected.status).toBe(400);
+    expect(await rejected.text()).toContain("STORAGE_CONFIRMATION_REQUIRED");
   });
 
   function createHistoryService(): HistoryProgressService {

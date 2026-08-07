@@ -319,6 +319,10 @@ p { margin-bottom: 12px; }
 .cache-summary, .cache-breakdown { display: grid; gap: 0; min-width: 0; }
 .cache-breakdown, .cache-actions { grid-column: 1 / -1; }
 @media (max-width: 760px) { .cache-management { grid-template-columns: 1fr; } }
+.storage-management { grid-template-columns: minmax(0, 1fr) minmax(240px, 360px); }
+.storage-summary { display: grid; gap: 0; min-width: 0; }
+.storage-actions { grid-column: 1 / -1; }
+@media (max-width: 760px) { .storage-management { grid-template-columns: 1fr; } }
 
 .history-page { display: grid; gap: 20px; }
 .history-toolbar { display: grid; grid-template-columns: minmax(240px, 1fr) repeat(3, minmax(130px, 180px)); gap: 12px; align-items: end; }

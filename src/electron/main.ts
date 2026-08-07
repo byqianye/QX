@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { app, BrowserWindow, dialog, screen, session as electronSession } from "electron";
+import { app, BrowserWindow, dialog, screen, session as electronSession, shell as electronShell } from "electron";
 
 import { JsonFileTrustPersistence, ImportTrustStore } from "../config/trust.js";
 import { ConfigHistoryStore } from "../config/history.js";
@@ -27,7 +27,7 @@ import {
 import { runFakeMpvExitProbe } from "./fake-mpv-probe.js";
 import { resolveElectronRuntime } from "./runtime.js";
 import { DesktopShellRuntime } from "./shell-runtime.js";
-import { DataDirectoryResolver } from "../data/data-directory.js";
+import { DataDirectoryResolver, DataStorageService, type DataDirectoryMode } from "../data/data-directory.js";
 import { SqliteConfigHistoryPersistence } from "../data/config-history-persistence.js";
 import { SqliteDesktopStateStore } from "../data/desktop-state-store.js";
 import { LegacyDataMigrator } from "../data/legacy-migration.js";
@@ -95,7 +95,20 @@ let historyProgressService: HistoryProgressService | undefined;
 let favoritesService: FavoritesService | undefined;
 let followService: FollowService | undefined;
 let cacheService: CacheService | undefined;
+let dataStorageService: DataStorageService | undefined;
 let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
+
+const singleInstanceLock = app.requestSingleInstanceLock();
+if (!singleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+}
 
 function getDesktopStateStore(): DesktopStateStorePort {
   initializeDataLayer();
@@ -128,9 +141,19 @@ function getCacheService(): CacheService {
   if (!cacheService) throw new Error("Cache service is unavailable");
   return cacheService;
 }
+function getDataStorageService(): DataStorageService {
+  if (!dataStorageService) {
+    dataStorageService = new DataStorageService(new DataDirectoryResolver(app.getPath("userData"), {
+      executablePath: process.execPath,
+      packaged: app.isPackaged,
+    }));
+  }
+  return dataStorageService;
+}
 function initializeDataLayer(): void {
   if (dataLayer && desktopStateStore && configHistoryStore && historyProgressService && favoritesService && followService && cacheService) return;
-  const directories = new DataDirectoryResolver(app.getPath("userData")).resolve();
+  const dataStorage = getDataStorageService();
+  const directories = dataStorage.prepare();
   const opened = openSqliteDataLayer(directories.database);
   dataLayer = opened.layer;
   const legacy = new LegacyDataMigrator(opened.layer).migrate({
@@ -176,7 +199,7 @@ function initializeDataLayer(): void {
 function createShell(): DesktopShellRuntime {
   const stateStore = getDesktopStateStore();
   const trustStore = new ImportTrustStore(
-    new JsonFileTrustPersistence(join(app.getPath("userData"), "trusted-sources.json")),
+    new JsonFileTrustPersistence(join(getDataStorageService().directories().dataRoot, "trusted-sources.json")),
   );
   const configHistory = getConfigHistoryStore();
 
@@ -233,6 +256,11 @@ function createShell(): DesktopShellRuntime {
         favorites: getFavoritesService(),
         follow: getFollowService(),
         cache: getCacheService(),
+        storage: getDataStorageService(),
+        onStorageOpen: async () => {
+          await electronShell.openPath(getDataStorageService().directories().dataRoot);
+        },
+        onStorageSwitch: requestStorageSwitch,
         onPlayerOpen: openPlayerWindow,
         onPlayerAttach: closePlayerWindow,
         onPlayerStop: closePlayerWindow,
@@ -493,6 +521,7 @@ function closeDataLayer(): void {
   favoritesService = undefined;
   followService = undefined;
   cacheService = undefined;
+  dataStorageService = undefined;
   const current = dataLayer;
   dataLayer = undefined;
   if (!current) return;
@@ -501,6 +530,28 @@ function closeDataLayer(): void {
   } catch {
     // Shutdown must remain idempotent; the data layer already mapped operation errors.
   }
+}
+
+function requestStorageSwitch(mode: DataDirectoryMode): void {
+  setTimeout(() => {
+    void (async () => {
+      const storage = dataStorageService;
+      if (!storage || storage.directories().mode === mode) return;
+      try {
+        await closeShell(true);
+        storage.migrateTo(mode);
+        app.relaunch();
+        app.exit(0);
+      } catch (error) {
+        if (E2E_MODE) {
+          writeE2eResult({ status: "failed", reason: "DATA_MIGRATION_FAILED", message: errorMessage(error) });
+        } else {
+          dialog.showErrorBox(APP_NAME, errorMessage(error));
+        }
+        app.quit();
+      }
+    })();
+  }, 0);
 }
 
 async function openPlayerWindow(): Promise<void> {
@@ -573,6 +624,11 @@ async function createMainWindow(): Promise<void> {
   shell ??= createShell();
   const started = await shell.start();
   if (started.status !== "running" || !started.url) {
+    if (await recoverDataDirectoryStartup(started.error?.code)) {
+      await shell.close();
+      shell = undefined;
+      return createMainWindow();
+    }
     if (E2E_MODE) {
       writeE2eResult({
         status: "blocked",
@@ -643,6 +699,32 @@ async function createMainWindow(): Promise<void> {
     await closeShell(true);
     app.quit();
   }
+}
+
+async function recoverDataDirectoryStartup(code: string | undefined): Promise<boolean> {
+  if (E2E_MODE || code !== "PORTABLE_DATA_NOT_WRITABLE") return false;
+  const choice = await dialog.showMessageBox({
+    type: "error",
+    title: APP_NAME,
+    message: "Portable data directory is not writable.",
+    detail: "Choose normal mode, select another data directory, or exit.",
+    buttons: ["Use normal mode", "Choose data directory", "Exit"],
+    defaultId: 0,
+    cancelId: 2,
+  });
+  const storage = getDataStorageService();
+  if (choice.response === 0) {
+    storage.selectMode("normal");
+    return true;
+  }
+  if (choice.response === 1) {
+    const picked = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] });
+    const dataRoot = picked.filePaths[0];
+    if (picked.canceled || !dataRoot) return false;
+    storage.selectMode("normal", dataRoot);
+    return true;
+  }
+  return false;
 }
 
 app.on("before-quit", (event) => {
@@ -742,6 +824,7 @@ async function runE2e(baseUrl: string): Promise<void> {
       verifyFavorites: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifyFollow: Boolean(process.env.QX_E2E_PLAYBACK_CONFIG),
       verifyCache: true,
+      verifyStorage: true,
       ...(process.env.QX_E2E_EXPECTED_FAVORITE_ID
         ? { expectedFavoriteId: process.env.QX_E2E_EXPECTED_FAVORITE_ID }
         : {}),

@@ -212,6 +212,7 @@ describe("Vue renderer", () => {
     expect(wrapper.get('[data-testid="desktop-spider-ui"]').attributes("data-theme")).toBe("dark");
     expect(wrapper.findAll('[data-testid="settings-section"]')).toHaveLength(6);
     expect(wrapper.get('[data-testid="cache-management"]')).toBeTruthy();
+    expect(wrapper.get('[data-testid="storage-management"]')).toBeTruthy();
     expect((wrapper.get("#search-key").element as HTMLInputElement).value).toBe("蜘蛛侠");
     expect(wrapper.get('[data-testid="diagnostic-panel"]').text()).toContain("STATE_PERSISTENCE_CORRUPT");
 
@@ -222,10 +223,20 @@ describe("Vue renderer", () => {
     await flushPromises();
     await wrapper.get('[data-action="cache-clear-all"]').trigger("click");
     await flushPromises();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await wrapper.get('[data-action="storage-open"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-action="storage-switch-portable"]').trigger("click");
+    await flushPromises();
     expect(fetchMock).toHaveBeenCalledWith("/api/cache/refresh", expect.objectContaining({ method: "POST" }));
     expect(fetchMock).toHaveBeenCalledWith("/api/cache/clear", expect.objectContaining({
       method: "POST",
       body: JSON.stringify({ scope: "all" }),
+    }));
+    expect(fetchMock).toHaveBeenCalledWith("/api/storage/open", expect.objectContaining({ method: "POST" }));
+    expect(fetchMock).toHaveBeenCalledWith("/api/storage/switch", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ mode: "portable", confirmed: true }),
     }));
     wrapper.unmount();
   });
@@ -822,6 +833,7 @@ function readyEnvelope(): RendererEnvelope {
       playbackCatalog: null,
       playbackSelection: null,
       cache: { totalBytes: 0, maxBytes: 512 * 1024 * 1024, entries: 0, byType: [] },
+      storage: { mode: "normal", dataRoot: "…/user-data", normalRoot: "…/user-data", portableRoot: "…/data", databaseBytes: 0, cacheBytes: 0, totalBytes: 0, historyCount: 0, favoritesCount: 0, followCount: 0, writable: true, switching: false, error: null },
     },
   };
 }

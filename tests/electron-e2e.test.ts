@@ -21,6 +21,7 @@ import { runPackagedE2e } from "../src/electron/e2e-runner.js";
 import { CacheRepository, FavoritesRepository, FollowRepository, HistoryRepository, PlaybackProgressRepository, SettingsRepository } from "../src/data/repositories.js";
 import { SqliteDataLayer } from "../src/data/sqlite.js";
 import { CacheService } from "../src/cache/cache-service.js";
+import { DataDirectoryResolver, DataStorageService } from "../src/data/data-directory.js";
 import { FavoritesService } from "../src/favorites/favorites-service.js";
 import { FollowService } from "../src/follow/follow-service.js";
 import { HistoryProgressService } from "../src/history/history-progress.js";
@@ -114,6 +115,8 @@ describe("packaged Electron E2E flow", () => {
       root: join(directory, "cache"),
       repository: new CacheRepository(dataServices.layer),
     });
+    const storage = new DataStorageService(new DataDirectoryResolver(directory));
+    storage.prepare();
     const uiServer = new DesktopSpiderUiServer({
       importer,
       history: dataServices.service,
@@ -128,6 +131,7 @@ describe("packaged Electron E2E flow", () => {
         history: new HistoryRepository(dataServices.layer),
       }),
       cache,
+      storage,
       playbackProxyOrigins: ["http://127.0.0.1:43123"],
       parserCandidates: [
         {
@@ -181,6 +185,7 @@ describe("packaged Electron E2E flow", () => {
       verifyFavorites: true,
       verifyFollow: true,
       verifyCache: true,
+      verifyStorage: true,
       verifyAggregateSearch: true,
       verifyFakeMpv: true,
       fakeMpv: async () => true,
@@ -211,6 +216,7 @@ describe("packaged Electron E2E flow", () => {
         favorites: true,
         follow: true,
         cache: true,
+        storage: true,
         fakeMpvExit: true,
         proxyCleanup: true,
         snifferCleanup: true,

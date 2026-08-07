@@ -12,6 +12,7 @@ import FavoritesView from "./FavoritesView.vue";
 import FollowView from "./FollowView.vue";
 import HistoryView from "./HistoryView.vue";
 import CacheManagement from "./CacheManagement.vue";
+import StorageManagement from "./StorageManagement.vue";
 import MediaGrid from "./MediaGrid.vue";
 import PlaybackSelector from "./PlaybackSelector.vue";
 import PlaybackHealthPanel from "./PlaybackHealthPanel.vue";
@@ -85,6 +86,9 @@ const emit = defineEmits<{
   followAndFavorite: [];
   cacheRefresh: [];
   cacheClear: [scope: "expired" | "images" | "search" | "all"];
+  storageRefresh: [];
+  storageOpen: [];
+  storageSwitch: [mode: "normal" | "portable"];
 }>();
 
 const view = ref<"browse" | "history" | "favorites" | "follow" | "settings">(props.initialNavigation === "settings"
@@ -387,6 +391,13 @@ function navigationFromPage(page: string): RendererNavigation {
             :pending="props.pending"
             @refresh="emit('cacheRefresh')"
             @clear="emit('cacheClear', $event)"
+          />
+          <StorageManagement
+            :state="props.state.storage"
+            :pending="props.pending"
+            @refresh="emit('storageRefresh')"
+            @open="emit('storageOpen')"
+            @switch="emit('storageSwitch', $event)"
           />
         </template>
 

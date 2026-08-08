@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
@@ -41,6 +42,27 @@ describe("Spider Runtime detection and artifacts", () => {
         supported: false,
         reason: "android_dex_runtime_not_available",
         artifact: { hasClassesDex: true, runtimeRequirement: "android-dex" },
+      });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves a local Spider declaration relative to a file config", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "qx-runtime-relative-artifact-"));
+    const configPath = join(directory, "config.json");
+    const jarPath = join(directory, "spider.jar");
+    writeFileSync(configPath, "{}");
+    writeFileSync(jarPath, zipFile(["classes.dex"]));
+    try {
+      const result = await new SpiderRuntimeDetector().detect(
+        { key: "relative", type: 3, api: "csp_Relative" },
+        { config: { spider: "./spider.jar" }, sourceUrl: pathToFileURL(configPath).toString() },
+      );
+      expect(result).toMatchObject({
+        runtime: "android-dex",
+        artifactPath: jarPath,
+        artifactUrl: pathToFileURL(jarPath).toString(),
       });
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -107,6 +129,11 @@ describe("Spider Runtime detection and artifacts", () => {
       expect(first.sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
       expect(second).toMatchObject({ fromCache: true, sha256: first.sha256 });
       expect(readFileSync(first.path)).toEqual(bytes);
+      const metadataPath = readdirSync(directory).find((name) => name.endsWith(".json"));
+      expect(metadataPath).toBeDefined();
+      const metadata = JSON.parse(readFileSync(join(directory, metadataPath!), "utf8")) as Record<string, unknown>;
+      expect(metadata).toMatchObject({ url, sha256: first.sha256, size: bytes.length, etag: "fixture-v1" });
+      expect(metadata.downloadTime).toMatch(/^\d{4}-\d{2}-\d{2}T/u);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       rmSync(directory, { recursive: true, force: true });

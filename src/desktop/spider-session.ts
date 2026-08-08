@@ -34,6 +34,7 @@ import { validatePlaybackSource } from "./playback.js";
 import type { SourceHealthRegistry, HealthOperation } from "../health/source-health.js";
 import { normalizeSubtitleTracks, type SubtitleTrack } from "../subtitles.js";
 import { serializeFongMiExt } from "../config/fongmi.js";
+import { normalizeRuntimeError, runtimeErrorMessage } from "../spider/runtime-errors.js";
 
 export type DesktopSpiderSessionStatus =
   | "confirmation_required"
@@ -129,6 +130,7 @@ export class DesktopSpiderSession implements MediaSource {
   private activeDefinition: JvmSpiderDefinition | undefined;
   private activeCapabilities: SourceCapabilities | undefined;
   private activeSiteKey: string | undefined;
+  private activeSiteName: string | undefined;
   private viewState: DesktopSpiderView;
 
   public constructor(options: DesktopSpiderSessionOptions) {
@@ -197,6 +199,7 @@ export class DesktopSpiderSession implements MediaSource {
 
     this.viewState.api = typeof api === "string" ? api : null;
     this.activeSiteKey = siteKey;
+    this.activeSiteName = typeof site.name === "string" && site.name.trim() ? site.name.trim() : siteKey;
     this.activeDefinition = binding.definition;
     this.activeCapabilities = binding.capabilities;
     this.viewState.playback = binding.capabilities.playback ? PLAYABLE_PENDING : NO_PLAYBACK;
@@ -494,14 +497,21 @@ export class DesktopSpiderSession implements MediaSource {
   }
 
   private setThrownError(error: unknown): void {
-    const message = error instanceof Error ? error.message : String(error);
+    const details = normalizeRuntimeError(error, {
+      ...(this.runtime?.kind ? { runtimeKind: this.runtime.kind } : {}),
+      ...(this.activeSiteKey ? { siteKey: this.activeSiteKey } : {}),
+      sourceKey: this.activeSiteKey ?? this.options.source,
+      ...(this.activeSiteName ? { sourceName: this.activeSiteName } : {}),
+      workingDirectory: process.cwd(),
+    });
+    const message = runtimeErrorMessage(details);
     const isTimeout = error instanceof Error
       && (readErrorCode(error) === "JVM_SPIDER_TIMEOUT"
         || error.name === "JvmSidecarTimeoutError"
         || /timeout/i.test(message));
     this.viewState.status = "error";
     this.viewState.error = {
-      code: isTimeout ? "SPIDER_TIMEOUT" : "SPIDER_RUNTIME_ERROR",
+      code: isTimeout ? "SPIDER_TIMEOUT" : details.code,
       message,
     };
     this.viewState.sidecarRunning = this.client?.isRunning ?? false;

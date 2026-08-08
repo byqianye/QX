@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
+import { normalizeRuntimeError, type RuntimeErrorInfo } from "./runtime-errors.js";
+
 export type JarRuntimeRequirement = "android-dex" | "jvm" | "mixed" | "unknown";
 
 export interface JarInspectionResult {
@@ -19,10 +21,12 @@ export interface JarInspectionResult {
 
 export class JarInspectionError extends Error {
   public readonly code = "invalid_jar";
+  public readonly details: RuntimeErrorInfo | undefined;
 
   public constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "JarInspectionError";
+    this.details = options?.cause ? normalizeRuntimeError(options.cause, { rootCause: "artifact_file_missing" }) : undefined;
   }
 }
 

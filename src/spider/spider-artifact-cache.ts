@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { normalizeRuntimeError, runtimeErrorMessage, type RuntimeErrorInfo } from "./runtime-errors.js";
 
 export interface SpiderArtifactRequest {
   url: string;
@@ -28,11 +29,17 @@ export interface SpiderArtifactCacheOptions {
 
 interface ArtifactMetadata extends SpiderArtifact {
   declaredMd5: string;
+  downloadTime: string;
   metadataPath: string;
 }
 
 export class SpiderArtifactError extends Error {
-  public constructor(public readonly code: "jar_download_failed" | "jar_hash_mismatch", message: string, options?: ErrorOptions) {
+  public constructor(
+    public readonly code: "jar_download_failed" | "jar_hash_mismatch",
+    message: string,
+    options?: ErrorOptions,
+    public readonly details?: RuntimeErrorInfo,
+  ) {
     super(message, options);
     this.name = "SpiderArtifactError";
   }
@@ -52,6 +59,25 @@ export class SpiderArtifactCache {
   }
 
   public async get(request: SpiderArtifactRequest): Promise<SpiderArtifact> {
+    try {
+      return await this.getInternal(request);
+    } catch (error) {
+      if (error instanceof SpiderArtifactError) throw error;
+      const details = normalizeRuntimeError(error, {
+        artifactUrl: request.url,
+        artifactPath: this.root,
+        rootCause: "artifact_download_failed",
+      });
+      throw new SpiderArtifactError(
+        "jar_download_failed",
+        runtimeErrorMessage(details),
+        { cause: error },
+        details,
+      );
+    }
+  }
+
+  private async getInternal(request: SpiderArtifactRequest): Promise<SpiderArtifact> {
     const url = requireHttpUrl(request.url);
     const declaredMd5 = normalizeMd5(request.md5);
     await mkdir(this.root, { recursive: true });
@@ -92,25 +118,30 @@ export class SpiderArtifactCache {
     const artifactPath = join(this.root, `artifact-${cacheIdentity}.jar`);
     const metadataPath = join(this.root, `artifact-${cacheIdentity}.json`);
     const temporaryPath = join(this.root, `.artifact-${cacheIdentity}.${process.pid}.tmp`);
-    await writeFile(temporaryPath, bytes, { flag: "wx" }).catch(async (error) => {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      await writeFile(temporaryPath, bytes);
-    });
-    await rename(temporaryPath, artifactPath);
-    const metadata: ArtifactMetadata = {
-      url,
-      path: artifactPath,
-      md5: actualMd5,
-      sha256,
-      size: bytes.byteLength,
-      fromCache: false,
-      ...(response.headers.get("etag") ? { etag: response.headers.get("etag")! } : {}),
-      ...(response.headers.get("last-modified") ? { lastModified: response.headers.get("last-modified")! } : {}),
-      declaredMd5,
-      metadataPath,
-    };
-    await atomicWriteJson(metadataPath, metadata);
-    return publicArtifact(metadata);
+    try {
+      await writeFile(temporaryPath, bytes, { flag: "wx" }).catch(async (error) => {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        await writeFile(temporaryPath, bytes);
+      });
+      await rename(temporaryPath, artifactPath);
+      const metadata: ArtifactMetadata = {
+        url,
+        path: artifactPath,
+        md5: actualMd5,
+        sha256,
+        size: bytes.byteLength,
+        fromCache: false,
+        ...(response.headers.get("etag") ? { etag: response.headers.get("etag")! } : {}),
+        ...(response.headers.get("last-modified") ? { lastModified: response.headers.get("last-modified")! } : {}),
+        declaredMd5,
+        downloadTime: new Date().toISOString(),
+        metadataPath,
+      };
+      await atomicWriteJson(metadataPath, metadata);
+      return publicArtifact(metadata);
+    } finally {
+      await rm(temporaryPath, { force: true }).catch(() => undefined);
+    }
   }
 
   private async findCached(url: string, declaredMd5: string): Promise<SpiderArtifact | undefined> {
@@ -155,8 +186,12 @@ function publicArtifact(metadata: ArtifactMetadata): SpiderArtifact {
 
 async function atomicWriteJson(path: string, value: unknown): Promise<void> {
   const temporaryPath = `${path}.${process.pid}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  await rename(temporaryPath, path);
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await rename(temporaryPath, path);
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
 }
 
 async function readLimitedBody(response: Response, maxBytes: number): Promise<Uint8Array> {

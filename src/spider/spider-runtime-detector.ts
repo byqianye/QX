@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 import type { TvBoxConfig, TvBoxSite } from "../config/decoder.js";
@@ -7,6 +6,7 @@ import type { SourceCapabilities } from "../source/media-source.js";
 import { JarInspector, type JarInspectionResult } from "./jar-inspector.js";
 import { NativeSpiderRegistry } from "./native-spider-registry.js";
 import type { SpiderArtifactCache } from "./spider-artifact-cache.js";
+import { SpiderArtifactResolver } from "./spider-artifact-resolver.js";
 import {
   runtimeCapabilities,
   type RuntimeSupport,
@@ -30,6 +30,7 @@ export class SpiderRuntimeDetector {
   private readonly nativeRegistry: NativeSpiderRegistry;
   private readonly jarInspector: JarInspector;
   private readonly artifactCache: SpiderArtifactCache | undefined;
+  private readonly artifactResolver: SpiderArtifactResolver;
   private readonly pythonAvailable: boolean | (() => boolean | Promise<boolean>);
   private readonly jsSupported: boolean;
 
@@ -37,6 +38,7 @@ export class SpiderRuntimeDetector {
     this.nativeRegistry = options.nativeRegistry ?? new NativeSpiderRegistry();
     this.jarInspector = options.jarInspector ?? new JarInspector();
     this.artifactCache = options.artifactCache;
+    this.artifactResolver = new SpiderArtifactResolver();
     this.pythonAvailable = options.pythonAvailable ?? defaultPythonAvailable;
     this.jsSupported = options.jsSupported ?? true;
   }
@@ -98,39 +100,39 @@ export class SpiderRuntimeDetector {
     }
 
     if (normalized.type === 3 && /^csp_/i.test(api)) {
-      const artifactReference = artifactReferenceOf(site, context.config);
-      if (artifactReference) {
-        const artifact = await this.inspectArtifact(artifactReference.reference, artifactReference.md5);
-        if (artifact.error) return unsupported("unsupported", artifact.error, undefined, artifact.inspection);
+      const resolved = this.artifactResolver.resolve(site, context.config, context.sourceUrl);
+      if (resolved.jarUrl) {
+        const artifact = await this.inspectArtifact(resolved.jarUrl, resolved.md5, context.sourceUrl);
+        if (artifact.error) return unsupported("unsupported", artifact.error, undefined, artifact.inspection, artifact.path, artifact.artifactUrl ?? resolved.jarUrl);
         if (artifact.inspection?.runtimeRequirement === "jvm") {
           return supported("native", "native_jvm_jar_supported", runtimeCapabilities("jvm", {
             search: true,
             detail: true,
             pagination: true,
-          }), artifact.inspection);
+          }), artifact.inspection, artifact.path, artifact.artifactUrl ?? resolved.jarUrl);
         }
         if (artifact.inspection?.runtimeRequirement === "android-dex") {
-          return unsupported("android-dex", "android_dex_runtime_not_available", undefined, artifact.inspection);
+          return unsupported("android-dex", "android_dex_runtime_not_available", undefined, artifact.inspection, artifact.path, artifact.artifactUrl ?? resolved.jarUrl);
         }
         if (artifact.inspection?.runtimeRequirement === "mixed") {
-          return unsupported("android-dex", "mixed_spider_runtime_not_available", undefined, artifact.inspection);
+          return unsupported("android-dex", "mixed_spider_runtime_not_available", undefined, artifact.inspection, artifact.path, artifact.artifactUrl ?? resolved.jarUrl);
         }
-        return unsupported("unsupported", "unsupported_site_type", undefined, artifact.inspection);
+        return unsupported("unsupported", "unsupported_site_type", undefined, artifact.inspection, artifact.path, artifact.artifactUrl ?? resolved.jarUrl);
       }
       return unsupported("android-dex", "android_dex_runtime_not_available");
     }
     return unsupported("unsupported", "unsupported_site_type");
   }
 
-  private async inspectArtifact(reference: string, md5?: string): Promise<{ inspection?: JarInspectionResult; error?: string }> {
+  private async inspectArtifact(reference: string, md5?: string, sourceUrl?: string): Promise<{ inspection?: JarInspectionResult; error?: string; path?: string; artifactUrl?: string }> {
     try {
-      if (/^https?:\/\//i.test(reference)) {
-        if (!this.artifactCache) return { error: "jar_download_failed" };
-        const artifact = await this.artifactCache.get({ url: reference, ...(md5 ? { md5 } : {}) });
-        return { inspection: await this.jarInspector.inspectFile(artifact.path, reference) };
-      }
-      if (!existsSync(reference)) return { error: "jar_download_failed" };
-      return { inspection: await this.jarInspector.inspectFile(reference, reference) };
+      const declaration = md5 ? `${reference};md5;${md5}` : reference;
+      const resolved = await this.artifactResolver.resolveSpiderArtifact(sourceUrl, declaration, this.artifactCache);
+      return {
+        inspection: await this.jarInspector.inspectFile(resolved.localPath, resolved.artifactUrl),
+        path: resolved.localPath,
+        artifactUrl: resolved.artifactUrl,
+      };
     } catch (error) {
       const code = typeof error === "object" && error !== null && typeof (error as { code?: unknown }).code === "string"
         ? (error as { code: string }).code
@@ -140,36 +142,42 @@ export class SpiderRuntimeDetector {
   }
 }
 
-function supported(runtime: SpiderRuntimeKind, reason: string, capabilities: SourceCapabilities, artifact?: JarInspectionResult): RuntimeSupport {
-  return { runtime, supported: true, reason, capabilities, ...(artifact ? { artifact } : {}) };
+function supported(
+  runtime: SpiderRuntimeKind,
+  reason: string,
+  capabilities: SourceCapabilities,
+  artifact?: JarInspectionResult,
+  artifactPath?: string,
+  artifactUrl?: string,
+): RuntimeSupport {
+  return {
+    runtime,
+    supported: true,
+    reason,
+    capabilities,
+    ...(artifact ? { artifact } : {}),
+    ...(artifactPath ? { artifactPath } : {}),
+    ...(artifactUrl ? { artifactUrl } : {}),
+  };
 }
 
-function unsupported(runtime: SpiderRuntimeKind, reason: string, capabilities?: SourceCapabilities, artifact?: JarInspectionResult): RuntimeSupport {
+function unsupported(
+  runtime: SpiderRuntimeKind,
+  reason: string,
+  capabilities?: SourceCapabilities,
+  artifact?: JarInspectionResult,
+  artifactPath?: string,
+  artifactUrl?: string,
+): RuntimeSupport {
   return {
     runtime,
     supported: false,
     reason,
     capabilities: capabilities ?? runtimeCapabilities("jvm"),
     ...(artifact ? { artifact } : {}),
+    ...(artifactPath ? { artifactPath } : {}),
+    ...(artifactUrl ? { artifactUrl } : {}),
   };
-}
-
-function artifactReferenceOf(site: TvBoxSite, config?: TvBoxConfig): { reference: string; md5?: string } | undefined {
-  const md5 = typeof site.md5 === "string"
-    ? site.md5
-    : typeof site.hash === "string" ? site.hash : undefined;
-  const candidates = [site.jar, site.spider, config?.spider, site.api];
-  for (const candidate of candidates) {
-    if (typeof candidate !== "string" || !candidate.trim()) continue;
-    const value = candidate.replace(/^(?:js|py):/i, "").trim();
-    const declared = /^([^;]+);(?:md5|sha1|sha256);([\da-f]+)$/i.exec(value);
-    const reference = declared?.[1]?.trim() ?? value;
-    const declaredMd5 = declared?.[2] && declared[2].length === 32 ? declared[2] : md5;
-    if (/^https?:\/\//i.test(reference) || /\.(?:jar|dex)(?:$|[?#])/i.test(reference) || existsSync(reference)) {
-      return { reference, ...(declaredMd5 ? { md5: declaredMd5 } : {}) };
-    }
-  }
-  return undefined;
 }
 
 function isJavaScriptReference(site: TvBoxSite, config?: TvBoxConfig): boolean {

@@ -20,6 +20,8 @@ export interface RuntimeSupport {
   reason: string;
   capabilities: SourceCapabilities;
   artifact?: JarInspectionResult;
+  artifactUrl?: string;
+  artifactPath?: string;
 }
 
 export interface SpiderRuntime {

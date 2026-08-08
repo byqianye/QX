@@ -32,11 +32,13 @@ import { NativeSpiderRegistry } from "./native-spider-registry.js";
 import { SpiderRuntimeDetector, type SpiderRuntimeDetectorOptions } from "./spider-runtime-detector.js";
 import { quickJsScriptReference, pythonScriptReference } from "../desktop/source-router.js";
 import { PythonDesktopClient } from "./python-client.js";
+import { AndroidSpiderBridge, AndroidSpiderBridgeError, type AndroidSpiderBridgeResponse } from "./android-spider-bridge.js";
 
 export interface SpiderRuntimeManagerOptions extends SpiderRuntimeDetectorOptions {
   config?: TvBoxConfig;
   sourceUrl?: string;
   nativeRuntime?: (site: TvBoxSite) => SpiderRuntime | undefined | Promise<SpiderRuntime | undefined>;
+  androidBridgeFactory?: (site: TvBoxSite, support: RuntimeSupport) => AndroidSpiderBridge | undefined | Promise<AndroidSpiderBridge | undefined>;
   pythonExecutable?: string;
   pythonEnvironment?: NodeJS.ProcessEnv;
   jsWorker?: Omit<JsSpiderWorkerOptions, "script">;
@@ -82,10 +84,12 @@ export class SpiderRuntimeManager {
 
   private async createRuntime(site: TvBoxSite): Promise<SpiderRuntime> {
     const support = await this.supports(site);
+    if (support.runtime === "android-dex") {
+      const bridge = await this.options.androidBridgeFactory?.(site, support);
+      return bridge ? new AndroidSpiderRuntime(site, support, bridge) : new AndroidJarRuntime(support);
+    }
     if (!support.supported) {
-      return support.runtime === "android-dex"
-        ? new AndroidJarRuntime(support)
-        : new UnsupportedSpiderRuntime(support);
+      return new UnsupportedSpiderRuntime(support);
     }
     const normalized = normalizeFongMiSite(site, this.options.sourceUrl);
     if (support.runtime === "cms") {
@@ -247,6 +251,97 @@ export class AndroidJarRuntime implements SpiderRuntime {
   public destroy(): Promise<void> { return Promise.resolve(); }
 }
 
+export class AndroidSpiderRuntime implements SpiderRuntime {
+  public readonly kind: SpiderRuntimeKind = "android-dex";
+  public readonly capabilities = runtimeCapabilities("jvm", {
+    home: true,
+    category: true,
+    search: true,
+    detail: true,
+    player: true,
+    pagination: true,
+  });
+  private initialized = false;
+
+  public constructor(
+    private readonly site: TvBoxSite,
+    private readonly support: RuntimeSupport,
+    private readonly bridge: AndroidSpiderBridge,
+  ) {}
+
+  public async supports(_site: TvBoxSite): Promise<RuntimeSupport> {
+    return {
+      ...this.support,
+      supported: true,
+      reason: "android_bridge_supported",
+      capabilities: this.capabilities,
+    };
+  }
+
+  public async init(site = this.site, context: SourceInitContext = defaultContext(site)): Promise<void> {
+    if (this.initialized) return;
+    await this.bridge.start();
+    await requireBridgeResult(this.bridge.health(), "health");
+    const artifactPath = this.support.artifactPath;
+    if (!artifactPath) {
+      throw new AndroidSpiderBridgeError(
+        "artifact_file_missing",
+        "Android Spider artifact path is unavailable",
+      );
+    }
+    await requireBridgeResult(this.bridge.loadJar(artifactPath, this.support.artifactUrl), "loadJar");
+    await requireBridgeResult(this.bridge.createSpider(
+      site.api ?? "",
+      site.key ?? site.api ?? "site",
+      expectedAndroidSpiderClass(site.api),
+    ), "createSpider");
+    await requireBridgeResult(this.bridge.init(context.ext ?? serializeFongMiExt(site.ext)), "init");
+    this.initialized = true;
+  }
+
+  public async home(filter = false): Promise<HomeResult> {
+    return normalizeHomeResult(await requireBridgeResult(this.bridge.homeContent(filter), "home"));
+  }
+
+  public async homeVideo(): Promise<VodPage> {
+    return normalizeHomeAsPage(await this.home());
+  }
+
+  public async category(request: CategoryRequest): Promise<VodPage> {
+    return normalizeVodPage(await requireBridgeResult(this.bridge.categoryContent(
+      request.typeId,
+      request.page ?? 1,
+      request.filter ?? false,
+      { ...(request.extend ?? {}) },
+    ), "category"), request.page ?? 1);
+  }
+
+  public async search(request: SearchRequest): Promise<VodPage> {
+    return normalizeVodPage(await requireBridgeResult(this.bridge.searchContent(
+      request.key,
+      request.quick ?? false,
+      request.page ?? 1,
+    ), "search"), request.page ?? 1);
+  }
+
+  public async detail(ids: string[]): Promise<VodDetail[]> {
+    return normalizeVodDetails(await requireBridgeResult(this.bridge.detailContent(ids), "detail"));
+  }
+
+  public async player(request: PlayerRequest): Promise<PlayerResult> {
+    return normalizePlayerResult(await requireBridgeResult(this.bridge.playerContent(
+      request.flag,
+      request.id,
+      [...(request.vipFlags ?? [])],
+    ), "player"));
+  }
+
+  public async destroy(): Promise<void> {
+    this.initialized = false;
+    await this.bridge.destroy();
+  }
+}
+
 export class UnsupportedSpiderRuntime extends AndroidJarRuntime {
   public readonly kind: SpiderRuntimeKind = "unsupported";
   public readonly capabilities = runtimeCapabilities("jvm");
@@ -286,4 +381,37 @@ function unwrap(response: SpiderResponse, operation: string): unknown {
 
 function unsupportedOperation<T>(): Promise<T> {
   return Promise.reject(new Error("Spider runtime capability is unavailable"));
+}
+
+function expectedAndroidSpiderClass(api: string | undefined): string {
+  const name = api?.replace(/^csp_/i, "").trim();
+  return name ? `com.github.catvod.spider.${name}` : "";
+}
+
+async function requireBridgeResult(response: Promise<AndroidSpiderBridgeResponse>, operation: string): Promise<unknown> {
+  const value = await response;
+  if (!value.ok) {
+    const diagnostics = value.error?.diagnostics;
+    const diagnosticText = diagnostics
+      ? Object.entries(diagnostics)
+        .filter(([, item]) => typeof item === "string" || typeof item === "number" || typeof item === "boolean")
+        .map(([key, item]) => `${key}=${String(item)}`)
+        .join(", ")
+      : "";
+    throw new AndroidSpiderBridgeError(
+      value.error?.code ?? "ANDROID_BRIDGE_REMOTE_ERROR",
+      `${value.error?.message ?? `Android Spider Bridge ${operation} failed`}${diagnosticText ? ` (${diagnosticText})` : ""}`,
+      undefined,
+      undefined,
+      diagnostics,
+    );
+  }
+  if (typeof value.result === "string") {
+    try {
+      return JSON.parse(value.result) as unknown;
+    } catch {
+      return value.result;
+    }
+  }
+  return value.result;
 }

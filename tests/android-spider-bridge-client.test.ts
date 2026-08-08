@@ -42,8 +42,10 @@ describe("AndroidSpiderBridgeClient", () => {
     const client = new AndroidSpiderBridgeClient({ deviceManager: manager, localPort: server.port, remotePort: server.port });
     try {
       await expect(client.health()).resolves.toMatchObject({ status: "ok", version: "0.1.0" });
+      expect(client.androidHostAvailable).toBe(true);
     } finally {
       await client.close();
+      expect(client.androidHostAvailable).toBe(false);
       await server.close();
     }
   });

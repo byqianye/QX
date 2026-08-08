@@ -86,6 +86,7 @@ async function checkAndroidHost(manager: AndroidDeviceManager): Promise<void> {
     hostApk: { found: hostApkFound, path: apkPath },
     hostInstalled,
     hostOnline,
+    androidHostAvailable: hostOnline,
     health,
     blockers: [...new Set(blockers)],
   }, null, 2));

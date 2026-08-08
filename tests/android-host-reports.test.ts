@@ -28,6 +28,7 @@ describe("Android Host reports V2/V4", () => {
         hostApkPath: "android-spider-host/app/build/outputs/apk/debug/app-debug.apk",
         hostInstalled: false,
         hostOnline: false,
+        androidHostAvailable: false,
       },
       artifact: {
         url: "https://example.test/spider.jar",
@@ -52,6 +53,7 @@ describe("Android Host reports V2/V4", () => {
     expect(renderAndroidHostSetup(report)).toContain("ANDROID_DEVICE_NOT_FOUND");
     expect(renderAndroidSpiderPocV2(report)).toContain("csp_Duopan");
     expect(renderAndroidSpiderHostReport(report)).toContain("DexClassLoader");
+    expect(renderAndroidHostSetup(report)).toContain("Android Host available: false");
     expect(renderAndroidSpiderPocV2(report)).toContain("initException=missing Android context");
     expect(renderAndroidSpiderPocV2(report)).toContain("contextDependent=true");
     expect(renderRuntimeDiagnosticsV4(report)).toContain("| RPC health | BLOCKED |");

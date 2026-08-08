@@ -16,6 +16,7 @@ export interface AndroidEnvironmentAudit {
   hostApkAvailable?: boolean;
   hostInstalled?: boolean;
   hostOnline?: boolean;
+  androidHostAvailable?: boolean;
   deviceSerial?: string;
 }
 

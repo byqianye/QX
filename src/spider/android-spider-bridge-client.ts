@@ -98,6 +98,7 @@ export class AndroidSpiderBridgeClient {
   private session: SessionState = {};
   private closed = false;
   private recoveryUsed = false;
+  private hostAvailable = false;
 
   public constructor(options: AndroidSpiderBridgeClientOptions) {
     this.options = {
@@ -113,6 +114,10 @@ export class AndroidSpiderBridgeClient {
 
   public get isConnected(): boolean {
     return this.socket !== null && !this.socket.destroyed && !this.closed;
+  }
+
+  public get androidHostAvailable(): boolean {
+    return this.hostAvailable && this.isConnected;
   }
 
   public async connect(): Promise<Record<string, unknown>> {
@@ -285,6 +290,7 @@ export class AndroidSpiderBridgeClient {
 
   public async close(): Promise<void> {
     this.closed = true;
+    this.hostAvailable = false;
     this.rejectPending(this.error("HOST_OFFLINE", "Android Spider Bridge Client closed", "close"));
     const socket = this.socket;
     this.socket = null;
@@ -326,9 +332,11 @@ export class AndroidSpiderBridgeClient {
       if (!isRecord(health) || (health.status !== "ok" && health.status !== "online")) {
         throw this.error("HOST_OFFLINE", "Android Spider Host health check failed", "health", { health });
       }
+      this.hostAvailable = true;
       this.recoveryUsed = false;
       return health;
     } catch (error) {
+      this.hostAvailable = false;
       await this.closeTransport();
       if (isManagerError(error)) throw error;
       if (error instanceof AndroidSpiderBridgeClientError) throw error;
@@ -382,6 +390,7 @@ export class AndroidSpiderBridgeClient {
       await this.options.deviceManager.forward(this.options.localPort, this.options.remotePort);
       await this.connectTransport();
       await this.requestRaw("health", {}, this.options.healthTimeoutMs, signal);
+      this.hostAvailable = true;
       if (this.session.jarParams) {
         if (this.session.jarLocalPath) {
           await this.options.deviceManager.push(this.session.jarLocalPath, String(this.session.jarParams.sourcePath));
@@ -499,6 +508,7 @@ export class AndroidSpiderBridgeClient {
 
   private handleSocketFailure(source: net.Socket, error: unknown): void {
     if (!this.socket || this.socket !== source) return;
+    this.hostAvailable = false;
     const normalized = error instanceof AndroidSpiderBridgeClientError
       ? error
       : this.error("HOST_OFFLINE", error instanceof Error ? error.message : "Android Spider Host socket closed", "transport", undefined, error);
@@ -518,6 +528,7 @@ export class AndroidSpiderBridgeClient {
   }
 
   private async closeTransport(): Promise<void> {
+    this.hostAvailable = false;
     const socket = this.socket;
     this.socket = null;
     this.rejectPending(this.error("HOST_OFFLINE", "Android Spider Host connection closed", "transport"));

@@ -12,6 +12,7 @@ The Android Host is a standalone APK. Electron talks to it through ADB port forw
 - Host APK: PASS (`C:\Users\qiany\Documents\ChatGPT\QX影视\android-spider-host\app\build\outputs\apk\debug\app-debug.apk`)
 - Host installed: BLOCKED
 - Host RPC health: BLOCKED
+- Android Host available: false
 
 ## Commands
 

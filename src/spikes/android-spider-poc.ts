@@ -275,6 +275,7 @@ export async function runAndroidSpiderPoc(
     hostApkAvailable: hostApkFound,
     hostInstalled,
     hostOnline,
+    androidHostAvailable: client?.androidHostAvailable ?? hostOnline,
     hostAvailable: hostOnline,
   };
   const status: AndroidSpiderPocReport["status"] = attempts.some((attempt) => attempt.status === "failed")
@@ -317,6 +318,7 @@ export async function runAndroidSpiderPoc(
       ...(hostApkFound ? { hostApkPath } : {}),
       hostInstalled,
       hostOnline,
+      androidHostAvailable: client?.androidHostAvailable ?? hostOnline,
       ...(rpcHealth ? { rpcHealth } : {}),
     },
     artifact: artifactDiagnostics,

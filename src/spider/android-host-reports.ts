@@ -11,6 +11,7 @@ export interface AndroidHostEnvironmentDiagnostics {
   hostApkPath?: string;
   hostInstalled: boolean;
   hostOnline: boolean;
+  androidHostAvailable?: boolean;
   rpcHealth?: Record<string, unknown>;
 }
 
@@ -87,6 +88,7 @@ export function renderAndroidHostSetup(report: AndroidHostDiagnosticsReport): st
     `- Host APK: ${environment.hostApkFound ? `PASS (${code(environment.hostApkPath ?? "")})` : "BLOCKED"}`,
     `- Host installed: ${environment.hostInstalled ? "PASS" : "BLOCKED"}`,
     `- Host RPC health: ${environment.hostOnline ? "PASS" : "BLOCKED"}`,
+    `- Android Host available: ${(environment.androidHostAvailable ?? environment.hostOnline) ? "true" : "false"}`,
     "",
     "## Commands",
     "",
@@ -170,6 +172,7 @@ export function renderAndroidSpiderHostReport(report: AndroidHostDiagnosticsRepo
     "",
     `- SDK / ADB / device: ${report.environment.sdkFound ? "found" : "missing"} / ${report.environment.adbFound ? "found" : "missing"} / ${report.environment.deviceFound ? "found" : "missing"}`,
     `- APK / installed / RPC: ${report.environment.hostApkFound ? "found" : "missing"} / ${report.environment.hostInstalled ? "yes" : "no"} / ${report.environment.hostOnline ? "PASS" : "BLOCKED"}`,
+    `- Android Host available: ${(report.environment.androidHostAvailable ?? report.environment.hostOnline) ? "true" : "false"}`,
     `- Artifact hash: ${report.artifact?.androidSha256 && report.artifact.androidSha256 === report.artifact.sha256 ? "PASS" : "not verified"}`,
     `- Class resolution: ${report.classResolution?.status ?? "NOT_RUN"}`,
     `- Search / detail / player: ${report.operations.searchContent?.status ?? "NOT_RUN"} / ${report.operations.detailContent?.status ?? "NOT_RUN"} / ${report.operations.playerContent?.status ?? "NOT_RUN"}`,

@@ -19,7 +19,7 @@ import {
 import { ConfigRefreshManager, type ConfigRefreshOutcome } from "../config/refresh.js";
 import type { SourceCapabilities } from "../source/media-source.js";
 import type { SearchRequest, VodPage } from "../source/media-source.js";
-import { normalizeVodPage, unwrapSpiderResponse } from "../source/normalizers.js";
+import { normalizeVodDetails, normalizeVodPage, unwrapSpiderResponse } from "../source/normalizers.js";
 import {
   AggregateSearchCoordinator,
   type AggregateSearchOptions,
@@ -35,6 +35,12 @@ import {
 import { SiteManager, type ManagedSite } from "./site-management.js";
 import { resolveDesktopSourceBinding } from "./source-router.js";
 import type { DesktopSpiderSessionPort } from "./spider-ui.js";
+import {
+  PlaybackSourceResolver,
+  type PlaybackSourceResolution,
+  type PlaybackSourceResolverOptions,
+} from "./playback-source-resolver.js";
+import type { Vod } from "../source/media-source.js";
 
 export type DesktopSpiderImportInputKind = "url" | "file" | "json";
 export type DesktopSpiderImportStatus =
@@ -137,8 +143,10 @@ export class DesktopSpiderImportController {
   private selectedSite: TvBoxSite | undefined;
   private siteManager: SiteManager | undefined;
   private aggregateCoordinator: AggregateSearchCoordinator | undefined;
+  private readonly playbackSourceResolver = new PlaybackSourceResolver();
   private readonly health = new SourceHealthRegistry();
   private readonly openingSessions = new Map<string, Promise<void>>();
+  private readonly initializationFailures = new Set<string>();
   private currentSessionKey: string | undefined;
   private lastRefreshError: string | null = null;
   private refreshRequestSource: string | undefined;
@@ -243,6 +251,47 @@ export class DesktopSpiderImportController {
 
   public cancelAggregateSearch(): AggregateSearchSnapshot | undefined {
     return this.aggregateCoordinator?.cancel();
+  }
+
+  public resolvePlaybackSources(
+    currentVod: Vod,
+    options: PlaybackSourceResolverOptions = {},
+  ): Promise<PlaybackSourceResolution> {
+    if (!this.config || !this.siteManager) {
+      return Promise.reject(new Error("Configuration is not ready for playback source search"));
+    }
+    const currentSiteKey = options.currentSiteKey ?? this.selectedSiteKey;
+    const sites = this.siteManager.list().flatMap((managed) => {
+      const configured = findSite(this.config!, managed.key);
+      if (!configured) return [];
+      return [{
+        siteKey: managed.key,
+        siteName: managed.alias,
+        enabled: managed.enabled
+          && managed.trusted
+          && this.health.canRun(managed.key)
+          && !this.initializationFailures.has(managed.key),
+        searchable: managed.searchEnabled
+          && managed.capabilities.search
+          && flagEnabled(configured.searchable, true),
+        playback: managed.capabilities.playback,
+        metadataOnly: knownMetadataOnlySite(managed.key, managed.api),
+        search: async (query: string, timeoutMs: number): Promise<readonly Vod[]> => {
+          const session = await this.ensureSiteSession(managed.key);
+          const response = await session.searchContent(query, false, 1, timeoutMs);
+          return normalizeVodPage(unwrapSpiderResponse(response, "search"), 1).items;
+        },
+        detail: async (vodId: string, timeoutMs: number): Promise<Vod | null> => {
+          const session = await this.ensureSiteSession(managed.key);
+          const response = await session.detailContent([vodId], timeoutMs);
+          return normalizeVodDetails(unwrapSpiderResponse(response, "detail"))[0] ?? null;
+        },
+      }];
+    });
+    return this.playbackSourceResolver.resolve(currentVod, sites, {
+      ...options,
+      ...(currentSiteKey === null ? {} : { currentSiteKey }),
+    });
   }
 
   public async refreshConfiguration(): Promise<DesktopSpiderImportState> {
@@ -388,6 +437,7 @@ export class DesktopSpiderImportController {
     this.aggregateCoordinator?.cancel();
     this.aggregateCoordinator = undefined;
     this.openingSessions.clear();
+    this.initializationFailures.clear();
 
     let descriptor: ImportDescriptor;
     try {
@@ -449,10 +499,11 @@ export class DesktopSpiderImportController {
     const summary = summarizeConfig(config);
     const configuredSites = (Array.isArray(config.sites) ? config.sites : [])
       .filter((site) => typeof site.api === "string");
+    const sourceUrl = descriptor.requestSource ?? descriptor.source;
     const preferredSiteKey = this.preferredSiteKey?.();
     const selectedSite = configuredSites
-      .find((site) => site && siteKeyOf(site) === preferredSiteKey && isSupportedDesktopSite(config, site))
-      ?? configuredSites.find((site) => isSupportedDesktopSite(config, site));
+      .find((site) => site && siteKeyOf(site) === preferredSiteKey && isSupportedDesktopSite(config, site, sourceUrl))
+      ?? configuredSites.find((site) => isSupportedDesktopSite(config, site, sourceUrl));
     const assessment = await inspectImportAsync(descriptor.source, config, this.trustStore, {
       fetchText: (url) => this.fetchText(url, this.requestTimeoutMs),
     });
@@ -465,6 +516,7 @@ export class DesktopSpiderImportController {
     );
     this.siteManager = new SiteManager({
       config,
+      sourceUrl,
       trusted: !assessment.requiresConfirmation,
     });
     const sites = sitesForUi(config, this.siteManager, this.health);
@@ -514,14 +566,16 @@ export class DesktopSpiderImportController {
     });
     const configuredSites = (Array.isArray(config.sites) ? config.sites : [])
       .filter((site) => typeof site.api === "string");
+    const sourceUrl = version.source;
     const selectedSite = configuredSites
-      .find((site) => siteKeyOf(site) === previousSelectedKey && isSupportedDesktopSite(config, site))
-      ?? configuredSites.find((site) => isSupportedDesktopSite(config, site));
+      .find((site) => siteKeyOf(site) === previousSelectedKey && isSupportedDesktopSite(config, site, sourceUrl))
+      ?? configuredSites.find((site) => isSupportedDesktopSite(config, site, sourceUrl));
     this.config = config;
     this.assessment = assessment;
     this.selectedSite = selectedSite;
     this.siteManager = new SiteManager({
       config,
+      sourceUrl,
       trusted: !assessment.requiresConfirmation,
       ...(preferences ? { preferences } : {}),
     });
@@ -595,7 +649,7 @@ export class DesktopSpiderImportController {
     this.selectedSite = site;
     this.stateValue.selectedSiteKey = siteKeyOf(site);
     this.stateValue.selectedApi = site.api ?? null;
-    if (!isSupportedDesktopSite(this.config, site)) {
+    if (!isSupportedDesktopSite(this.config, site, this.stateValue.source ?? undefined)) {
       this.setError("UNSUPPORTED_SPIDER_ENGINE", "当前站点没有可用的来源引擎绑定");
     } else {
       this.stateValue.error = null;
@@ -704,7 +758,13 @@ export class DesktopSpiderImportController {
           this.openingSessions.delete(siteKey);
         });
         this.openingSessions.set(siteKey, opening);
-        await opening;
+        try {
+          await opening;
+          this.initializationFailures.delete(siteKey);
+        } catch (error) {
+          this.initializationFailures.add(siteKey);
+          throw error;
+        }
       }
     }
     return session;
@@ -713,6 +773,7 @@ export class DesktopSpiderImportController {
   private async releaseSiteSession(siteKey: string): Promise<void> {
     const session = this.sessions.get(siteKey);
     this.sessions.delete(siteKey);
+    this.initializationFailures.delete(siteKey);
     if (this.currentSession === session) {
       this.currentSession = undefined;
       this.currentSessionKey = undefined;
@@ -1109,8 +1170,9 @@ function findSite(config: TvBoxConfig, siteKey: string): TvBoxSite | undefined {
 function isSupportedDesktopSite(
   config: TvBoxConfig,
   site: TvBoxSite | undefined,
+  sourceUrl?: string,
 ): site is TvBoxSite & { api: string } {
-  return site !== undefined && resolveDesktopSourceBinding(config, site) !== undefined;
+  return site !== undefined && resolveDesktopSourceBinding(config, site, sourceUrl) !== undefined;
 }
 
 function siteKeyOf(site: TvBoxSite): string {
@@ -1147,6 +1209,16 @@ function emptyState(): DesktopSpiderImportState {
 
 function historyKindFor(kind: DesktopSpiderImportInputKind): "url" | "file" | "json" {
   return kind;
+}
+
+function flagEnabled(value: unknown, fallback: boolean): boolean {
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") return value.trim() !== "0";
+  return fallback;
+}
+
+function knownMetadataOnlySite(siteKey: string, api: string): boolean {
+  return /douban/i.test(`${siteKey} ${api}`);
 }
 
 function errorMessage(error: unknown): string {

@@ -27,6 +27,7 @@ export interface ManagedSite {
 
 export interface SiteManagerConfig {
   config: TvBoxConfig;
+  sourceUrl?: string;
   trusted?: boolean | ((site: TvBoxSite) => boolean);
   preferences?: Readonly<Record<string, SiteManagementPreferences>>;
 }
@@ -152,7 +153,7 @@ function buildEntries(options: SiteManagerConfig): ManagedSite[] {
     .filter((site): site is TvBoxSite & { api: string } => typeof site.api === "string")
     .map((site, index) => {
       const key = siteKeyOf(site);
-      const binding = resolveDesktopSourceBinding(options.config, site);
+      const binding = resolveDesktopSourceBinding(options.config, site, options.sourceUrl);
       const engine: ManagedSite["engine"] = binding?.engine ?? "unsupported";
       const preference = options.preferences?.[key];
       return {

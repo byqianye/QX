@@ -7,6 +7,16 @@ export interface TvBoxSite {
   name?: string;
   type?: number;
   api?: string;
+  ext?: unknown;
+  jar?: string;
+  searchable?: number | string;
+  quickSearch?: number | string;
+  filterable?: number | string;
+  changeable?: number | string;
+  timeout?: number | string;
+  header?: unknown;
+  playUrl?: string;
+  categories?: unknown[];
   [key: string]: unknown;
 }
 

@@ -220,7 +220,15 @@ function handleScroll(): void {
 async function restorePage(): Promise<void> {
   restored.value = true;
   const candidate = restoreCandidate.value;
-  if (!candidate || candidate.navigation === "local" || !candidate.siteKey || candidate.navigation === "settings" || candidate.navigation === "live") {
+  if (!candidate) {
+    if (state.value.import.selectedSiteKey && state.value.import.sessionReady) {
+      await request("initial-open", () => api.post("/api/open"));
+      if (state.value.spider.sidecarRunning) await request("initial-home", () => api.post("/api/home"));
+    }
+    restoreScroll(0);
+    return;
+  }
+  if (candidate.navigation === "local" || !candidate.siteKey || candidate.navigation === "settings" || candidate.navigation === "live") {
     restoreScroll(candidate?.scrollTop ?? 0);
     return;
   }
@@ -324,6 +332,8 @@ function playLocal(itemId: string, resumeMode?: HistoryResumeMode): void {
       @category="post('category', '/api/category', { typeId: 'hot_gaia', page: 1 })"
       @search="post('search', '/api/search', { key: $event, page: 1, quick: false })"
       @detail="post('detail', '/api/detail', { vodId: $event })"
+      @find-playback-source="post('playback-source-search', '/api/playback-sources/search')"
+      @select-playback-source="post('playback-source-select', '/api/playback-sources/select', { siteKey: $event[0], vodId: $event[1] })"
       @play="play"
       @retry="retryLast"
       @line="lineIndex = $event"

@@ -32,6 +32,7 @@ import {
 import { validatePlaybackSource } from "./playback.js";
 import type { SourceHealthRegistry, HealthOperation } from "../health/source-health.js";
 import { normalizeSubtitleTracks, type SubtitleTrack } from "../subtitles.js";
+import { serializeFongMiExt } from "../config/fongmi.js";
 
 export type DesktopSpiderSessionStatus =
   | "confirmation_required"
@@ -55,6 +56,11 @@ export type DesktopSpiderPlaybackState =
       parse: number;
       url: string;
       headers: Record<string, string>;
+      playUrl?: string;
+      jx?: number;
+      format?: string;
+      flag?: string;
+      jxFrom?: string;
       subtitles?: SubtitleTrack[];
       danmaku?: unknown;
     };
@@ -175,7 +181,7 @@ export class DesktopSpiderSession implements MediaSource {
 
     const site = this.findSite(siteKey);
     const api = site.api;
-    const binding = resolveDesktopSourceBinding(this.options.config, site);
+    const binding = resolveDesktopSourceBinding(this.options.config, site, this.options.source);
     if (!binding) {
       throw this.fail(
         `Unsupported desktop Spider source: ${String(api)}`,
@@ -200,7 +206,8 @@ export class DesktopSpiderSession implements MediaSource {
         binding,
         ...(binding.definition ? { definition: binding.definition } : {}),
       });
-      const init = () => this.client?.init(ext, this.options.requestTimeoutMs)
+      const initExt = ext.trim() ? ext : serializeFongMiExt(site.ext);
+      const init = () => this.client?.init(initExt, this.options.requestTimeoutMs)
         ?? Promise.reject(new Error("Desktop Spider client is unavailable"));
       const response = this.options.health && this.activeSiteKey
         ? await this.options.health.track(this.activeSiteKey, "init", init, (value) => (
@@ -250,7 +257,7 @@ export class DesktopSpiderSession implements MediaSource {
     ids: string[],
     timeoutMs = this.options.requestTimeoutMs,
   ): Promise<SpiderResponse> {
-    this.viewState.playback = playbackPendingFor(this.viewState.api);
+    this.viewState.playback = this.capabilities.playback ? PLAYABLE_PENDING : NO_PLAYBACK;
     return this.invoke("detail", (client) => client.detailContent(ids, timeoutMs));
   }
 
@@ -318,7 +325,7 @@ export class DesktopSpiderSession implements MediaSource {
     const siteKey = context.siteKey ?? firstSiteKey(this.options.config);
     if (!siteKey) throw new MediaSourceError("SPIDER_SITE_NOT_FOUND", "Spider site key is required");
     const site = this.findSite(siteKey);
-    const ext = context.ext ?? (typeof site.ext === "string" ? site.ext : "");
+    const ext = context.ext ?? serializeFongMiExt(site.ext);
     const response = await this.open(siteKey, ext);
     if (!response.ok) {
       throw new MediaSourceError(
@@ -474,10 +481,6 @@ export class DesktopSpiderSession implements MediaSource {
   }
 }
 
-function playbackPendingFor(api: string | null): DesktopSpiderPlaybackState {
-  return sourceCapabilitiesForApi(api ?? undefined).playback ? PLAYABLE_PENDING : NO_PLAYBACK;
-}
-
 function firstSiteApi(config: TvBoxConfig): string | undefined {
   const sites = Array.isArray(config.sites) ? config.sites : [];
   return sites.find((site) => typeof site.api === "string")?.api as string | undefined;
@@ -517,6 +520,11 @@ function playbackFrom(value: unknown): Extract<DesktopSpiderPlaybackState, { ava
     parse,
     url,
     headers: playbackHeaders(value.header ?? value.headers),
+    ...(typeof value.playUrl === "string" ? { playUrl: value.playUrl } : {}),
+    ...(typeof value.jx === "number" && Number.isFinite(value.jx) ? { jx: value.jx } : {}),
+    ...(typeof value.format === "string" ? { format: value.format } : {}),
+    ...(typeof value.flag === "string" ? { flag: value.flag } : {}),
+    ...(typeof value.jxFrom === "string" ? { jxFrom: value.jxFrom } : {}),
     ...(normalizeSubtitleTracks(value.subtitles ?? value.subtitleTracks ?? value.subtitle).length > 0
       ? { subtitles: normalizeSubtitleTracks(value.subtitles ?? value.subtitleTracks ?? value.subtitle) }
       : {}),

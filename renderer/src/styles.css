@@ -235,10 +235,12 @@ p { margin-bottom: 12px; }
 
 .media-grid-section { min-height: 160px; }
 .media-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
-.media-card { min-width: 0; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); transition: border-color 160ms var(--ease-standard), box-shadow 160ms var(--ease-standard), transform 160ms var(--ease-standard); }
+.media-card { min-width: 0; overflow: hidden; cursor: pointer; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); transition: border-color 160ms var(--ease-standard), box-shadow 160ms var(--ease-standard), transform 160ms var(--ease-standard); }
 .media-card:hover { border-color: color-mix(in oklab, var(--accent), var(--border) 55%); box-shadow: var(--shadow-raised); transform: translateY(-2px); }
+.media-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .media-card-cover, .detail-cover { display: grid; place-items: center; color: var(--muted); background: var(--surface-subtle); }
 .media-card-cover { aspect-ratio: 16 / 10; }
+.media-card-cover img, .detail-cover img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .media-card-cover span, .detail-cover span { color: var(--accent); font-size: 28px; font-weight: 600; }
 .media-card-body { padding: 14px 16px 16px; }
 .media-card-type { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; }

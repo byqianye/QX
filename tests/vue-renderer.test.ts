@@ -22,6 +22,7 @@ import CategoryTabs from "../renderer/src/CategoryTabs.vue";
 import EmbeddedPlayer from "../renderer/src/EmbeddedPlayer.vue";
 import CastPanel from "../renderer/src/CastPanel.vue";
 import MediaCard from "../renderer/src/MediaCard.vue";
+import DetailDrawer from "../renderer/src/DetailDrawer.vue";
 import PlaybackSelector from "../renderer/src/PlaybackSelector.vue";
 import PlayerWindow from "../renderer/src/PlayerWindow.vue";
 import SpiderView from "../renderer/src/SpiderView.vue";
@@ -484,6 +485,46 @@ describe("Vue renderer", () => {
     wrapper.unmount();
   });
 
+  it("opens a freshly confirmed source before the first browse request", async () => {
+    const initial = readyEnvelope();
+    initial.import = {
+      ...initial.import!,
+      status: "confirmation_required",
+      trusted: false,
+      warning: "需要确认",
+      sessionReady: false,
+    };
+    initial.state = null;
+    const confirmed = readyEnvelope();
+    confirmed.state = { ...confirmed.state!, status: "idle", sidecarRunning: false, items: [] };
+    const opened = readyEnvelope();
+    const home = readyEnvelope();
+    home.state = { ...home.state!, items: [{ vod_id: "msearch:first-home", vod_name: "Fresh Home" }] };
+    const responses: Record<string, RendererEnvelope> = {
+      "/api/state": initial,
+      "/api/import/confirm": confirmed,
+      "/api/open": opened,
+      "/api/home": home,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => ({
+      ok: true,
+      json: async () => responses[String(input)] ?? home,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('[data-action="confirm-import"]').trigger("click");
+    await flushPromises();
+    await flushPromises();
+
+    const calledPaths = (fetchMock.mock.calls as unknown as Array<[string]>).map(([path]) => path);
+    expect(calledPaths).toContain("/api/open");
+    expect(calledPaths).toContain("/api/home");
+    expect(wrapper.get('[data-testid="vod-list"]').text()).toContain("Fresh Home");
+    wrapper.unmount();
+  });
+
   it("renders selectable lines, episodes and the complete embedded-player control surface", async () => {
     const selector = mount(PlaybackSelector, {
       attachTo: document.body,
@@ -591,6 +632,14 @@ describe("Vue renderer", () => {
       props: { item: { vod_id: "long-title", vod_name: longTitle } },
     });
     expect(card.text()).toContain(longTitle);
+    const vodCard = card.get('[data-testid="vod-card"]');
+    expect(vodCard.attributes("role")).toBe("button");
+    expect(vodCard.attributes("tabindex")).toBe("0");
+    expect(card.find('[data-action="detail"]').exists()).toBe(false);
+    await vodCard.trigger("click");
+    await vodCard.trigger("keydown", { key: "Enter" });
+    await vodCard.trigger("keydown", { key: " " });
+    expect(card.emitted("open")).toEqual([["long-title"], ["long-title"], ["long-title"]]);
 
     const selector = mount(PlaybackSelector, {
       props: {
@@ -633,6 +682,85 @@ describe("Vue renderer", () => {
     categoryTabs.unmount();
     selector.unmount();
     card.unmount();
+  });
+
+  it("renders a media poster when vod_pic is present", () => {
+    const card = mount(MediaCard, {
+      props: {
+        item: {
+          vod_id: "poster-1",
+          vod_name: "Poster fixture",
+          vod_pic: "https://image.example.invalid/poster.jpg",
+        },
+      },
+    });
+
+    const poster = card.get('[data-testid="vod-poster"]');
+    expect(poster.element.tagName).toBe("IMG");
+    expect(poster.attributes("src")).toBe("https://image.example.invalid/poster.jpg");
+    expect(poster.attributes("alt")).toBe("Poster fixture 海报");
+  });
+
+  it("uses the shared detail poster fallback and lets the user select a playback source", async () => {
+    const drawer = mount(DetailDrawer, {
+      props: {
+        detail: { vod_id: "meta-1", vod_name: "欢迎来龙餐厅" },
+        canPlay: false,
+        playbackLabel: "Douban：无正片播放源",
+        canSearchPlayback: true,
+        playbackSources: null,
+        playbackSourcePending: false,
+      },
+    });
+
+    expect(drawer.find('[data-testid="detail-poster"]').exists()).toBe(false);
+    expect(drawer.find(".detail-cover span").text()).toBe("欢");
+    await drawer.get('[data-action="find-playback-source"]').trigger("click");
+    expect(drawer.emitted("findPlaybackSource")).toEqual([[]]);
+
+    drawer.unmount();
+    const selectedDrawer = mount(DetailDrawer, {
+      props: {
+        detail: { vod_id: "meta-1", vod_name: "欢迎来龙餐厅" },
+        canPlay: false,
+        playbackLabel: "Douban：无正片播放源",
+        canSearchPlayback: true,
+        playbackSources: {
+        query: "欢迎来龙餐厅",
+        searchedSites: ["playable"],
+        successfulSites: ["playable"],
+        failedSites: [],
+        candidates: [{
+          siteKey: "playable",
+          siteName: "Playable",
+          vod: { id: "play-1", name: "欢迎来龙餐厅", raw: {}, vod_id: "play-1" },
+          score: 140,
+          playable: true,
+          hasPlayFrom: true,
+          hasPlayUrl: true,
+        }],
+        },
+        playbackSourcePending: false,
+      },
+    });
+    await selectedDrawer.get('[data-action="playback-source-select"]').trigger("click");
+    expect(selectedDrawer.emitted("selectPlaybackSource")).toEqual([["playable", "play-1"]]);
+    selectedDrawer.unmount();
+  });
+
+  it("falls back after a detail poster request fails", async () => {
+    const drawer = mount(DetailDrawer, {
+      props: {
+        detail: { vod_id: "poster-1", vod_name: "Poster fixture", vod_pic: "http://127.0.0.1/poster.jpg" },
+        canPlay: false,
+        playbackLabel: "无播放源",
+      },
+    });
+
+    await drawer.get('[data-testid="detail-poster"]').trigger("error");
+    expect(drawer.find('[data-testid="detail-poster"]').exists()).toBe(false);
+    expect(drawer.find(".detail-cover span").text()).toBe("P");
+    drawer.unmount();
   });
 
   it("renders the Open Design desktop shell and recoverable playback states", async () => {

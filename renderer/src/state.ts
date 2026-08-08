@@ -2,6 +2,8 @@ import { toAppError } from "./error.js";
 import type { SubtitleTrack } from "../../src/subtitles.js";
 import type { PlaybackFallbackState, PlaybackHealthSnapshot } from "../../src/health/playback-health.js";
 import type { PlaybackMediaEvent } from "../../src/desktop/playback.js";
+import type { PlaybackSourceResolution } from "../../src/desktop/playback-source-resolver.js";
+import type { PlaybackAttemptDiagnostics } from "../../src/desktop/spider-ui.js";
 import type { HistoryResumeCandidate, HistoryUiState } from "../../src/history/history-types.js";
 import type { FavoriteItem, FavoritesUiState } from "../../src/favorites/favorites-types.js";
 import type { FollowItem, FollowUiState } from "../../src/follow/follow-types.js";
@@ -165,6 +167,11 @@ export type SpiderPlayback =
       parse: number;
       url: string;
       headers: Record<string, string>;
+      playUrl?: string;
+      jx?: number;
+      format?: string;
+      flag?: string;
+      jxFrom?: string;
       subtitles?: readonly SubtitleTrack[];
     };
 
@@ -209,6 +216,11 @@ export interface PlayerSource {
   parse: number;
   url: string;
   headers: Record<string, string>;
+  playUrl?: string;
+  jx?: number;
+  format?: string;
+  flag?: string;
+  jxFrom?: string;
   subtitles?: readonly SubtitleTrack[];
 }
 
@@ -274,6 +286,8 @@ export interface RendererState {
   spider: SpiderState;
   browse: BrowseState;
   detail: DetailState;
+  playbackSources: PlaybackSourceResolution | null;
+  playbackDiagnostics: PlaybackAttemptDiagnostics | null;
   playback: PlaybackState;
   history: HistoryUiState;
   historyResume: HistoryResumeCandidate | null;
@@ -309,6 +323,8 @@ export interface ApiSpiderState {
   detail: Record<string, unknown> | null;
   playbackCatalog: PlaybackCatalog | null;
   playbackSelection: PlaybackSelection | null;
+  playbackSources?: PlaybackSourceResolution | null;
+  playbackDiagnostics?: PlaybackAttemptDiagnostics | null;
   playerHost?: PlayerHostMode;
   playbackSession?: RendererPlaybackSession | null;
   playbackHealth?: PlaybackHealthSnapshot;
@@ -375,6 +391,8 @@ export function createRendererState(): RendererState {
       playbackSelection: null,
       canPlay: false,
     },
+    playbackSources: null,
+    playbackDiagnostics: null,
     playback: {
       playback: {
         available: false,
@@ -478,6 +496,10 @@ export function applyRendererEnvelope(
       playbackSelection: state.playbackSelection ? { ...state.playbackSelection } : null,
       canPlay: state.canPlay,
     },
+    playbackSources: clonePlaybackSourceResolution(state.playbackSources ?? null),
+    playbackDiagnostics: state.playbackDiagnostics
+      ? { ...state.playbackDiagnostics, playerContent: { ...state.playbackDiagnostics.playerContent } }
+      : null,
     playback: {
       playback: cloneSpiderPlayback(state.playback),
       player: clonePlayerState(state.player),
@@ -665,6 +687,37 @@ function clonePlaybackCatalog(catalog: PlaybackCatalog | null): PlaybackCatalog 
         })),
       }
     : null;
+}
+
+function clonePlaybackSourceResolution(
+  resolution: PlaybackSourceResolution | null,
+): PlaybackSourceResolution | null {
+  if (!resolution) return null;
+  return {
+    query: resolution.query,
+    searchedSites: [...resolution.searchedSites],
+    successfulSites: [...resolution.successfulSites],
+    failedSites: resolution.failedSites.map((failure) => ({ ...failure })),
+    candidates: resolution.candidates.map((candidate) => ({
+      ...candidate,
+      vod: {
+        id: candidate.vod.id,
+        name: candidate.vod.name,
+        raw: {},
+        ...Object.fromEntries(["vod_id", "vod_name", "vod_year", "vod_area", "vod_class", "type_name", "vod_director", "vod_pic"].flatMap((field) => (
+          Object.prototype.hasOwnProperty.call(candidate.vod, field) ? [[field, candidate.vod[field]]] : []
+        ))),
+      },
+      ...(candidate.lines ? {
+        lines: {
+          lines: candidate.lines.lines.map((line) => ({
+            ...line,
+            episodes: line.episodes.map((episode) => ({ ...episode })),
+          })),
+        },
+      } : {}),
+    })),
+  };
 }
 
 function clonePlayerState(player: PlayerState): PlayerState {

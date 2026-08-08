@@ -32,6 +32,11 @@ import {
   type PlaybackCatalog,
   type PlaybackSelection,
 } from "./vod-playback.js";
+import { mergeVodDisplayFields } from "./vod-merge.js";
+import type {
+  PlaybackSourceResolution,
+  PlayableCandidate,
+} from "./playback-source-resolver.js";
 import {
   type DesktopStatePatch,
   type DesktopStateStorePort,
@@ -39,7 +44,7 @@ import {
 } from "./state-persistence.js";
 import type { SpiderResponse } from "../spider/rpc.js";
 import type { SourceCapabilities } from "../source/media-source.js";
-import { normalizeVodDetails, unwrapSpiderResponse } from "../source/normalizers.js";
+import { normalizeVod, normalizeVodDetails, unwrapSpiderResponse } from "../source/normalizers.js";
 import type { AggregateSearchSnapshot } from "../search/aggregate-search.js";
 import {
   ParseChainError,
@@ -88,6 +93,7 @@ import {
   type CacheUiState,
 } from "../cache/cache-types.js";
 import { CacheService } from "../cache/cache-service.js";
+import { PosterProxy } from "./poster-proxy.js";
 import { DataStorageService } from "../data/data-directory.js";
 import { EMPTY_BACKUP_UI_STATE, type BackupUiState } from "../backup-types.js";
 import { EMPTY_STORAGE_UI_STATE, type StorageMode, type StorageUiState } from "../storage/storage-types.js";
@@ -260,7 +266,9 @@ export interface DesktopSpiderUiState {
   playbackSession: DesktopPlaybackSession | null;
   scrollTop: number;
   aggregateSearch: AggregateSearchSnapshot | null;
+  playbackSources: PlaybackSourceResolution | null;
   playbackHealth: PlaybackHealthSnapshot;
+  playbackDiagnostics: PlaybackAttemptDiagnostics | null;
   fallback: PlaybackFallbackState;
   history: HistoryUiState;
   historyResume: HistoryResumeCandidate | null;
@@ -274,6 +282,17 @@ export interface DesktopSpiderUiState {
   danmaku: import("../danmaku/danmaku-types.js").DanmakuUiState;
   localMedia: LocalMediaUiState;
   downloads: DownloadUiState;
+}
+
+export interface PlaybackAttemptDiagnostics {
+  siteKey: string;
+  flag: string;
+  episodeId: string;
+  playerContent: { ok: boolean; code: string | null; message: string | null };
+  parse: number | null;
+  jx: number | null;
+  format: string | null;
+  jxFrom: string | null;
 }
 
 export interface DesktopSpiderUiOptions {
@@ -314,6 +333,7 @@ export class DesktopSpiderUiController {
   private playbackSession: DesktopPlaybackSession | null = null;
   private scrollTop = 0;
   private aggregateSearchValue: AggregateSearchSnapshot | null = null;
+  private playbackSourceResolution: PlaybackSourceResolution | null = null;
   private readonly playerController = new EmbeddedPlaybackController();
   private readonly playbackProxy: PlaybackProxyServer;
   private readonly parserCandidates: readonly ParserCandidate[];
@@ -327,6 +347,7 @@ export class DesktopSpiderUiController {
   private subtitleProxySessions: PlaybackProxySession[] = [];
   private currentPlaybackRequest: PlaybackRequest | null = null;
   private currentHealthKey = "playback:idle";
+  private playbackDiagnosticsValue: PlaybackAttemptDiagnostics | null = null;
   private readonly fallbackRequests = new Map<string, PlaybackRequest>();
   private pendingFallback: Promise<void> | null = null;
   private readonly historyService: HistoryProgressService | undefined;
@@ -402,7 +423,9 @@ export class DesktopSpiderUiController {
       playbackSession: clonePlaybackSession(this.playbackSession),
       scrollTop: this.scrollTop,
       aggregateSearch: this.aggregateSearchValue,
+      playbackSources: clonePlaybackSourceResolution(this.playbackSourceResolution),
       playbackHealth: this.publicPlaybackHealth(),
+      playbackDiagnostics: this.playbackDiagnosticsValue ? { ...this.playbackDiagnosticsValue, playerContent: { ...this.playbackDiagnosticsValue.playerContent } } : null,
       fallback: this.fallbackCoordinator.state,
       history: this.historyService?.uiState() ?? EMPTY_HISTORY_UI_STATE,
       historyResume: this.historyResume ? { ...this.historyResume } : null,
@@ -503,6 +526,19 @@ export class DesktopSpiderUiController {
     return this.state;
   }
 
+  public setPlaybackSourceResolution(
+    resolution: PlaybackSourceResolution | null,
+  ): DesktopSpiderUiState {
+    this.playbackSourceResolution = resolution;
+    return this.state;
+  }
+
+  public playbackSourceCandidate(siteKey: string, vodId: string): PlayableCandidate | null {
+    return this.playbackSourceResolution?.candidates.find((candidate) => (
+      candidate.siteKey === siteKey && String(candidate.vod.id ?? candidate.vod.vod_id ?? "") === vodId
+    )) ?? null;
+  }
+
   public clearCache(scope: CacheClearScope): DesktopSpiderUiState {
     this.cacheService?.clear(scope);
     return this.state;
@@ -593,6 +629,7 @@ export class DesktopSpiderUiController {
       this.items = [];
       this.detailItem = null;
       this.clearPlaybackCatalog();
+      this.playbackSourceResolution = null;
       this.scrollTop = 0;
       this.aggregateSearchValue = null;
     });
@@ -606,6 +643,7 @@ export class DesktopSpiderUiController {
         this.page = "home";
         this.items = listFrom(response);
         this.detailItem = null;
+        this.playbackSourceResolution = null;
         this.scrollTop = 0;
         this.aggregateSearchValue = null;
       },
@@ -626,6 +664,7 @@ export class DesktopSpiderUiController {
         this.page = "category";
         this.items = listFrom(response);
         this.detailItem = null;
+        this.playbackSourceResolution = null;
         this.scrollTop = 0;
         this.aggregateSearchValue = null;
       },
@@ -645,6 +684,7 @@ export class DesktopSpiderUiController {
         this.page = "search";
         this.items = listFrom(response);
         this.detailItem = null;
+        this.playbackSourceResolution = null;
         this.scrollTop = 0;
         this.aggregateSearchValue = null;
       },
@@ -657,8 +697,11 @@ export class DesktopSpiderUiController {
       () => this.session.detailContent([vodId], timeoutMs),
       (response) => {
         this.page = "detail";
-        this.detailItem = listFrom(response)[0] ?? null;
+        const detailItem = listFrom(response)[0] ?? null;
+        const listItem = this.items.find((item) => String(item.vod_id ?? "") === vodId) ?? null;
+        this.detailItem = mergeVodDisplayFields(listItem, detailItem);
         this.playbackCatalog = this.detailItem ? parseVodPlayback(this.detailItem) : null;
+        this.playbackSourceResolution = null;
         this.playbackSelection = null;
         this.historyResume = this.findDetailResume();
         this.scrollTop = 0;
@@ -814,6 +857,7 @@ export class DesktopSpiderUiController {
     });
     this.detailItem = null;
     this.playbackCatalog = null;
+    this.playbackSourceResolution = null;
     this.playbackSelection = null;
     return this.state;
   }
@@ -982,9 +1026,16 @@ export class DesktopSpiderUiController {
         await this.session.stopPlayback?.();
         return this.session.playerContent(request.flag, request.id, request.vipFlags, request.timeoutMs);
       },
-      async () => {
+      async (response) => {
         this.page = "detail";
         const playback = this.session.view.playback;
+        this.playbackDiagnosticsValue = playbackAttemptDiagnostics(
+          request,
+          response,
+          playback,
+          undefined,
+          this.session.view.api ?? this.session.view.source,
+        );
         if (playback.available) {
           const playbackSessionId = randomUUID();
           const source = await this.preparePlayback(playback, playbackSessionId, request.flag);
@@ -1021,7 +1072,16 @@ export class DesktopSpiderUiController {
           };
         }
       },
-      allowFallback ? (failure) => this.handlePlaybackFailure(request, failure) : undefined,
+      allowFallback ? async (failure) => {
+        this.playbackDiagnosticsValue = playbackAttemptDiagnostics(
+          request,
+          failure.response,
+          this.session.view.playback,
+          failure.error,
+          this.session.view.api ?? this.session.view.source,
+        );
+        return this.handlePlaybackFailure(request, failure);
+      } : undefined,
     );
     if (state.player.status !== "error" && this.fallbackCoordinator.state.status === "trying") {
       this.fallbackCoordinator.finishAttempt(true);
@@ -1459,9 +1519,17 @@ export class DesktopSpiderUiController {
         error: null,
       };
     }
-    const mediaSource: PlaybackSource = Object.keys(resolved.headers).length === 0
+    const baseMediaSource: PlaybackSource = Object.keys(resolved.headers).length === 0
       ? { parse: 0, url: resolved.url, headers: {} }
       : await this.createMediaProxy(resolved, playbackSessionId);
+    const mediaSource: PlaybackSource = {
+      ...baseMediaSource,
+      ...(playback.playUrl ? { playUrl: playback.playUrl } : {}),
+      ...(playback.jx === undefined ? {} : { jx: playback.jx }),
+      ...(playback.format ? { format: playback.format } : {}),
+      ...(playback.flag ? { flag: playback.flag } : {}),
+      ...(playback.jxFrom ? { jxFrom: playback.jxFrom } : {}),
+    };
     const subtitles = await this.prepareSubtitleTracks(playback.subtitles ?? [], playbackSessionId);
     return subtitles.length > 0 ? { ...mediaSource, subtitles } : mediaSource;
   }
@@ -1610,6 +1678,7 @@ export class DesktopSpiderUiServer {
   private readonly favoritesService: FavoritesService | undefined;
   private readonly followService: FollowService | undefined;
   private readonly cacheService: CacheService | undefined;
+  private readonly posterProxy: PosterProxy;
   private readonly storageService: DataStorageService | undefined;
   private readonly danmakuService: DanmakuService | undefined;
   private readonly localMediaService: LocalMediaService | undefined;
@@ -1672,6 +1741,7 @@ export class DesktopSpiderUiServer {
     this.favoritesService = options.favorites;
     this.followService = options.follow;
     this.cacheService = options.cache;
+    this.posterProxy = new PosterProxy({ ...(this.cacheService ? { cache: this.cacheService } : {}) });
     this.storageService = options.storage;
     this.danmakuService = options.danmaku;
     this.localMediaService = options.localMedia;
@@ -1980,6 +2050,7 @@ export class DesktopSpiderUiServer {
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     try {
       const url = new URL(request.url ?? "/", this.url);
+      if (request.method === "GET" && await this.posterProxy.handle(url.pathname, response)) return;
       if (request.method === "GET" && this.localMediaService && url.pathname.startsWith("/api/local-media/")) {
         this.writeLocalMediaStream(request, response, url.pathname);
         return;
@@ -2338,6 +2409,38 @@ export class DesktopSpiderUiServer {
             this.persistPage({ navigation: "detail", recentDetailId: vodId });
           }
           break;
+        case "/api/playback-sources/search":
+          {
+            if (!this.importer) throw new Error("PLAYBACK_SOURCE_RESOLVER_UNAVAILABLE");
+            if (!ui.state.detail) throw new Error("PLAYBACK_SOURCE_DETAIL_REQUIRED");
+            const resolution = await this.importer.resolvePlaybackSources(
+              normalizeVod(ui.state.detail),
+              { currentSiteKey: this.importer.selectedSiteKey },
+            );
+            ui.setPlaybackSourceResolution(resolution);
+          }
+          break;
+        case "/api/playback-sources/select":
+          {
+            if (!this.importer) throw new Error("PLAYBACK_SOURCE_RESOLVER_UNAVAILABLE");
+            const siteKey = stringValue(body.siteKey, "");
+            const vodId = stringValue(body.vodId, "");
+            const candidate = ui.playbackSourceCandidate(siteKey, vodId);
+            if (!candidate || !candidate.playable) throw new Error("PLAYBACK_SOURCE_CANDIDATE_INVALID");
+            const selected = this.importer.selectSite(siteKey);
+            if (selected.selectedSiteKey !== siteKey || selected.status === "error") {
+              throw new Error("PLAYBACK_SOURCE_SITE_UNAVAILABLE");
+            }
+            const selectedUi = this.activeUi();
+            if (!selectedUi) throw new Error("PLAYBACK_SOURCE_SITE_UNAVAILABLE");
+            await selectedUi.detail(vodId);
+            if (!selectedUi.state.playbackCatalog?.lines.some((line) => line.episodes.length > 0)) {
+              throw new Error("PLAYBACK_SOURCE_DETAIL_UNPLAYABLE");
+            }
+            selectedUi.setPlaybackSourceResolution(null);
+            this.persistPage({ navigation: "detail", recentDetailId: vodId, siteKey });
+          }
+          break;
         case "/api/player/detach":
           (this.playbackUi() ?? ui).detachPlayer();
           break;
@@ -2439,7 +2542,7 @@ export class DesktopSpiderUiServer {
         error: message,
         ...(errorCode ? { errorCode } : {}),
         import: this.importer?.state ?? null,
-        state: ui?.state ?? null,
+        state: ui ? this.posterProxy.decorateState(ui.state) : null,
         ...(this.liveService || this.livePlayback ? { live: this.liveUiState() } : {}),
         ...(this.pushService ? { push: this.pushService.uiState() } : {}),
         ...(this.castService ? { cast: this.castService.uiState() } : {}),
@@ -3134,14 +3237,16 @@ export class DesktopSpiderUiServer {
     if (!ui) return null;
     const current = ui.state;
     const playback = this.playbackUi();
-    if (!playback || playback === ui || !playback.state.playbackSession) return { ...current, backup: this.backupState };
-    return {
+    const state = !playback || playback === ui || !playback.state.playbackSession
+      ? { ...current, backup: this.backupState }
+      : {
       ...current,
       backup: this.backupState,
       player: playback.state.player,
       playerHost: playback.state.playerHost,
       playbackSession: playback.state.playbackSession,
-    };
+      };
+    return this.posterProxy.decorateState(state);
   }
 
   private async handleBackupRequest(pathname: string, body: Record<string, unknown>, response: ServerResponse): Promise<void> {
@@ -3494,9 +3599,42 @@ function publicPlaybackState(playback: DesktopSpiderPlaybackState): DesktopSpide
     parse: playback.parse,
     url: playback.url,
     headers: {},
+    ...(playback.playUrl ? { playUrl: playback.playUrl } : {}),
+    ...(playback.jx === undefined ? {} : { jx: playback.jx }),
+    ...(playback.format ? { format: playback.format } : {}),
+    ...(playback.flag ? { flag: playback.flag } : {}),
+    ...(playback.jxFrom ? { jxFrom: playback.jxFrom } : {}),
     ...(playback.subtitles
       ? { subtitles: playback.subtitles.map(publicSubtitleTrack) }
       : {}),
+  };
+}
+
+function playbackAttemptDiagnostics(
+  request: PlaybackRequest,
+  response: SpiderResponse | undefined,
+  playback: DesktopSpiderPlaybackState,
+  thrown?: unknown,
+  siteKey = "unknown",
+): PlaybackAttemptDiagnostics {
+  const thrownRecord = isRecord(thrown) ? thrown : null;
+  const errorCode = response?.error?.code
+    ?? (typeof thrownRecord?.code === "string" ? thrownRecord.code : null);
+  const errorMessage = response?.error?.message
+    ?? (thrown instanceof Error ? thrown.message : null);
+  return {
+    siteKey,
+    flag: request.flag,
+    episodeId: request.id,
+    playerContent: {
+      ok: response?.ok === true,
+      code: errorCode,
+      message: errorMessage?.replace(/\b(cookie|authorization)\s*[:=]\s*[^\s,;]+/gi, "$1=<redacted>") ?? null,
+    },
+    parse: playback.available ? playback.parse : null,
+    jx: playback.available ? playback.jx ?? null : null,
+    format: playback.available ? playback.format ?? null : null,
+    jxFrom: playback.available ? playback.jxFrom ?? null : null,
   };
 }
 
@@ -3574,6 +3712,20 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
       state.status === "error" && state.error?.code.startsWith("PLAYBACK_") === true,
     )
     : "";
+  const playableSourceCandidates = state.playbackSources?.candidates.filter((candidate) => candidate.playable) ?? [];
+  const canSearchPlayback = state.detail !== null
+    && !state.canPlay
+    && (!state.playbackCatalog || !state.playbackCatalog.lines.some((line) => line.episodes.length > 0));
+  const playbackSourceSearch = canSearchPlayback
+    ? state.playbackSources
+      ? playableSourceCandidates.length > 0
+        ? `<section data-testid="playback-source-candidates">
+            <strong>找到可播放来源，请选择：</strong>
+            ${playableSourceCandidates.map((candidate) => `<button data-action="playback-source-select" data-site-key="${escapeHtml(candidate.siteKey)}" data-vod-id="${escapeHtml(candidate.vod.id)}">${escapeHtml(candidate.siteName)} · ${escapeHtml(candidate.vod.name)}（匹配 ${candidate.score}）</button>`).join("")}
+          </section>`
+        : `<p data-testid="playback-source-empty">当前配置中未找到可播放来源</p>`
+      : `<button data-action="find-playback-source"${state.loading ? " disabled" : ""}>查找播放源</button>`
+    : "";
   const playerMarkup = state.playerHost === "detached"
     ? `<section data-testid="detached-player-panel" class="embedded-player-panel">
         <strong>独立播放窗口</strong>
@@ -3588,6 +3740,7 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
         <h2>${escapeHtml(stringValue(state.detail.vod_name, "详情"))}</h2>
         <p>${escapeHtml(stringValue(state.detail.vod_content, ""))}</p>
         ${playButton}
+        ${playbackSourceSearch}
         <span data-testid="playback-label">${escapeHtml(state.playback.label)}</span>
       </section>`
     : `<section data-testid="playback-panel" class="playback-panel">
@@ -3655,6 +3808,8 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
         document.querySelectorAll('[data-action="home"]').forEach((button) => button.addEventListener('click', () => send('/api/home')));
         document.querySelectorAll('[data-action="category"]').forEach((button) => button.addEventListener('click', () => send('/api/category', { typeId: button.dataset.typeId, page: Number(button.dataset.page || '1') })));
         document.querySelectorAll('[data-action="detail"]').forEach((button) => button.addEventListener('click', () => send('/api/detail', { vodId: button.dataset.vodId })));
+        document.querySelectorAll('[data-action="find-playback-source"]').forEach((button) => button.addEventListener('click', () => send('/api/playback-sources/search')));
+        document.querySelectorAll('[data-action="playback-source-select"]').forEach((button) => button.addEventListener('click', () => send('/api/playback-sources/select', { siteKey: button.dataset.siteKey, vodId: button.dataset.vodId })));
         document.querySelectorAll('[data-action="switch"]').forEach((button) => button.addEventListener('click', () => send('/api/switch')));
         document.querySelectorAll('[data-action="close"]').forEach((button) => button.addEventListener('click', () => send('/api/close')));
         document.querySelectorAll('[data-action="player-attach"]').forEach((button) => button.addEventListener('click', () => send('/api/player/attach')));
@@ -3928,6 +4083,44 @@ function clonePlaybackCatalog(catalog: PlaybackCatalog | null): PlaybackCatalog 
       episodes: line.episodes.map((episode) => ({ ...episode })),
     })),
   };
+}
+
+function clonePlaybackSourceResolution(
+  resolution: PlaybackSourceResolution | null,
+): PlaybackSourceResolution | null {
+  if (!resolution) return null;
+  return {
+    query: resolution.query,
+    searchedSites: [...resolution.searchedSites],
+    successfulSites: [...resolution.successfulSites],
+    failedSites: resolution.failedSites.map((failure) => ({ ...failure })),
+    candidates: resolution.candidates.map((candidate) => ({
+      ...candidate,
+      vod: {
+        id: candidate.vod.id,
+        name: candidate.vod.name,
+        raw: {},
+        ...publicCandidateVodFields(candidate.vod),
+      },
+      ...(candidate.lines ? { lines: clonePlaybackCatalog(candidate.lines)! } : {}),
+    })),
+  };
+}
+
+function publicCandidateVodFields(vod: Record<string, unknown>): Record<string, unknown> {
+  const fields = [
+    "vod_id",
+    "vod_name",
+    "vod_year",
+    "vod_area",
+    "vod_class",
+    "type_name",
+    "vod_director",
+    "vod_pic",
+  ];
+  return Object.fromEntries(fields.flatMap((field) => (
+    Object.prototype.hasOwnProperty.call(vod, field) ? [[field, vod[field]]] : []
+  )));
 }
 
 function clonePlaybackSession(session: DesktopPlaybackSession | null): DesktopPlaybackSession | null {

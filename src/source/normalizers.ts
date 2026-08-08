@@ -60,10 +60,20 @@ export function normalizePlayerResult(result: unknown): PlayerResult {
     );
   }
   const subtitles = normalizeSubtitleTracks(raw.subtitles ?? raw.subtitleTracks ?? raw.subtitle);
+  const playUrl = typeof raw.playUrl === "string" ? raw.playUrl : undefined;
+  const jx = numberValue(raw.jx);
+  const format = typeof raw.format === "string" ? raw.format : undefined;
+  const flag = typeof raw.flag === "string" ? raw.flag : undefined;
+  const jxFrom = typeof raw.jxFrom === "string" ? raw.jxFrom : undefined;
   return {
     parse,
     url,
     headers: headersValue(raw.header ?? raw.headers),
+    ...(playUrl ? { playUrl } : {}),
+    ...(jx === undefined ? {} : { jx }),
+    ...(format ? { format } : {}),
+    ...(flag ? { flag } : {}),
+    ...(jxFrom ? { jxFrom } : {}),
     ...(subtitles.length > 0 ? { subtitles } : {}),
     ...(raw.danmaku !== undefined ? { danmaku: raw.danmaku } : {}),
   };

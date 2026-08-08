@@ -58,6 +58,8 @@ const emit = defineEmits<{
   category: [];
   search: [key: string];
   detail: [vodId: string];
+  findPlaybackSource: [];
+  selectPlaybackSource: [siteKey: string, vodId: string];
   play: [lineIndex: number, episodeIndex: number, resumeMode?: HistoryResumeMode];
   retry: [];
   line: [index: number];
@@ -234,6 +236,10 @@ const canStart = computed(() => props.state.spider.status === "idle"
 const activePage = computed(() => view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow" || view.value === "live" || view.value === "local" || view.value === "downloads" ? view.value : props.state.browse.page);
 const retryable = computed(() => props.state.error.error?.retryable === true);
 const hasPlayback = computed(() => props.state.detail.playbackCatalog !== null || props.state.playback.player.source !== null);
+const canSearchPlayback = computed(() => {
+  const catalog = props.state.detail.playbackCatalog;
+  return !props.state.detail.canPlay && (!catalog || !catalog.lines.some((line) => line.episodes.length > 0));
+});
 const playerDetached = computed(() => props.state.playback.session?.host === "detached");
 const resumeTarget = computed(() => pendingResumeEpisode.value ?? (
   props.state.historyResume?.lineIndex !== null
@@ -690,8 +696,13 @@ function navigationFromPage(page: string): RendererNavigation {
             :favorite-pending="props.pending !== null"
             :follow="props.state.followDetail"
             :follow-pending="props.pending !== null"
+            :can-search-playback="canSearchPlayback"
+            :playback-sources="props.state.playbackSources"
+            :playback-source-pending="props.pending === 'playback-source-search' || props.pending === 'playback-source-select'"
             @close="emit('home')"
             @play="playFirstEpisode"
+            @find-playback-source="emit('findPlaybackSource')"
+            @select-playback-source="emit('selectPlaybackSource', $event[0], $event[1])"
             @favorite-toggle="emit('favoriteToggle')"
             @favorite-move="emit('favoriteMoveDetail', $event)"
             @follow-toggle="emit('followToggle')"

@@ -9,6 +9,7 @@ import { DesktopSpiderClient } from "../spider/desktop-client.js";
 import { PythonDesktopClient } from "../spider/python-client.js";
 import { QuickJsDesktopClient } from "../spider/quickjs-client.js";
 import { JellyfinDesktopClient } from "../jellyfin/jellyfin-client.js";
+import { HttpDesktopClient } from "../spider/http-client.js";
 import type { JellyfinConfig } from "../jellyfin/jellyfin-adapter.js";
 import type { SourceEngine } from "../source/media-source.js";
 import type { SourceCapabilities } from "../source/media-source.js";
@@ -114,6 +115,19 @@ export class EngineRouter {
       return new JellyfinDesktopClient({
         config,
         ...(runtime.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: runtime.requestTimeoutMs }),
+      });
+    }
+    if (binding.engine === "http") {
+      if (!binding.endpoint || binding.siteType === undefined) {
+        throw new Error(`HTTP source endpoint is missing for ${binding.api}`);
+      }
+      return new HttpDesktopClient({
+        api: binding.endpoint,
+        type: binding.siteType,
+        ...(binding.ext === undefined ? {} : { initialExt: binding.ext }),
+        ...(binding.headers === undefined ? {} : { headers: binding.headers }),
+        ...(binding.timeoutMs === undefined ? {} : { requestTimeoutMs: binding.timeoutMs }),
+        ...(binding.playUrl === undefined ? {} : { playUrl: binding.playUrl }),
       });
     }
     throw new Error(`Engine ${binding.engine} does not expose a desktop Spider client yet`);
@@ -257,6 +271,6 @@ class RegistryLeasedClient implements DesktopSpiderClientPort {
   }
 }
 
-export function engineCapabilitiesForRoute(engine: SourceEngine): "jvm" | "quickjs" | "python" | "jellyfin" | "fixture" {
+export function engineCapabilitiesForRoute(engine: SourceEngine): SourceEngine {
   return engine;
 }

@@ -1,4 +1,9 @@
 import type { TvBoxConfig, TvBoxSite } from "../config/decoder.js";
+import {
+  normalizeFongMiSite,
+  serializeFongMiExt,
+  type FongMiSiteConfig,
+} from "../config/fongmi.js";
 import type { SourceCapabilities, SourceEngine } from "../source/media-source.js";
 import { JELLYFIN_CAPABILITIES } from "../jellyfin/jellyfin-source.js";
 import { validateJellyfinConfig, type JellyfinConfig } from "../jellyfin/jellyfin-adapter.js";
@@ -12,6 +17,12 @@ export interface DesktopSourceBinding {
   engine: Exclude<SourceEngine, "fixture">;
   api: string;
   capabilities: SourceCapabilities;
+  siteType?: 0 | 1 | 4;
+  endpoint?: string;
+  ext?: string;
+  headers?: Readonly<Record<string, string>>;
+  timeoutMs?: number;
+  playUrl?: string;
   definition?: JvmSpiderDefinition;
   script?: string;
   jellyfinConfig?: JellyfinConfig;
@@ -20,8 +31,24 @@ export interface DesktopSourceBinding {
 export function resolveDesktopSourceBinding(
   config: TvBoxConfig,
   site: TvBoxSite,
+  sourceUrl?: string,
 ): DesktopSourceBinding | undefined {
   if (typeof site.api !== "string") return undefined;
+  const normalized = normalizeFongMiSite(site, sourceUrl);
+  if (normalized.type === 0 || normalized.type === 1 || normalized.type === 4) {
+    if (!normalized.endpoint) return undefined;
+    return {
+      engine: "http",
+      api: normalized.api,
+      siteType: normalized.type,
+      endpoint: normalized.endpoint,
+      ...(normalized.ext === undefined ? {} : { ext: serializeFongMiExt(normalized.ext) }),
+      headers: normalized.headers,
+      ...(normalized.timeoutMs === undefined ? {} : { timeoutMs: normalized.timeoutMs }),
+      ...(normalized.playUrl === undefined ? {} : { playUrl: normalized.playUrl }),
+      capabilities: httpCapabilities(normalized),
+    };
+  }
   const api = site.api;
   const engine = routeSpiderApi(api);
   if (engine === "java") {
@@ -103,6 +130,20 @@ export function emptyCapabilities(engine: Exclude<SourceEngine, "fixture" | "jvm
     filters: false,
     pagination: false,
     engine,
+  };
+}
+
+function httpCapabilities(site: FongMiSiteConfig): SourceCapabilities {
+  return {
+    home: true,
+    category: true,
+    search: site.searchable,
+    detail: true,
+    playback: true,
+    localProxy: false,
+    filters: site.filterable,
+    pagination: true,
+    engine: "http",
   };
 }
 

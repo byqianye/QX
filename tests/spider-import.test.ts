@@ -254,6 +254,43 @@ describe("real configuration import", () => {
     await importer.cancel();
   });
 
+  it("resolves a playable source from a metadata-only detail", async () => {
+    const importer = createImporter({
+      createSession: (_source, _config, site) => new PlaybackResolverSession(site.api ?? ""),
+    });
+    const server = new DesktopSpiderUiServer({ importer });
+    servers.push(server);
+    await server.start();
+
+    const config = JSON.stringify({
+      sites: [
+        { key: "douban", name: "Douban", type: 3, api: "csp_Douban", ext: "fixture" },
+        { key: "playable", name: "Playable", type: 3, api: "csp_PlayableFixture", ext: "fixture" },
+      ],
+    });
+    await post(server.url, "/api/import/load", { input: config });
+    await post(server.url, "/api/import/confirm");
+    await post(server.url, "/api/open");
+    await post(server.url, "/api/home");
+    await post(server.url, "/api/detail", { vodId: "meta-1" });
+
+    const searched = await post(server.url, "/api/playback-sources/search");
+    expect(searched.state?.playbackSources).toMatchObject({
+      query: "欢迎来龙餐厅",
+      candidates: [{ siteKey: "playable", playable: true }],
+    });
+
+    const selected = await post(server.url, "/api/playback-sources/select", {
+      siteKey: "playable",
+      vodId: "play-1",
+    });
+    expect(selected.state).toMatchObject({
+      api: "csp_PlayableFixture",
+      detail: { vod_id: "play-1" },
+      playbackCatalog: { lines: [{ episodes: [{ id: "episode-1" }] }] },
+    });
+  });
+
   it("can select the JVM-native playable source for the player spike", async () => {
     const importer = createImporter();
 
@@ -464,6 +501,44 @@ class SessionFixture implements DesktopSpiderSessionPort {
     this.destroyed = true;
     this.view.status = "destroyed";
     this.view.sidecarRunning = false;
+  }
+}
+
+class PlaybackResolverSession extends SessionFixture {
+  public constructor(api: string) {
+    super(api);
+  }
+
+  public override async homeContent(): Promise<SpiderResponse> {
+    return response({ list: [{
+      vod_id: "meta-1",
+      vod_name: "欢迎来龙餐厅",
+      vod_year: "2026",
+      type_name: "剧情",
+    }] });
+  }
+
+  public override async searchContent(): Promise<SpiderResponse> {
+    return response({ list: [{
+      vod_id: "play-1",
+      vod_name: "欢迎来龙餐厅",
+      vod_year: "2026",
+      type_name: "剧情",
+    }] });
+  }
+
+  public override async detailContent(ids: string[]): Promise<SpiderResponse> {
+    const item: Record<string, unknown> = {
+      vod_id: ids[0],
+      vod_name: "欢迎来龙餐厅",
+      vod_year: "2026",
+      type_name: "剧情",
+    };
+    if (this.view.api === "csp_PlayableFixture") {
+      item.vod_play_from = "主线";
+      item.vod_play_url = "第一集$episode-1";
+    }
+    return response({ list: [item] });
   }
 }
 

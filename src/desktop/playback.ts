@@ -15,6 +15,11 @@ export interface PlaybackSource {
   parse: number;
   url: string;
   headers: Record<string, string>;
+  playUrl?: string;
+  jx?: number;
+  format?: string;
+  flag?: string;
+  jxFrom?: string;
   subtitles?: readonly SubtitleTrack[];
 }
 

@@ -70,6 +70,21 @@ describe("desktop Spider UI", () => {
     expect(html).toMatch(/data-testid="play-button"[^>]*disabled/);
   });
 
+  it("keeps the list poster when detail metadata omits the poster", async () => {
+    const fixture = new PosterFixtureSession();
+    const ui = new DesktopSpiderUiController({ session: fixture });
+
+    ui.confirmImport();
+    await ui.open("douban", "fixture-endpoint");
+    await ui.home();
+    await ui.detail("poster-fixture");
+
+    expect(ui.state.detail).toMatchObject({
+      vod_name: "Fixture Detail",
+      vod_pic: "https://img.example.invalid/poster.jpg@Referer=https://api.example.invalid/",
+    });
+  });
+
   it("does not render source query credentials in the legacy shell", () => {
     const fixture = new FixtureSession("https://media.example/internal/config.json?token=secret");
     const ui = new DesktopSpiderUiController({ session: fixture });
@@ -476,6 +491,26 @@ describe("desktop Spider UI", () => {
     const closed = await post(server.url, "/api/close");
     expect(closed.state.status).toBe("destroyed");
     expect(fixture.destroyed).toBe(true);
+  });
+
+  it("rewrites source posters to the local image route in API state", async () => {
+    const fixture = new PosterFixtureSession();
+    const ui = new DesktopSpiderUiController({ session: fixture });
+    const server = new DesktopSpiderUiServer({
+      ui,
+      siteKey: "douban",
+      ext: "fixture-endpoint",
+    });
+    servers.push(server);
+    await server.start();
+
+    await post(server.url, "/api/import/confirm");
+    await post(server.url, "/api/open");
+    const home = await post(server.url, "/api/home");
+
+    expect(home.state).toMatchObject({
+      items: [{ vod_pic: expect.stringMatching(/^\/api\/poster\/[a-f0-9]{40}$/) }],
+    });
   });
 
   it("routes HTTP episode selection to the real flag, id and vipFlags", async () => {
@@ -935,6 +970,18 @@ class FixtureSession implements DesktopSpiderSessionPort {
     this.destroyed = true;
     this.view.status = "destroyed";
     this.view.sidecarRunning = false;
+  }
+}
+
+class PosterFixtureSession extends FixtureSession {
+  public override async homeContent(): Promise<SpiderResponse> {
+    return ok({
+      list: [{
+        vod_id: "poster-fixture",
+        vod_name: "Poster fixture",
+        vod_pic: "https://img.example.invalid/poster.jpg@Referer=https://api.example.invalid/",
+      }],
+    });
   }
 }
 

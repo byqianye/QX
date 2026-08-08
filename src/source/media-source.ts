@@ -1,4 +1,4 @@
-export type SourceEngine = "jvm" | "quickjs" | "python" | "jellyfin" | "fixture";
+export type SourceEngine = "jvm" | "quickjs" | "python" | "http" | "jellyfin" | "fixture";
 
 export interface SourceCapabilities {
   home: boolean;
@@ -111,6 +111,11 @@ export interface PlayerResult {
   parse: number;
   url: string;
   headers: Record<string, string>;
+  playUrl?: string;
+  jx?: number;
+  format?: string;
+  flag?: string;
+  jxFrom?: string;
   subtitles?: readonly import("../subtitles.js").SubtitleTrack[];
   danmaku?: unknown;
 }

@@ -234,7 +234,9 @@ describe("PlaybackSourceResolver", () => {
           type: 3,
           api: "csp_Unknown",
           supported: false,
-          skipReason: "jar_spider_not_supported",
+          runtime: "android-dex",
+          runtimeReason: "android_dex_runtime_not_available",
+          skipReason: "android_dex_runtime_not_available",
         },
         site("supported", false, true, async () => [candidate]),
       ],
@@ -244,9 +246,47 @@ describe("PlaybackSourceResolver", () => {
     expect(result.diagnostics.sites).toContainEqual(expect.objectContaining({
       siteKey: "jar",
       initialization: "unsupported",
-      skipReason: "jar_spider_not_supported",
+      runtime: "android-dex",
+      runtimeReason: "android_dex_runtime_not_available",
+      skipReason: "android_dex_runtime_not_available",
     }));
     expect(result.searchedSites).toContain("supported");
+  });
+
+  it("skips Android DEX while continuing CMS, JavaScript, and Native runtimes", async () => {
+    const candidate = vod({ vod_id: "runtime-1", vod_name: "跨运行时", vod_year: "2026", type_name: "剧情" });
+    const compatible = (siteKey: string, runtime: "cms" | "javascript" | "native"): PlaybackSourceSite => ({
+      ...site(siteKey, false, true, async () => [candidate]),
+      supported: true,
+      runtime,
+      runtimeReason: `${runtime}_supported`,
+      capabilities: { search: true, detail: true },
+    });
+    const result = await new PlaybackSourceResolver().resolve(
+      candidate,
+      [
+        {
+          siteKey: "android",
+          siteName: "Android DEX",
+          type: 3,
+          api: "csp_Unknown",
+          supported: false,
+          runtime: "android-dex",
+          runtimeReason: "android_dex_runtime_not_available",
+          skipReason: "android_dex_runtime_not_available",
+        },
+        compatible("cms", "cms"),
+        compatible("javascript", "javascript"),
+        compatible("native", "native"),
+      ],
+    );
+
+    expect(result.searchedSites).toEqual(expect.arrayContaining(["cms", "javascript", "native"]));
+    expect(result.searchedSites).not.toContain("android");
+    expect(result.diagnostics.sites.find((site) => site.siteKey === "android")).toMatchObject({
+      runtime: "android-dex",
+      skipReason: "android_dex_runtime_not_available",
+    });
   });
 
   it("normalizes punctuation and HTML entities without fuzzy title matching", () => {

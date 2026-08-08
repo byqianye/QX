@@ -2,6 +2,8 @@ import { mergeVodDisplayFields } from "./vod-merge.js";
 import { parseVodPlayback, type PlaybackCatalog } from "./vod-playback.js";
 import { sanitizeHealthMessage } from "../health/source-health.js";
 import type { Vod } from "../source/media-source.js";
+import type { SourceCapabilities } from "../source/media-source.js";
+import type { SpiderRuntimeKind } from "../spider/runtime-types.js";
 
 export type SiteFlag = boolean | number | string | null | undefined;
 
@@ -29,6 +31,9 @@ export interface PlaybackSourceSite {
   searchable?: SiteFlag;
   quickSearch?: SiteFlag;
   supported?: boolean;
+  runtime?: SpiderRuntimeKind | null;
+  runtimeReason?: string | null;
+  capabilities?: Pick<SourceCapabilities, "search" | "detail">;
   engine?: string | null;
   skipReason?: string;
   metadataOnly?: boolean;
@@ -63,6 +68,8 @@ export interface PlaybackSiteDiagnostic {
   apiType: number | null;
   api: string | null;
   engine: string | null;
+  runtime: SpiderRuntimeKind | null;
+  runtimeReason: string | null;
   searchable: SiteFlag;
   quickSearch: SiteFlag;
   supported: boolean;
@@ -141,7 +148,7 @@ export class PlaybackSourceResolver {
     const diagnostics = sites.map((site) => initialDiagnostic(site));
     const diagnosticBySite = new Map(diagnostics.map((diagnostic) => [diagnostic.siteKey, diagnostic]));
     const searchableSites = sites.filter((site) => isSearchEligible(site, currentSiteKey));
-    const runtimeSites = searchableSites.filter((site) => site.supported !== false);
+    const runtimeSites = searchableSites.filter((site) => site.supported !== false && hasResolverCapabilities(site));
     for (const site of sites) {
       const diagnostic = diagnosticBySite.get(site.siteKey);
       if (!diagnostic) continue;
@@ -239,7 +246,7 @@ export class PlaybackSourceResolver {
       configSiteCount: options.configSiteCount ?? sites.length,
       searchableSites: searchableSites.length,
       runtimeSupportedSites: runtimeSites.length,
-      unsupportedSiteCount: sites.filter((site) => site.supported === false).length,
+      unsupportedSiteCount: sites.filter((site) => site.supported === false || !hasResolverCapabilities(site)).length,
       searchedSites: [...searchedSiteKeys],
       searchSuccessSites,
       searchFailedSites,
@@ -412,6 +419,8 @@ function initialDiagnostic(site: PlaybackSourceSite): PlaybackSiteDiagnostic {
     apiType: typeof site.type === "number" ? site.type : null,
     api: typeof site.api === "string" ? site.api : null,
     engine: site.engine ?? null,
+    runtime: site.runtime ?? null,
+    runtimeReason: site.runtimeReason ?? null,
     searchable: site.searchable === undefined ? true : site.searchable,
     quickSearch: site.quickSearch === undefined ? false : site.quickSearch,
     supported: site.supported !== false,
@@ -442,7 +451,12 @@ function skipReasonFor(site: PlaybackSourceSite, currentSiteKey: string | null):
   if (site.enabled === false) return site.skipReason ?? "site_disabled";
   if (!isSearchable(site.searchable)) return site.skipReason ?? "searchable_0";
   if (site.supported === false) return site.skipReason ?? "unsupported_runtime";
+  if (!hasResolverCapabilities(site)) return site.skipReason ?? "runtime_capability_missing";
   return null;
+}
+
+function hasResolverCapabilities(site: PlaybackSourceSite): boolean {
+  return site.capabilities === undefined || (site.capabilities.search && site.capabilities.detail);
 }
 
 function isSearchable(value: SiteFlag): boolean {

@@ -9,6 +9,8 @@ import { DesktopSpiderSession } from "../src/desktop/spider-session.js";
 import { QuickJsEngine } from "../src/spider/quickjs-engine.js";
 import { QuickJsDesktopClient } from "../src/spider/quickjs-client.js";
 import { QuickJsMediaSource } from "../src/spider/quickjs-source.js";
+import { JsSpiderRuntime } from "../src/spider/spider-runtime.js";
+import { runtimeCapabilities } from "../src/spider/runtime-types.js";
 
 const request = (value: { url: string; method: string; headers: Record<string, string>; body?: string; timeoutMs: number }) => ({
   url: value.url,
@@ -76,11 +78,30 @@ describe("QuickJS Spider engine", () => {
       script: `
         const spider = {
           init() { return { process: typeof process, require: typeof require, fs: typeof fs }; },
+          bridge() {
+            localStorage.setItem("token", "fixture");
+            return {
+              fetch: typeof fetch,
+              post: typeof post,
+              encode: encode("fixture"),
+              decode: decode("Zml4dHVyZQ=="),
+              hash: hash("fixture"),
+              stored: localStorage.getItem("token"),
+            };
+          },
         };
       `,
     });
     await engine.init();
     await expect(engine.call("init")).resolves.toEqual({ process: "undefined", require: "undefined", fs: "undefined" });
+    await expect(engine.call("bridge")).resolves.toMatchObject({
+      fetch: "function",
+      post: "function",
+      encode: "Zml4dHVyZQ==",
+      decode: "fixture",
+      hash: "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+      stored: "fixture",
+    });
     await engine.destroy();
 
     const moduleEngine = new QuickJsEngine({
@@ -135,6 +156,44 @@ describe("QuickJS Spider engine", () => {
         result: { url: "https://media.example.invalid/movie-1.mp4" },
       });
       expect(session.view.playback).toMatchObject({ available: true });
+    } finally {
+      await session.destroy();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("routes the desktop session contract through SpiderRuntime when a runtime factory is supplied", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "qx-quickjs-runtime-session-"));
+    const scriptPath = join(directory, "runtime.mjs");
+    writeFileSync(scriptPath, `export default {
+      init() {},
+      home() { return { list: [{ vod_id: "home-1", vod_name: "Home" }] }; },
+      search(key) { return { list: [{ vod_id: key, vod_name: "Search" }] }; },
+      detail(ids) { return { list: [{ vod_id: ids[0], vod_name: "Detail" }] }; },
+      player(flag, id) { return { parse: 0, url: "https://media.example.invalid/" + id + ".mp4", header: { "X-Flag": flag } }; },
+    };`);
+    const api = `js:${scriptPath}`;
+    const trustStore = new ImportTrustStore();
+    const config = { sites: [{ key: "runtime", api, ext: "fixture" }] };
+    trustStore.trustAssessment(inspectImport("inline:quickjs-runtime-session", config, trustStore));
+    const session = new DesktopSpiderSession({
+      source: "inline:quickjs-runtime-session",
+      config,
+      trustStore,
+      createClient: () => { throw new Error("legacy client should not be used"); },
+      createRuntime: (site) => new JsSpiderRuntime(site, {
+        runtime: "javascript",
+        supported: true,
+        reason: "js_supported",
+        capabilities: runtimeCapabilities("quickjs", { home: true, search: true, detail: true, player: true }),
+      }, { script: scriptPath, timeoutMs: 2_000 }),
+    });
+    try {
+      await expect(session.open("runtime", "fixture")).resolves.toMatchObject({ ok: true });
+      await expect(session.homeContent()).resolves.toMatchObject({ ok: true, result: { list: [{ vod_id: "home-1" }] } });
+      await expect(session.searchContent("movie")).resolves.toMatchObject({ ok: true, result: { list: [{ vod_id: "movie" }] } });
+      await expect(session.detailContent(["movie"])).resolves.toMatchObject({ ok: true, result: { list: [{ vod_id: "movie" }] } });
+      await expect(session.playerContent("main", "movie")).resolves.toMatchObject({ ok: true, result: { url: "https://media.example.invalid/movie.mp4" } });
     } finally {
       await session.destroy();
       rmSync(directory, { recursive: true, force: true });

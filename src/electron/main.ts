@@ -1,10 +1,12 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 
 import { app, BrowserWindow, dialog, screen, session as electronSession, shell as electronShell } from "electron";
 
 import { JsonFileTrustPersistence, ImportTrustStore } from "../config/trust.js";
+import type { TvBoxConfig } from "../config/decoder.js";
 import { ConfigHistoryStore } from "../config/history.js";
 import { DesktopSpiderImportController } from "../desktop/spider-import.js";
 import { DesktopSpiderSession } from "../desktop/spider-session.js";
@@ -20,6 +22,8 @@ import type { DesktopSpiderClientPort } from "../desktop/spider-client-port.js";
 import type { PlaybackFallbackMode } from "../health/playback-health.js";
 import type { LiveFailoverMode } from "../live/live-types.js";
 import { EngineRouter } from "../engine/engine-router.js";
+import { SpiderArtifactCache } from "../spider/spider-artifact-cache.js";
+import { NativeSpiderRuntime, SpiderRuntimeManager } from "../spider/spider-runtime.js";
 import { readJellyfinEnvironment } from "../jellyfin/jellyfin-adapter.js";
 import { resolveJavaExecutable } from "../spikes/java-probe.js";
 import {
@@ -451,12 +455,52 @@ function createShell(): DesktopShellRuntime {
       const router = new EngineRouter({ maxActiveSessions: 4, idleSessionMs: 30_000 });
       const jellyfinConfig = readJellyfinEnvironment(process.env);
       engineRouter = router;
+      const createRuntimeManager = (config: TvBoxConfig, sourceUrl?: string) => new SpiderRuntimeManager({
+        config,
+        ...(sourceUrl ? { sourceUrl } : {}),
+        artifactCache: new SpiderArtifactCache(join(getDataStorageService().directories().dataRoot, "spider-cache"), {
+          timeoutMs: REQUEST_TIMEOUT_MS,
+        }),
+        pythonExecutable: runtime.pythonExecutable ?? (app.isPackaged ? "" : process.env.QX_PYTHON ?? "python"),
+        nativeRuntime: async (nativeSite) => {
+          const binding = router.resolve(config, nativeSite);
+          if (binding.engine !== "jvm") return undefined;
+          const siteKey = typeof nativeSite.key === "string" && nativeSite.key.trim()
+            ? nativeSite.key.trim()
+            : nativeSite.api ?? "native";
+          const client = await router.acquireClient(binding, {
+            sourceId: sourceUrl ?? "runtime-config",
+            siteKey,
+            sessionId: randomUUID(),
+            binding,
+            ...(binding.definition ? { definition: binding.definition } : {}),
+          }, {
+            javaExecutable: runtime.javaExecutable,
+            hostJar: runtime.hostJar,
+            spiderJar: runtime.spiderJar,
+            spiderClass: runtime.spiderClass,
+            pythonExecutable: runtime.pythonExecutable ?? (app.isPackaged ? "" : process.env.QX_PYTHON ?? "python"),
+            ...(app.isPackaged ? { pythonEnvironment: sanitizedPackagedPythonEnvironment(process.env) } : {}),
+            ...(jellyfinConfig ? { jellyfinConfig } : {}),
+            requestTimeoutMs: REQUEST_TIMEOUT_MS,
+            startupTimeoutMs: STARTUP_TIMEOUT_MS,
+          });
+          lastClient = client;
+          return new NativeSpiderRuntime(client, binding.capabilities, {
+            runtime: "native",
+            supported: true,
+            reason: "native_supported",
+            capabilities: binding.capabilities,
+          });
+        },
+      });
       const importer = new DesktopSpiderImportController({
         trustStore,
         history: configHistory,
         autoRefresh: process.env.QX_CONFIG_AUTO_REFRESH === "1",
         refreshIntervalMs: numberEnvironment("QX_CONFIG_REFRESH_INTERVAL_MS", 6 * 60 * 60 * 1000),
         requestTimeoutMs: REQUEST_TIMEOUT_MS,
+        runtimeManagerFactory: createRuntimeManager,
         preferredSiteKey: () => stateStore.state.page.siteKey,
         createSession: (source, config, site, assessment, health) => new DesktopSpiderSession({
           source,
@@ -481,6 +525,7 @@ function createShell(): DesktopShellRuntime {
             lastClient = client;
             return client;
           },
+          createRuntime: async (selectedSite) => createRuntimeManager(config, source).getRuntime(selectedSite),
         }),
       });
       const sniffer = ISOLATED_SNIFFER_ENABLED

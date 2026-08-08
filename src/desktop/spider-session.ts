@@ -8,6 +8,7 @@ import {
   type JvmSpiderDefinition,
 } from "../spider/jvm-spiders.js";
 import type { SpiderResponse } from "../spider/rpc.js";
+import type { SpiderRuntime } from "../spider/runtime-types.js";
 import { resolveDesktopSourceBinding, type DesktopSourceBinding } from "./source-router.js";
 import {
   MediaSourceError,
@@ -86,6 +87,10 @@ export interface DesktopSpiderSessionOptions {
     site: TvBoxSite,
     context?: DesktopSpiderClientContext,
   ) => DesktopSpiderClientPort | Promise<DesktopSpiderClientPort>;
+  createRuntime?: (
+    site: TvBoxSite,
+    context: DesktopSpiderClientContext,
+  ) => SpiderRuntime | Promise<SpiderRuntime>;
   requestTimeoutMs?: number;
 }
 
@@ -120,6 +125,7 @@ export class DesktopSpiderSession implements MediaSource {
   private readonly sessionId = randomUUID();
   private assessment: ImportAssessment;
   private client: DesktopSpiderClientPort | undefined;
+  private runtime: SpiderRuntime | undefined;
   private activeDefinition: JvmSpiderDefinition | undefined;
   private activeCapabilities: SourceCapabilities | undefined;
   private activeSiteKey: string | undefined;
@@ -177,7 +183,7 @@ export class DesktopSpiderSession implements MediaSource {
     if (this.assessment.requiresConfirmation) {
       throw new Error(`Import confirmation required for source: ${this.options.source}`);
     }
-    if (this.client) throw new Error("Desktop Spider session is already open");
+    if (this.client || this.runtime) throw new Error("Desktop Spider session is already open");
 
     const site = this.findSite(siteKey);
     const api = site.api;
@@ -199,14 +205,28 @@ export class DesktopSpiderSession implements MediaSource {
     this.viewState.error = null;
 
     try {
-      this.client = await this.options.createClient(site, {
+      const clientContext: DesktopSpiderClientContext = {
         sourceId: this.options.source,
         siteKey,
         sessionId: this.sessionId,
         binding,
         ...(binding.definition ? { definition: binding.definition } : {}),
-      });
+      };
       const initExt = ext.trim() ? ext : serializeFongMiExt(site.ext);
+      if (this.options.createRuntime) {
+        this.runtime = await this.options.createRuntime(site, clientContext);
+        await this.runtime.init(site, {
+          sourceId: this.options.source,
+          siteKey,
+          ...(typeof api === "string" ? { api } : {}),
+          ext: initExt,
+        });
+        this.activeCapabilities = this.runtime.capabilities;
+        this.viewState.sidecarRunning = false;
+        this.viewState.status = "ready";
+        return successResponse({ initialized: true });
+      }
+      this.client = await this.options.createClient(site, clientContext);
       const init = () => this.client?.init(initExt, this.options.requestTimeoutMs)
         ?? Promise.reject(new Error("Desktop Spider client is unavailable"));
       const response = this.options.health && this.activeSiteKey
@@ -231,6 +251,7 @@ export class DesktopSpiderSession implements MediaSource {
   }
 
   public homeContent(filter = false, timeoutMs = this.options.requestTimeoutMs): Promise<SpiderResponse> {
+    if (this.runtime) return this.invokeRuntime("home", () => this.runtime!.home(filter));
     return this.invoke(undefined, (client) => client.homeContent(filter, timeoutMs));
   }
 
@@ -241,6 +262,12 @@ export class DesktopSpiderSession implements MediaSource {
     extend: Record<string, string> = {},
     timeoutMs = this.options.requestTimeoutMs,
   ): Promise<SpiderResponse> {
+    if (this.runtime) return this.invokeRuntime("category", () => this.runtime!.category({
+      typeId,
+      page,
+      filter,
+      extend,
+    }));
     return this.invoke(undefined, (client) => client.categoryContent(typeId, page, filter, extend, timeoutMs));
   }
 
@@ -250,6 +277,7 @@ export class DesktopSpiderSession implements MediaSource {
     page = 1,
     timeoutMs = this.options.requestTimeoutMs,
   ): Promise<SpiderResponse> {
+    if (this.runtime) return this.invokeRuntime("search", () => this.runtime!.search({ key, quick, page }));
     return this.invoke(undefined, (client) => client.searchContent(key, quick, page, timeoutMs));
   }
 
@@ -258,6 +286,7 @@ export class DesktopSpiderSession implements MediaSource {
     timeoutMs = this.options.requestTimeoutMs,
   ): Promise<SpiderResponse> {
     this.viewState.playback = this.capabilities.playback ? PLAYABLE_PENDING : NO_PLAYBACK;
+    if (this.runtime) return this.invokeRuntime("detail", () => this.runtime!.detail(ids));
     return this.invoke("detail", (client) => client.detailContent(ids, timeoutMs));
   }
 
@@ -274,8 +303,9 @@ export class DesktopSpiderSession implements MediaSource {
       );
     }
 
-    const response = await this.invoke("player", (client) =>
-      client.playerContent(flag, id, vipFlags, timeoutMs));
+    const response = this.runtime
+      ? await this.invokeRuntime("player", () => this.runtime!.player({ flag, id, vipFlags }))
+      : await this.invoke("player", (client) => client.playerContent(flag, id, vipFlags, timeoutMs));
     if (!response.ok) return response;
 
     try {
@@ -413,6 +443,24 @@ export class DesktopSpiderSession implements MediaSource {
     }
   }
 
+  private async invokeRuntime(
+    operation: string,
+    action: () => Promise<unknown>,
+  ): Promise<SpiderResponse> {
+    this.assertNotDestroyed();
+    this.viewState.status = "loading";
+    this.viewState.error = null;
+    try {
+      const response = runtimeResponse(operation, await action());
+      this.viewState.status = "ready";
+      this.viewState.sidecarRunning = false;
+      return response;
+    } catch (error) {
+      this.setThrownError(error);
+      throw error;
+    }
+  }
+
   private findSite(siteKey: string): TvBoxSite {
     const sites = Array.isArray(this.options.config.sites) ? this.options.config.sites : [];
     const site = sites.find((candidate) => candidate.key === siteKey)
@@ -466,6 +514,9 @@ export class DesktopSpiderSession implements MediaSource {
   }
 
   private async destroyClient(): Promise<void> {
+    const runtime = this.runtime;
+    this.runtime = undefined;
+    if (runtime) await runtime.destroy();
     const client = this.client;
     this.client = undefined;
     if (!client) {
@@ -584,4 +635,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function readErrorCode(error: Error): string | undefined {
   const candidate = error as Error & { code?: unknown };
   return typeof candidate.code === "string" ? candidate.code : undefined;
+}
+
+function successResponse(result: unknown): SpiderResponse {
+  return { id: randomUUID(), ok: true, result };
+}
+
+function runtimeResponse(operation: string, value: unknown): SpiderResponse {
+  if (operation === "detail" && Array.isArray(value)) {
+    return {
+      id: randomUUID(),
+      ok: true,
+      result: { list: value.map((item) => rawVod(item)) },
+    };
+  }
+  if (isRecord(value) && isRecord(value.raw)) {
+    return { id: randomUUID(), ok: true, result: value.raw };
+  }
+  return { id: randomUUID(), ok: true, result: value };
+}
+
+function rawVod(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) return {};
+  if (isRecord(value.raw)) return { ...value.raw };
+  return { ...value };
 }

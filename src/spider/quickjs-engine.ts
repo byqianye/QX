@@ -1,4 +1,5 @@
 import { getQuickJS, type QuickJSContext, type QuickJSHandle, type QuickJSRuntime } from "quickjs-emscripten";
+import { createHash } from "node:crypto";
 
 import type { SourceCapabilities } from "../source/media-source.js";
 import {
@@ -41,6 +42,7 @@ export class QuickJsEngine {
   private moduleSources = new Map<string, string>();
   private baseUrl: string | null = null;
   private cookies = new Map<string, string>();
+  private localStorageValues = new Map<string, string>();
   private lastErrorValue: QuickJsEngineError | null = null;
 
   public constructor(options: QuickJsEngineOptions) {
@@ -290,18 +292,71 @@ export class QuickJsEngine {
 
   private installHostApi(): void {
     const context = this.requireContext();
-    const req = context.newFunction("req", (...args: QuickJSHandle[]) => {
-      const urlValue = args[0];
-      if (!urlValue) throw new QuickJsEngineError("QUICKJS_NETWORK_ERROR", "req() requires a URL");
-      const requestedUrl = context.getString(urlValue);
-      const rawOptions = args[1] ? context.dump(args[1]) : {};
-      const options = isRecord(rawOptions) ? rawOptions : {};
-      const request = this.buildRequest(requestedUrl, options);
-      const response = this.performRequest(request);
-      return context.newString(JSON.stringify(responseForGuest(response)));
-    });
+    const req = context.newFunction("req", (...args: QuickJSHandle[]) => this.requestGuest(context, args));
     context.setProp(context.global, "req", req);
     req.dispose();
+
+    const fetch = context.newFunction("fetch", (...args: QuickJSHandle[]) => this.requestGuest(context, args));
+    context.setProp(context.global, "fetch", fetch);
+    fetch.dispose();
+
+    const post = context.newFunction("post", (...args: QuickJSHandle[]) => {
+      const url = args[0] ? context.getString(args[0]) : "";
+      const body = args[1] ? context.dump(args[1]) : undefined;
+      const headers = args[2] ? context.dump(args[2]) : undefined;
+      const urlHandle = context.newString(url);
+      const optionsHandle = context.newString(JSON.stringify({ method: "POST", body, headers }));
+      try {
+        return this.requestGuest(context, [urlHandle, optionsHandle]);
+      } finally {
+        urlHandle.dispose();
+        optionsHandle.dispose();
+      }
+    });
+    context.setProp(context.global, "post", post);
+    post.dispose();
+
+    const encode = context.newFunction("encode", (value) => context.newString(Buffer.from(context.getString(value), "utf8").toString("base64")));
+    const decode = context.newFunction("decode", (value) => context.newString(Buffer.from(context.getString(value), "base64").toString("utf8")));
+    const hash = context.newFunction("hash", (value, algorithm) => {
+      const name = algorithm ? context.getString(algorithm) : "sha256";
+      if (!/^(?:sha256|sha1|md5)$/i.test(name)) throw new QuickJsEngineError("QUICKJS_SCRIPT_ERROR", `Unsupported hash algorithm: ${name}`);
+      return context.newString(createHash(name as "sha256" | "sha1" | "md5").update(context.getString(value)).digest("hex"));
+    });
+    context.setProp(context.global, "encode", encode);
+    context.setProp(context.global, "decode", decode);
+    context.setProp(context.global, "hash", hash);
+    encode.dispose();
+    decode.dispose();
+    hash.dispose();
+
+    const storage = context.newObject();
+    const getItem = context.newFunction("getItem", (key) => {
+      const value = this.localStorageValues.get(context.getString(key));
+      return value === undefined ? context.null : context.newString(value);
+    });
+    const setItem = context.newFunction("setItem", (key, value) => {
+      this.localStorageValues.set(context.getString(key), context.getString(value));
+      return context.undefined;
+    });
+    const removeItem = context.newFunction("removeItem", (key) => {
+      this.localStorageValues.delete(context.getString(key));
+      return context.undefined;
+    });
+    const clear = context.newFunction("clear", () => {
+      this.localStorageValues.clear();
+      return context.undefined;
+    });
+    context.setProp(storage, "getItem", getItem);
+    context.setProp(storage, "setItem", setItem);
+    context.setProp(storage, "removeItem", removeItem);
+    context.setProp(storage, "clear", clear);
+    context.setProp(context.global, "localStorage", storage);
+    getItem.dispose();
+    setItem.dispose();
+    removeItem.dispose();
+    clear.dispose();
+    storage.dispose();
 
     const consoleObject = context.newObject();
     for (const method of ["log", "info", "warn", "error", "debug"]) {
@@ -311,6 +366,17 @@ export class QuickJsEngine {
     }
     context.setProp(context.global, "console", consoleObject);
     consoleObject.dispose();
+  }
+
+  private requestGuest(context: QuickJSContext, args: QuickJSHandle[]): QuickJSHandle {
+    const urlValue = args[0];
+    if (!urlValue) throw new QuickJsEngineError("QUICKJS_NETWORK_ERROR", "request() requires a URL");
+    const requestedUrl = context.getString(urlValue);
+    const rawOptions = args[1] ? context.dump(args[1]) : {};
+    const options = isRecord(rawOptions) ? rawOptions : {};
+    const request = this.buildRequest(requestedUrl, options);
+    const response = this.performRequest(request);
+    return context.newString(JSON.stringify(responseForGuest(response)));
   }
 
   private buildRequest(urlValue: string, options: Record<string, unknown>): QuickJsNormalizedRequest {
@@ -401,6 +467,7 @@ export class QuickJsEngine {
     this.runtime = null;
     this.moduleSources.clear();
     this.cookies.clear();
+    this.localStorageValues.clear();
   }
 
   private normalizeError(error: unknown): QuickJsEngineError {

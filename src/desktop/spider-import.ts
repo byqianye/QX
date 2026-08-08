@@ -45,6 +45,8 @@ import {
 } from "./playback-source-resolver.js";
 import type { Vod } from "../source/media-source.js";
 import { normalizeFongMiSite, serializeFongMiExt } from "../config/fongmi.js";
+import { SpiderRuntimeManager } from "../spider/spider-runtime.js";
+import type { SpiderRuntimeManagerPort } from "../spider/runtime-types.js";
 
 export type DesktopSpiderImportInputKind = "url" | "file" | "json";
 export type DesktopSpiderImportStatus =
@@ -127,6 +129,8 @@ export interface DesktopSpiderImportOptions {
   refreshIntervalMs?: number;
   fetchRefresh?: ConfigRefreshLoader;
   requestTimeoutMs?: number;
+  runtimeManager?: SpiderRuntimeManagerPort;
+  runtimeManagerFactory?: (config: TvBoxConfig, sourceUrl?: string) => SpiderRuntimeManagerPort;
 }
 
 export class DesktopSpiderImportController {
@@ -140,6 +144,10 @@ export class DesktopSpiderImportController {
   private readonly autoRefresh: boolean;
   private readonly fetchRefresh: ConfigRefreshLoader | undefined;
   private readonly requestTimeoutMs: number;
+  private readonly runtimeManager: SpiderRuntimeManagerPort | undefined;
+  private readonly runtimeManagerFactory: DesktopSpiderImportOptions["runtimeManagerFactory"];
+  private activeRuntimeManager: SpiderRuntimeManagerPort | undefined;
+  private runtimeExecutionEnabled = false;
   private currentSession: DesktopSpiderSessionPort | undefined;
   private readonly sessions = new Map<string, DesktopSpiderSessionPort>();
   private config: TvBoxConfig | undefined;
@@ -166,6 +174,8 @@ export class DesktopSpiderImportController {
     this.autoRefresh = options.autoRefresh === true;
     this.fetchRefresh = options.fetchRefresh;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
+    this.runtimeManager = options.runtimeManager;
+    this.runtimeManagerFactory = options.runtimeManagerFactory;
     this.refreshManager = this.history
       ? new ConfigRefreshManager(this.history, {
           ...(options.refreshIntervalMs === undefined ? {} : { intervalMs: options.refreshIntervalMs }),
@@ -257,7 +267,7 @@ export class DesktopSpiderImportController {
     return this.aggregateCoordinator?.cancel();
   }
 
-  public resolvePlaybackSources(
+  public async resolvePlaybackSources(
     currentVod: Vod,
     options: PlaybackSourceResolverOptions = {},
   ): Promise<PlaybackSourceResolution> {
@@ -266,18 +276,35 @@ export class DesktopSpiderImportController {
     }
     const currentSiteKey = options.currentSiteKey ?? this.selectedSiteKey;
     const configuredSites = Array.isArray(this.config.sites) ? this.config.sites : [];
-    const sites: PlaybackSourceSite[] = configuredSites.flatMap((configured, index) => {
+    const runtimeManager = this.runtimeManager
+      ?? this.activeRuntimeManager
+      ?? this.runtimeManagerFactory?.(this.config, this.stateValue.source ?? undefined)
+      ?? new SpiderRuntimeManager({
+        config: this.config,
+        ...(this.stateValue.source ? { sourceUrl: this.stateValue.source } : {}),
+      });
+    this.activeRuntimeManager = runtimeManager;
+    this.runtimeExecutionEnabled = this.runtimeManager !== undefined || this.runtimeManagerFactory !== undefined;
+    const sites: PlaybackSourceSite[] = (await Promise.all(configuredSites.map(async (configured, index) => {
       if (typeof configured.api !== "string") return [];
       const siteKey = siteKeyOf(configured) || `site-${index + 1}`;
       const managed = this.siteManager?.get(siteKey);
       const binding = resolveDesktopSourceBinding(this.config!, configured, this.stateValue.source ?? undefined);
+      const support = await runtimeManager.supports(configured);
+      const resolverCapabilities = {
+        search: support.capabilities.search,
+        detail: support.capabilities.detail,
+      };
+      const runtimeSupported = support.supported && resolverCapabilities.search && resolverCapabilities.detail;
       const metadataOnly = knownMetadataOnlySite(siteKey, configured.api);
       const enabled = managed?.enabled !== false
         && managed?.trusted !== false
         && this.health.canRun(siteKey);
       const normalized = normalizeFongMiSite(configured, this.stateValue.source ?? undefined, index);
-      const skipReason = binding === undefined
-        ? unsupportedRuntimeReason(normalized.type, configured.api)
+      const skipReason = !runtimeSupported
+        ? support.reason
+        : binding === undefined
+          ? unsupportedRuntimeReason(normalized.type, configured.api)
         : !enabled
           ? (managed?.enabled === false ? "site_disabled" : "source_health_circuit_open")
           : undefined;
@@ -290,13 +317,16 @@ export class DesktopSpiderImportController {
         enabled,
         searchable: configured.searchable === undefined ? true : configured.searchable,
         quickSearch: configured.quickSearch === undefined ? false : configured.quickSearch,
-        supported: binding !== undefined,
+        supported: runtimeSupported && binding !== undefined,
+        runtime: support.runtime,
+        runtimeReason: support.reason,
+        capabilities: resolverCapabilities,
         engine: binding?.engine ?? null,
         ...(skipReason ? { skipReason } : {}),
         metadataOnly,
         ...(managed?.capabilities.playback === undefined ? {} : { playback: managed.capabilities.playback }),
       } satisfies PlaybackSourceSite];
-    });
+    }))).flat();
     const engineFactory: SourceEngineFactory = {
       create: (site) => this.createPlaybackSourceEngine(site),
     };
@@ -573,6 +603,11 @@ export class DesktopSpiderImportController {
   }
 
   private async applyRefreshedConfig(config: TvBoxConfig, version: ConfigVersion): Promise<void> {
+    if (!this.runtimeManager) {
+      await this.activeRuntimeManager?.destroy?.();
+      this.activeRuntimeManager = undefined;
+      this.runtimeExecutionEnabled = false;
+    }
     const previousSelectedKey = this.selectedSite ? siteKeyOf(this.selectedSite) : this.currentSessionKey;
     const preferences = this.siteManager?.preferences();
     const assessment = await inspectImportAsync(version.source, config, this.trustStore, {
@@ -785,6 +820,37 @@ export class DesktopSpiderImportController {
   }
 
   private createPlaybackSourceEngine(site: PlaybackSourceSite): PlaybackSourceEngine {
+    const runtimeManager = this.activeRuntimeManager;
+    const configured = this.config ? findSite(this.config, site.siteKey) : undefined;
+    if (this.runtimeExecutionEnabled && runtimeManager && configured) {
+      let runtimePromise: Promise<import("../spider/runtime-types.js").SpiderRuntime> | undefined;
+      const getRuntime = async () => {
+        runtimePromise ??= runtimeManager.getRuntime(configured);
+        const runtime = await runtimePromise;
+        if (runtime.kind === "android-dex" || runtime.kind === "unsupported") {
+          throw new Error(site.skipReason ?? "unsupported_runtime");
+        }
+        if (!runtime.capabilities.search || !runtime.capabilities.detail) {
+          throw new Error("runtime_capability_missing");
+        }
+        return runtime;
+      };
+      let initialized = false;
+      return {
+        init: async () => {
+          if (initialized) return;
+          const runtime = await getRuntime();
+          await runtime.init(configured, {
+            sourceId: this.stateValue.source ?? `runtime:${site.siteKey}`,
+            siteKey: site.siteKey,
+            ...(site.ext === undefined ? {} : { ext: site.ext }),
+          });
+          initialized = true;
+        },
+        search: async (query, quick, page) => (await (await getRuntime()).search({ key: query, quick, page })).items,
+        detail: async (vodId) => (await (await getRuntime()).detail([vodId]))[0] ?? null,
+      };
+    }
     let session: DesktopSpiderSessionPort | undefined;
     const ensure = async (): Promise<DesktopSpiderSessionPort> => {
       session ??= await this.ensureSiteSession(site.siteKey);
@@ -826,6 +892,11 @@ export class DesktopSpiderImportController {
     this.currentSession = undefined;
     this.currentSessionKey = undefined;
     await Promise.all(sessions.map((session) => session.destroy()));
+    if (!retainCurrent && !this.runtimeManager) {
+      await this.activeRuntimeManager?.destroy?.();
+      this.activeRuntimeManager = undefined;
+      this.runtimeExecutionEnabled = false;
+    }
     if (retainCurrent) {
       this.currentSession = previousCurrent;
       this.currentSessionKey = previousCurrentKey;
@@ -1253,11 +1324,11 @@ function knownMetadataOnlySite(siteKey: string, api: string): boolean {
 }
 
 function unsupportedRuntimeReason(type: number, api: string): string {
-  if (type !== 3) return "unsupported_runtime";
-  if (/^csp_/i.test(api) || /\.jar(?:$|[?#])/i.test(api)) return "jar_spider_not_supported";
-  if (/\.m?js(?:$|[?#])/i.test(api) || /^js:/i.test(api)) return "js_spider_not_supported";
-  if (/\.py(?:$|[?#])/i.test(api) || /^py:/i.test(api)) return "python_spider_not_supported";
-  return "spider_runtime_not_supported";
+  if (type !== 3) return "unsupported_site_type";
+  if (/^csp_/i.test(api) || /\.jar(?:$|[?#])/i.test(api)) return "android_dex_runtime_not_available";
+  if (/\.m?js(?:$|[?#])/i.test(api) || /^js:/i.test(api)) return "js_runtime_missing";
+  if (/\.py(?:$|[?#])/i.test(api) || /^py:/i.test(api)) return "python_runtime_missing";
+  return "unsupported_site_type";
 }
 
 function errorMessage(error: unknown): string {

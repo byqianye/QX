@@ -66,6 +66,10 @@ interface PendingResponse {
   timer: NodeJS.Timeout;
 }
 
+/**
+ * @deprecated Legacy Windows child-process bridge retained for pre-APK tests only.
+ * The real Android DEX PoC uses AndroidSpiderBridgeClient plus ADB/AndroidDeviceManager.
+ */
 export class AndroidSpiderBridge {
   private readonly options: Required<Pick<AndroidSpiderBridgeOptions, "hostArgs" | "requestTimeoutMs" | "startupTimeoutMs">> & AndroidSpiderBridgeOptions;
   private readonly pending = new Map<string, PendingResponse>();

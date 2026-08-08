@@ -38,6 +38,7 @@ export interface SpiderRuntimeManagerOptions extends SpiderRuntimeDetectorOption
   config?: TvBoxConfig;
   sourceUrl?: string;
   nativeRuntime?: (site: TvBoxSite) => SpiderRuntime | undefined | Promise<SpiderRuntime | undefined>;
+  /** @deprecated RuntimeManager wiring remains opt-in until the real Android PoC passes on a device. */
   androidBridgeFactory?: (site: TvBoxSite, support: RuntimeSupport) => AndroidSpiderBridge | undefined | Promise<AndroidSpiderBridge | undefined>;
   pythonExecutable?: string;
   pythonEnvironment?: NodeJS.ProcessEnv;

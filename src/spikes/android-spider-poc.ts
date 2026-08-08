@@ -108,7 +108,7 @@ export async function runAndroidSpiderPoc(
   let normalizedError;
   let client: AndroidSpiderBridgeClient | undefined;
 
-  if (snapshot.deviceFound && hostApkFound && keyword) {
+  if (snapshot.deviceFound && hostApkFound) {
     try {
       await manager.install(hostApkPath);
       hostInstalled = true;
@@ -154,68 +154,83 @@ export async function runAndroidSpiderPoc(
       }
 
       const initStarted = Date.now();
-      await runOperation(attempts, "init", () => client!.init(Object.prototype.hasOwnProperty.call(site, "ext") ? site.ext : ""));
-      initDiagnostics = { status: "PASS", durationMs: Date.now() - initStarted, details: "real Android Application Context supplied" };
-
-      const searchStarted = Date.now();
-      const searchResult = await client.searchContent(keyword, false, 1);
-      const searchItems = extractAndroidVodItems(searchResult);
-      operations.searchContent = {
-        status: searchItems.length > 0 ? "PASS" : "FAIL",
-        durationMs: Date.now() - searchStarted,
-        keyword,
-        resultCount: searchItems.length,
-        details: searchItems.length > 0 ? "SEARCH_PASS" : "search list was empty",
-      };
-      markAttempt(attempts, "searchContent", searchItems.length > 0 ? "passed" : "failed", operations.searchContent.details);
-      if (searchItems.length === 0) throw new Error("SEARCH_FAIL: searchContent returned no results");
-
-      const firstId = firstAndroidVodId(searchResult);
-      if (!firstId) throw new Error("SEARCH_FAIL: result did not contain vod_id");
-      const detailStarted = Date.now();
-      const detailResult = await client.detailContent([firstId]);
-      const detailItems = extractAndroidVodItems(detailResult);
-      const detailValidation = validateAndroidDetail(detailResult);
-      const playbackStats = androidPlaybackLineStats(detailResult);
-      const detailPlayable = playbackStats.hasPlayFrom && playbackStats.hasPlayUrl;
-      operations.detailContent = {
-        status: detailValidation.valid ? "PASS" : "FAIL",
-        durationMs: Date.now() - detailStarted,
-        ...playbackStats,
-        details: detailValidation.valid
-          ? detailPlayable ? "DETAIL_PLAYABLE_PASS" : "detail fields present; no playback lines"
-          : `missing ${detailValidation.missing.join(", ")}`,
-      };
-      markAttempt(attempts, "detailContent", detailValidation.valid ? "passed" : "failed", operations.detailContent.details);
-      if (!detailValidation.valid || detailItems.length === 0) throw new Error(`DETAIL_FAIL: ${detailValidation.missing.join(", ")}`);
-
-      const playback = firstAndroidPlaybackRequest(detailResult);
-      if (!hasAndroidPlaybackFields(detailResult) || !playback) {
-        operations.playerContent = { status: "BLOCKED", details: "detailContent had no playable lines" };
-        markAttempt(attempts, "playerContent", "blocked", operations.playerContent.details);
-      } else {
-        const playerStarted = Date.now();
-        const playerResult = await client.playerContent(playback.flag, playback.id);
-        const playerPayload = parseAndroidSpiderResult(playerResult);
-        const playerUrl = firstString(playerPayload.url, playerPayload.link, playerPayload.playUrl);
-        const headerPresent = playerPayload.header !== undefined || playerPayload.headers !== undefined;
-        operations.playerContent = {
-          status: playerUrl ? "PASS" : "FAIL",
-          durationMs: Date.now() - playerStarted,
-          urlPresent: Boolean(playerUrl),
-          parse: typeof playerPayload.parse === "boolean" ? String(playerPayload.parse) : typeof playerPayload.parse === "string" ? playerPayload.parse : "unknown",
-          jx: playerPayload.jx === true || playerPayload.jx === 1,
-          headerPresent,
-          format: typeof playerPayload.format === "string" ? playerPayload.format : "unknown",
-          details: playerUrl ? "PLAYER_CONTENT_PASS" : "player response did not contain url",
+      try {
+        await runOperation(attempts, "init", () => client!.init(Object.prototype.hasOwnProperty.call(site, "ext") ? site.ext : ""));
+        initDiagnostics = { status: "PASS", durationMs: Date.now() - initStarted, details: "real Android Application Context supplied" };
+      } catch (error) {
+        const diagnostics = bridgeDiagnostics(error);
+        initDiagnostics = {
+          status: "FAIL",
+          durationMs: typeof diagnostics?.initDurationMs === "number" ? diagnostics.initDurationMs : Date.now() - initStarted,
+          ...(typeof diagnostics?.initException === "string" ? { initException: diagnostics.initException } : {}),
+          ...(typeof diagnostics?.contextDependent === "boolean" ? { contextDependent: diagnostics.contextDependent } : {}),
+          details: error instanceof Error ? error.message : String(error),
         };
-        markAttempt(attempts, "playerContent", playerUrl ? "passed" : "failed", operations.playerContent.details);
-        if (!playerUrl) throw new Error("PLAYER_FAIL: playerContent returned no playable URL");
+        throw error;
+      }
+
+      if (!keyword) {
+        operations.searchContent = { status: "BLOCKED", details: "a user keyword is required before searchContent" };
+        markAttempt(attempts, "searchContent", "blocked", operations.searchContent.details);
+      } else {
+        const searchStarted = Date.now();
+        const searchResult = await client.searchContent(keyword, false, 1);
+        const searchItems = extractAndroidVodItems(searchResult);
+        operations.searchContent = {
+          status: searchItems.length > 0 ? "PASS" : "FAIL",
+          durationMs: Date.now() - searchStarted,
+          keyword,
+          resultCount: searchItems.length,
+          details: searchItems.length > 0 ? "SEARCH_PASS" : "search list was empty",
+        };
+        markAttempt(attempts, "searchContent", searchItems.length > 0 ? "passed" : "failed", operations.searchContent.details);
+        if (searchItems.length === 0) throw new Error("SEARCH_FAIL: searchContent returned no results");
+
+        const firstId = firstAndroidVodId(searchResult);
+        if (!firstId) throw new Error("SEARCH_FAIL: result did not contain vod_id");
+        const detailStarted = Date.now();
+        const detailResult = await client.detailContent([firstId]);
+        const detailItems = extractAndroidVodItems(detailResult);
+        const detailValidation = validateAndroidDetail(detailResult);
+        const playbackStats = androidPlaybackLineStats(detailResult);
+        const detailPlayable = playbackStats.hasPlayFrom && playbackStats.hasPlayUrl;
+        operations.detailContent = {
+          status: detailValidation.valid ? "PASS" : "FAIL",
+          durationMs: Date.now() - detailStarted,
+          ...playbackStats,
+          details: detailValidation.valid
+            ? detailPlayable ? "DETAIL_PLAYABLE_PASS" : "detail fields present; no playback lines"
+            : `missing ${detailValidation.missing.join(", ")}`,
+        };
+        markAttempt(attempts, "detailContent", detailValidation.valid ? "passed" : "failed", operations.detailContent.details);
+        if (!detailValidation.valid || detailItems.length === 0) throw new Error(`DETAIL_FAIL: ${detailValidation.missing.join(", ")}`);
+
+        const playback = firstAndroidPlaybackRequest(detailResult);
+        if (!hasAndroidPlaybackFields(detailResult) || !playback) {
+          operations.playerContent = { status: "BLOCKED", details: "detailContent had no playable lines" };
+          markAttempt(attempts, "playerContent", "blocked", operations.playerContent.details);
+        } else {
+          const playerStarted = Date.now();
+          const playerResult = await client.playerContent(playback.flag, playback.id);
+          const playerPayload = parseAndroidSpiderResult(playerResult);
+          const playerUrl = firstString(playerPayload.url, playerPayload.link, playerPayload.playUrl);
+          const headerPresent = playerPayload.header !== undefined || playerPayload.headers !== undefined;
+          operations.playerContent = {
+            status: playerUrl ? "PASS" : "FAIL",
+            durationMs: Date.now() - playerStarted,
+            urlPresent: Boolean(playerUrl),
+            parse: typeof playerPayload.parse === "boolean" ? String(playerPayload.parse) : typeof playerPayload.parse === "string" ? playerPayload.parse : "unknown",
+            jx: playerPayload.jx === true || playerPayload.jx === 1,
+            headerPresent,
+            format: typeof playerPayload.format === "string" ? playerPayload.format : "unknown",
+            details: playerUrl ? "PLAYER_CONTENT_PASS" : "player response did not contain url",
+          };
+          markAttempt(attempts, "playerContent", playerUrl ? "passed" : "failed", operations.playerContent.details);
+          if (!playerUrl) throw new Error("PLAYER_FAIL: playerContent returned no playable URL");
+        }
       }
     } catch (error) {
-      const details = error instanceof Error && "diagnostics" in error
-        ? (error as { diagnostics?: Record<string, unknown> }).diagnostics
-        : undefined;
+      const details = bridgeDiagnostics(error);
       normalizedError = normalizeRuntimeError(error, {
         runtimeKind: "android-dex",
         siteKey: normalized.key,
@@ -225,7 +240,7 @@ export async function runAndroidSpiderPoc(
         artifactPath: resolved.localPath,
         workingDirectory: process.cwd(),
         isPackaged: false,
-        ...(details ? { rootCause: String(details.code ?? "android_host_failed") } : {}),
+        ...(details ? { rootCause: String(details.code ?? (error instanceof Error && "code" in error ? (error as { code?: unknown }).code : undefined) ?? "android_host_failed") } : {}),
       });
       if (normalizedError.code) blockers.push(normalizedError.code);
     } finally {
@@ -389,6 +404,14 @@ function record(value: unknown): Record<string, unknown> {
 
 function firstString(...values: unknown[]): string | undefined {
   return values.find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim();
+}
+
+function bridgeDiagnostics(error: unknown): Record<string, unknown> | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const diagnostics = (error as { diagnostics?: unknown }).diagnostics;
+  return typeof diagnostics === "object" && diagnostics !== null && !Array.isArray(diagnostics)
+    ? diagnostics as Record<string, unknown>
+    : undefined;
 }
 
 function readKeyword(): string | undefined {

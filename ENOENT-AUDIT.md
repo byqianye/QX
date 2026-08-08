@@ -1,6 +1,6 @@
 # ENOENT Root-Cause Audit
 
-Generated: 2026-08-08T16:34:07.944Z
+Generated: 2026-08-08T16:44:39.282Z
 Configuration source: `http://xn--z7x900a.net/`
 
 ENOENT is not used as the user-facing root cause. Each failure is classified with the missing path and runtime context.

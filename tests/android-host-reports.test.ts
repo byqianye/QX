@@ -35,6 +35,12 @@ describe("Android Host reports V2/V4", () => {
         size: 10,
         sha256: "a".repeat(64),
       },
+      init: {
+        status: "FAIL",
+        durationMs: 12,
+        initException: "missing Android context",
+        contextDependent: true,
+      },
       operations: {
         searchContent: { status: "NOT_RUN", keyword: "测试" },
         detailContent: { status: "NOT_RUN" },
@@ -46,6 +52,8 @@ describe("Android Host reports V2/V4", () => {
     expect(renderAndroidHostSetup(report)).toContain("ANDROID_DEVICE_NOT_FOUND");
     expect(renderAndroidSpiderPocV2(report)).toContain("csp_Duopan");
     expect(renderAndroidSpiderHostReport(report)).toContain("DexClassLoader");
+    expect(renderAndroidSpiderPocV2(report)).toContain("initException=missing Android context");
+    expect(renderAndroidSpiderPocV2(report)).toContain("contextDependent=true");
     expect(renderRuntimeDiagnosticsV4(report)).toContain("| RPC health | BLOCKED |");
     expect(renderRuntimeDiagnosticsV4(report)).not.toContain("android-spider-host.exe");
   });

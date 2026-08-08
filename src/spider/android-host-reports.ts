@@ -38,6 +38,8 @@ export interface AndroidHostClassDiagnostics {
 export interface AndroidHostOperationDiagnostics {
   status: AndroidDiagnosticStatus;
   durationMs?: number;
+  initException?: string;
+  contextDependent?: boolean;
   keyword?: string;
   resultCount?: number;
   hasPlayFrom?: boolean;
@@ -210,6 +212,8 @@ function operationDetails(operation: AndroidHostOperationDiagnostics | undefined
   const values = [
     operation.details,
     operation.durationMs === undefined ? undefined : `${operation.durationMs}ms`,
+    operation.initException ? `initException=${operation.initException}` : undefined,
+    operation.contextDependent === undefined ? undefined : `contextDependent=${operation.contextDependent}`,
     operation.keyword ? `keyword=${operation.keyword}` : undefined,
     operation.resultCount === undefined ? undefined : `resultCount=${operation.resultCount}`,
     operation.hasPlayFrom === undefined ? undefined : `hasPlayFrom=${operation.hasPlayFrom}`,

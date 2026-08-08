@@ -303,6 +303,7 @@ export class AndroidSpiderBridgeClient {
     allowRecovery = true,
     signal?: AbortSignal,
   ): Promise<unknown> {
+    throwIfAborted(signal, method);
     if (!this.isConnected) await this.connect();
     throwIfAborted(signal, method);
     const requestParams = this.withSessionIds(params);

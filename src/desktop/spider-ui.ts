@@ -3722,8 +3722,8 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
         ? `<section data-testid="playback-source-candidates">
             <strong>找到可播放来源，请选择：</strong>
             ${playableSourceCandidates.map((candidate) => `<button data-action="playback-source-select" data-site-key="${escapeHtml(candidate.siteKey)}" data-vod-id="${escapeHtml(candidate.vod.id)}">${escapeHtml(candidate.siteName)} · ${escapeHtml(candidate.vod.name)}（匹配 ${candidate.score}）</button>`).join("")}
-          </section>`
-        : `<p data-testid="playback-source-empty">当前配置中未找到可播放来源</p>`
+          </section>${renderPlaybackSourceDiagnostics(state.playbackSources.diagnostics)}`
+        : `<p data-testid="playback-source-empty">当前配置中未找到可播放来源</p>${renderPlaybackSourceDiagnostics(state.playbackSources.diagnostics)}`
       : `<button data-action="find-playback-source"${state.loading ? " disabled" : ""}>查找播放源</button>`
     : "";
   const playerMarkup = state.playerHost === "detached"
@@ -4094,6 +4094,13 @@ function clonePlaybackSourceResolution(
     searchedSites: [...resolution.searchedSites],
     successfulSites: [...resolution.successfulSites],
     failedSites: resolution.failedSites.map((failure) => ({ ...failure })),
+    diagnostics: {
+      ...resolution.diagnostics,
+      searchedSites: [...resolution.diagnostics.searchedSites],
+      searchSuccessSites: [...resolution.diagnostics.searchSuccessSites],
+      searchFailedSites: [...resolution.diagnostics.searchFailedSites],
+      sites: resolution.diagnostics.sites.map((site) => ({ ...site })),
+    },
     candidates: resolution.candidates.map((candidate) => ({
       ...candidate,
       vod: {
@@ -4105,6 +4112,21 @@ function clonePlaybackSourceResolution(
       ...(candidate.lines ? { lines: clonePlaybackCatalog(candidate.lines)! } : {}),
     })),
   };
+}
+
+function renderPlaybackSourceDiagnostics(
+  diagnostics: PlaybackSourceResolution["diagnostics"],
+): string {
+  const unsupportedHint = diagnostics.runtimeSupportedSites <= 1 && diagnostics.unsupportedSiteCount > 0
+    ? "多数来源因当前 Spider Runtime 尚未支持而被跳过"
+    : "";
+  return `<details data-testid="playback-source-diagnostics">
+    <summary>查看诊断</summary>
+    <p>配置 ${diagnostics.configSiteCount} 个来源 → 允许搜索 ${diagnostics.searchableSites} → QX 当前支持 ${diagnostics.runtimeSupportedSites}</p>
+    <p>成功搜索 ${diagnostics.searchSuccessSites.length} → 获得 ${diagnostics.searchResultCount} 个结果 → 匹配 ${diagnostics.matchedCandidateCount} → 有播放线路 ${diagnostics.playableCandidateCount}</p>
+    ${unsupportedHint ? `<p>${escapeHtml(unsupportedHint)}</p>` : ""}
+    <ul>${diagnostics.sites.map((site) => `<li>${escapeHtml(site.siteName)}：初始化 ${escapeHtml(site.initialization)}，搜索 ${escapeHtml(site.search)}，结果 ${site.resultCount}${site.skipReason ? `，${escapeHtml(site.skipReason)}` : ""}</li>`).join("")}</ul>
+  </details>`;
 }
 
 function publicCandidateVodFields(vod: Record<string, unknown>): Record<string, unknown> {

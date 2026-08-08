@@ -37,10 +37,14 @@ import { resolveDesktopSourceBinding } from "./source-router.js";
 import type { DesktopSpiderSessionPort } from "./spider-ui.js";
 import {
   PlaybackSourceResolver,
+  type PlaybackSourceEngine,
+  type PlaybackSourceSite,
   type PlaybackSourceResolution,
   type PlaybackSourceResolverOptions,
+  type SourceEngineFactory,
 } from "./playback-source-resolver.js";
 import type { Vod } from "../source/media-source.js";
+import { normalizeFongMiSite, serializeFongMiExt } from "../config/fongmi.js";
 
 export type DesktopSpiderImportInputKind = "url" | "file" | "json";
 export type DesktopSpiderImportStatus =
@@ -261,35 +265,45 @@ export class DesktopSpiderImportController {
       return Promise.reject(new Error("Configuration is not ready for playback source search"));
     }
     const currentSiteKey = options.currentSiteKey ?? this.selectedSiteKey;
-    const sites = this.siteManager.list().flatMap((managed) => {
-      const configured = findSite(this.config!, managed.key);
-      if (!configured) return [];
+    const configuredSites = Array.isArray(this.config.sites) ? this.config.sites : [];
+    const sites: PlaybackSourceSite[] = configuredSites.flatMap((configured, index) => {
+      if (typeof configured.api !== "string") return [];
+      const siteKey = siteKeyOf(configured) || `site-${index + 1}`;
+      const managed = this.siteManager?.get(siteKey);
+      const binding = resolveDesktopSourceBinding(this.config!, configured, this.stateValue.source ?? undefined);
+      const metadataOnly = knownMetadataOnlySite(siteKey, configured.api);
+      const enabled = managed?.enabled !== false
+        && managed?.trusted !== false
+        && this.health.canRun(siteKey);
+      const normalized = normalizeFongMiSite(configured, this.stateValue.source ?? undefined, index);
+      const skipReason = binding === undefined
+        ? unsupportedRuntimeReason(normalized.type, configured.api)
+        : !enabled
+          ? (managed?.enabled === false ? "site_disabled" : "source_health_circuit_open")
+          : undefined;
       return [{
-        siteKey: managed.key,
-        siteName: managed.alias,
-        enabled: managed.enabled
-          && managed.trusted
-          && this.health.canRun(managed.key)
-          && !this.initializationFailures.has(managed.key),
-        searchable: managed.searchEnabled
-          && managed.capabilities.search
-          && flagEnabled(configured.searchable, true),
-        playback: managed.capabilities.playback,
-        metadataOnly: knownMetadataOnlySite(managed.key, managed.api),
-        search: async (query: string, timeoutMs: number): Promise<readonly Vod[]> => {
-          const session = await this.ensureSiteSession(managed.key);
-          const response = await session.searchContent(query, false, 1, timeoutMs);
-          return normalizeVodPage(unwrapSpiderResponse(response, "search"), 1).items;
-        },
-        detail: async (vodId: string, timeoutMs: number): Promise<Vod | null> => {
-          const session = await this.ensureSiteSession(managed.key);
-          const response = await session.detailContent([vodId], timeoutMs);
-          return normalizeVodDetails(unwrapSpiderResponse(response, "detail"))[0] ?? null;
-        },
-      }];
+        siteKey,
+        siteName: managed?.alias ?? normalized.name,
+        type: normalized.type,
+        api: configured.api,
+        ...(configured.ext === undefined ? {} : { ext: serializeFongMiExt(configured.ext) }),
+        enabled,
+        searchable: configured.searchable === undefined ? true : configured.searchable,
+        quickSearch: configured.quickSearch === undefined ? false : configured.quickSearch,
+        supported: binding !== undefined,
+        engine: binding?.engine ?? null,
+        ...(skipReason ? { skipReason } : {}),
+        metadataOnly,
+        ...(managed?.capabilities.playback === undefined ? {} : { playback: managed.capabilities.playback }),
+      } satisfies PlaybackSourceSite];
     });
+    const engineFactory: SourceEngineFactory = {
+      create: (site) => this.createPlaybackSourceEngine(site),
+    };
     return this.playbackSourceResolver.resolve(currentVod, sites, {
       ...options,
+      configSiteCount: configuredSites.length,
+      engineFactory,
       ...(currentSiteKey === null ? {} : { currentSiteKey }),
     });
   }
@@ -729,7 +743,7 @@ export class DesktopSpiderImportController {
   }
 
   private async ensureSiteSession(siteKey: string): Promise<DesktopSpiderSessionPort> {
-    if (!this.config || !this.selectedSite || !this.stateValue.source) {
+    if (!this.config || !this.stateValue.source) {
       throw new Error("Configuration is not ready for site search");
     }
     const site = findSite(this.config, siteKey);
@@ -768,6 +782,29 @@ export class DesktopSpiderImportController {
       }
     }
     return session;
+  }
+
+  private createPlaybackSourceEngine(site: PlaybackSourceSite): PlaybackSourceEngine {
+    let session: DesktopSpiderSessionPort | undefined;
+    const ensure = async (): Promise<DesktopSpiderSessionPort> => {
+      session ??= await this.ensureSiteSession(site.siteKey);
+      return session;
+    };
+    return {
+      init: async () => {
+        await ensure();
+      },
+      search: async (query, quick, page) => {
+        const active = await ensure();
+        const response = await active.searchContent(query, quick, page);
+        return normalizeVodPage(unwrapSpiderResponse(response, "search"), page).items;
+      },
+      detail: async (vodId) => {
+        const active = await ensure();
+        const response = await active.detailContent([vodId]);
+        return normalizeVodDetails(unwrapSpiderResponse(response, "detail"))[0] ?? null;
+      },
+    };
   }
 
   private async releaseSiteSession(siteKey: string): Promise<void> {
@@ -1211,14 +1248,16 @@ function historyKindFor(kind: DesktopSpiderImportInputKind): "url" | "file" | "j
   return kind;
 }
 
-function flagEnabled(value: unknown, fallback: boolean): boolean {
-  if (typeof value === "number") return value !== 0;
-  if (typeof value === "string") return value.trim() !== "0";
-  return fallback;
-}
-
 function knownMetadataOnlySite(siteKey: string, api: string): boolean {
   return /douban/i.test(`${siteKey} ${api}`);
+}
+
+function unsupportedRuntimeReason(type: number, api: string): string {
+  if (type !== 3) return "unsupported_runtime";
+  if (/^csp_/i.test(api) || /\.jar(?:$|[?#])/i.test(api)) return "jar_spider_not_supported";
+  if (/\.m?js(?:$|[?#])/i.test(api) || /^js:/i.test(api)) return "js_spider_not_supported";
+  if (/\.py(?:$|[?#])/i.test(api) || /^py:/i.test(api)) return "python_spider_not_supported";
+  return "spider_runtime_not_supported";
 }
 
 function errorMessage(error: unknown): string {

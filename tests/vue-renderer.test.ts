@@ -730,6 +730,20 @@ describe("Vue renderer", () => {
         searchedSites: ["playable"],
         successfulSites: ["playable"],
         failedSites: [],
+        diagnostics: {
+          configSiteCount: 2,
+          searchableSites: 1,
+          runtimeSupportedSites: 1,
+          unsupportedSiteCount: 0,
+          searchedSites: ["playable"],
+          searchSuccessSites: ["playable"],
+          searchFailedSites: [],
+          searchResultCount: 1,
+          matchedCandidateCount: 1,
+          detailSuccessCount: 1,
+          playableCandidateCount: 1,
+          sites: [],
+        },
         candidates: [{
           siteKey: "playable",
           siteName: "Playable",
@@ -746,6 +760,40 @@ describe("Vue renderer", () => {
     await selectedDrawer.get('[data-action="playback-source-select"]').trigger("click");
     expect(selectedDrawer.emitted("selectPlaybackSource")).toEqual([["playable", "play-1"]]);
     selectedDrawer.unmount();
+
+    const emptyDrawer = mount(DetailDrawer, {
+      props: {
+        detail: { vod_id: "meta-1", vod_name: "欢迎来龙餐厅" },
+        canPlay: false,
+        playbackLabel: "Douban：无正片播放源",
+        canSearchPlayback: true,
+        playbackSources: {
+          query: "欢迎来龙餐厅",
+          searchedSites: [],
+          successfulSites: [],
+          failedSites: [],
+          diagnostics: {
+            configSiteCount: 5,
+            searchableSites: 4,
+            runtimeSupportedSites: 1,
+            unsupportedSiteCount: 3,
+            searchedSites: [],
+            searchSuccessSites: [],
+            searchFailedSites: [],
+            searchResultCount: 0,
+            matchedCandidateCount: 0,
+            detailSuccessCount: 0,
+            playableCandidateCount: 0,
+            sites: [],
+          },
+          candidates: [],
+        },
+        playbackSourcePending: false,
+      },
+    });
+    expect(emptyDrawer.find('[data-testid="playback-source-empty"]').exists()).toBe(true);
+    expect(emptyDrawer.find('[data-testid="playback-source-diagnostics"]').text()).toContain("多数来源因当前 Spider Runtime 尚未支持而被跳过");
+    emptyDrawer.unmount();
   });
 
   it("falls back after a detail poster request fails", async () => {

@@ -698,6 +698,13 @@ function clonePlaybackSourceResolution(
     searchedSites: [...resolution.searchedSites],
     successfulSites: [...resolution.successfulSites],
     failedSites: resolution.failedSites.map((failure) => ({ ...failure })),
+    diagnostics: {
+      ...resolution.diagnostics,
+      searchedSites: [...resolution.diagnostics.searchedSites],
+      searchSuccessSites: [...resolution.diagnostics.searchSuccessSites],
+      searchFailedSites: [...resolution.diagnostics.searchFailedSites],
+      sites: resolution.diagnostics.sites.map((site) => ({ ...site })),
+    },
     candidates: resolution.candidates.map((candidate) => ({
       ...candidate,
       vod: {

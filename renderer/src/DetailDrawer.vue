@@ -158,7 +158,31 @@ const playableCandidates = computed(() => (props.playbackSources?.candidates ?? 
               @click="emit('selectPlaybackSource', candidate.siteKey, candidate.vod.id)"
             >{{ candidate.siteName }} · {{ candidate.vod.name }}（匹配 {{ candidate.score }}）</button>
           </div>
-          <p v-else data-testid="playback-source-empty">当前配置中未找到可播放来源</p>
+          <template v-else>
+            <p data-testid="playback-source-empty">当前配置中未找到可播放来源</p>
+            <details v-if="props.playbackSources.diagnostics" data-testid="playback-source-diagnostics">
+              <summary>查看诊断</summary>
+              <p>
+                配置 {{ props.playbackSources.diagnostics.configSiteCount }} 个来源
+                → 允许搜索 {{ props.playbackSources.diagnostics.searchableSites }}
+                → QX 当前支持 {{ props.playbackSources.diagnostics.runtimeSupportedSites }}
+              </p>
+              <p>
+                成功搜索 {{ props.playbackSources.diagnostics.searchSuccessSites.length }}
+                → 获得 {{ props.playbackSources.diagnostics.searchResultCount }} 个结果
+                → 匹配 {{ props.playbackSources.diagnostics.matchedCandidateCount }}
+                → 有播放线路 {{ props.playbackSources.diagnostics.playableCandidateCount }}
+              </p>
+              <p v-if="props.playbackSources.diagnostics.runtimeSupportedSites <= 1 && props.playbackSources.diagnostics.unsupportedSiteCount > 0">
+                多数来源因当前 Spider Runtime 尚未支持而被跳过
+              </p>
+              <ul>
+                <li v-for="site in props.playbackSources.diagnostics.sites" :key="site.siteKey">
+                  {{ site.siteName }}：初始化 {{ site.initialization }}，搜索 {{ site.search }}，结果 {{ site.resultCount }}<span v-if="site.skipReason">，{{ site.skipReason }}</span>
+                </li>
+              </ul>
+            </details>
+          </template>
         </template>
       </section>
     </section>

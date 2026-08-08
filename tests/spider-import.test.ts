@@ -14,7 +14,7 @@ import type { DesktopSpiderSessionPort, DesktopSpiderView } from "../src/desktop
 import type { SpiderResponse } from "../src/spider/rpc.js";
 import { ImportTrustStore } from "../src/config/trust.js";
 import { ConfigHistoryStore } from "../src/config/history.js";
-import type { SourceCapabilities } from "../src/source/media-source.js";
+import type { SourceCapabilities, Vod } from "../src/source/media-source.js";
 
 describe("real configuration import", () => {
   const servers: DesktopSpiderUiServer[] = [];
@@ -289,6 +289,41 @@ describe("real configuration import", () => {
       detail: { vod_id: "play-1" },
       playbackCatalog: { lines: [{ episodes: [{ id: "episode-1" }] }] },
     });
+  });
+
+  it("builds playback search candidates from every configured site, not the active site only", async () => {
+    const importer = createImporter({
+      createSession: (_source, _config, site) => new PlaybackResolverSession(site.api ?? ""),
+    });
+    await importer.import(JSON.stringify({
+      sites: [
+        { key: "douban", type: 3, api: "csp_Douban" },
+        { key: "playable-1", type: 3, api: "csp_PlayableFixture" },
+        { key: "playable-2", type: 3, api: "csp_PlayableFixture" },
+        { key: "playable-3", type: 3, api: "csp_PlayableFixture" },
+        { key: "playable-4", type: 3, api: "csp_PlayableFixture" },
+      ],
+    }));
+    importer.confirm();
+
+    const current: Vod = {
+      id: "meta-1",
+      name: "欢迎来龙餐厅",
+      raw: {},
+      vod_id: "meta-1",
+      vod_name: "欢迎来龙餐厅",
+      vod_year: "2026",
+      type_name: "剧情",
+    };
+    const result = await importer.resolvePlaybackSources(current);
+
+    expect(result.diagnostics).toMatchObject({
+      configSiteCount: 5,
+      searchableSites: 4,
+      runtimeSupportedSites: 4,
+      searchSuccessSites: expect.arrayContaining(["playable-1", "playable-2", "playable-3", "playable-4"]),
+    });
+    expect(result.candidates.filter((candidate) => candidate.playable)).toHaveLength(4);
   });
 
   it("can select the JVM-native playable source for the player spike", async () => {

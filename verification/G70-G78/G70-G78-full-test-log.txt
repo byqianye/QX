@@ -1,0 +1,18 @@
+npm test -- --maxWorkers=1 --minWorkers=1 --reporter=dot: 73 files / 415 tests passed
+npm run typecheck: passed
+npm run electron:e2e:package: packaged first/restart passed; liveFailoverEpgContinuity=true
+npm run electron:verify:no-jdk: passed; missing JRE reason BUNDLED_JRE_MISSING
+npm run electron:verify:network-timeout: passed; IMPORT_FETCH_ERROR
+npm run python:smoke: passed with bundled dist/electron-runtime/python/python.exe
+npm run mpv:smoke: passed
+npm run aria2:smoke: passed; bytes=1546
+npm run release:inventory: passed; SBOM components=528
+npm run electron:installer:win: passed; 170781832 bytes; SHA-256 5582A22DE97136776AC984BBC6CB21751F3998B5D2E24B5AAFE053D2CAE15C5A
+npm run electron:installer:e2e: passed; temporary install/shortcuts/installed first-restart-backup E2E/uninstall cleanup
+test skip scan: only documented Java/Python availability guards; no focused-test `.only` or undocumented release skip
+npm run brand:assets: passed; ICO entries 256/128/64/48/32/16
+npm run renderer:build: passed; four lazy route chunks present
+QX_E2E_CAPTURE_DIR=verification/G73 npm run electron:e2e:package: passed; first/restart packaged visual matrix captured
+G73 OpenDesign artifact: generated; scorecard partial 5/6; preview rejected by workspace-context boundary; user-authorized repository self-review later passed
+G76 local clean-room: passed; physical Windows, Chinese install path, sanitized runtime environment, real bundled aria2 in installed-package E2E, real Python/mpv/aria2 smokes, reinstall, uninstall, data retention and process/port cleanup
+G77 RC_READY: true (local_windows_clean_room); G61 performance probe passed

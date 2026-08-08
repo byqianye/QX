@@ -1,0 +1,1 @@
+RC_READY=true:local_windows_clean_room

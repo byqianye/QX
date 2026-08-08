@@ -65,6 +65,15 @@ function submitSite(): void {
       <p data-testid="import-status" :class="{ loading: props.state.loading }">{{ props.state.loading ? "正在读取配置" : "连接一个已授权来源" }}</p>
     </header>
 
+    <section class="first-launch-guide" data-testid="first-launch-guide">
+      <div><strong>第一次使用</strong><span>从三个安全入口开始</span></div>
+      <ul>
+        <li><b>添加配置</b><span>导入你有权访问的媒体配置，先看来源摘要再确认。</span></li>
+        <li><b>添加本地媒体</b><span>进入工作台后可选择本地文件或文件夹。</span></li>
+        <li><b>连接授权服务</b><span>仅在你主动配置时连接 Jellyfin 等服务。</span></li>
+      </ul>
+    </section>
+
     <section class="import-card">
       <form data-testid="config-import-form" @submit.prevent="submit">
         <label for="config-input">配置 URL、文件路径或原始 JSON</label>

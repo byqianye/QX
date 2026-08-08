@@ -1,0 +1,9 @@
+npm test: 73 files / 415 tests passed
+Packaged first/restart E2E: passed
+npm run python:smoke: passed
+npm run mpv:smoke: passed
+npm run aria2:smoke: passed
+G76 local clean-room: passed; physical Windows, Chinese install path, real bundled aria2 in installed-package E2E, real bundled Python/mpv/aria2 smokes, reinstall, uninstall, data retention, process/port cleanup
+G61 performance probe: passed; controlled local fixture measurements recorded in the RC evidence
+RC_READY: true (local_windows_clean_room)
+Test skip scan: only documented Java/Python availability guards; no `.only` or undocumented release skip

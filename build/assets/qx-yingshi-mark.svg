@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="QX影视">
+  <circle cx="128" cy="128" r="96" fill="#111111"/>
+  <circle cx="128" cy="128" r="54" fill="none" stroke="#ffffff" stroke-width="18"/>
+  <path d="M158 158 194 194" fill="none" stroke="#2f6feb" stroke-linecap="round" stroke-width="18"/>
+  <path d="M76 74 180 178M180 74 76 178" fill="none" stroke="#ffffff" stroke-linecap="round" stroke-width="10" opacity=".92"/>
+</svg>

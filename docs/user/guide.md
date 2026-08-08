@@ -1,5 +1,21 @@
 # QX影视 用户指南
 
+## 分章节阅读
+
+- [安装与升级](installation.md)
+- [首次启动](first-start.md)
+- [配置导入](config-import.md)
+- [点播与详情](vod.md)
+- [直播与 EPG](live-tv.md)
+- [本地媒体](local-media.md)
+- [下载](downloads.md)
+- [投屏](casting.md)
+- [Web 控制台](web-console.md)
+- [备份与恢复](backup-restore.md)
+- [故障排查](troubleshooting.md)
+- [隐私与安全](privacy-security.md)
+- [已知限制](known-limitations.md)
+
 ## 安装、升级与卸载
 
 运行 `QX影视-0.1.0-setup.exe` 完成 per-user 安装。安装器不要求把 Java、Python、mpv 或 aria2 预装到系统 PATH 中。升级时直接运行新版本安装器；应用数据和数据库迁移由应用保留，不要在升级前手动删除 `%APPDATA%\QX影视`。

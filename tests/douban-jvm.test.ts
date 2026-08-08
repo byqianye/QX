@@ -12,6 +12,8 @@ import { DesktopSpiderClient } from "../src/spider/desktop-client.js";
 import { JvmSidecar } from "../src/spider/jvm-sidecar.js";
 
 const javaExecutable = resolveJavaExecutable();
+// Intentional environment guard: JVM-native unit coverage requires a real local Java executable;
+// packaged release coverage is exercised separately by the bundled-runtime E2E.
 const jvmDescribe = javaExecutable ? describe : describe.skip;
 
 jvmDescribe("JVM-native csp_Douban minimum port", () => {

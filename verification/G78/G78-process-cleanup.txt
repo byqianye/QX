@@ -1,0 +1,4 @@
+Project-launched runtime process cleanup: passed in the recorded smoke/E2E runs.
+No QX java/mpv/aria2/electron process remained in the post-run probe.
+An unrelated pre-existing ComfyUI embedded Python process was observed and was not touched.
+

@@ -12,4 +12,4 @@
 | Credential leakage | constrained repository secret-pattern scan | no hardcoded credential found |
 | Clean-machine install security | NSIS install/upgrade/uninstall on pristine Windows | pending G76 |
 
-No Critical/High finding is being silently waived. A production release remains blocked by G73 visual review and G76 clean-Windows validation.
+No Critical/High finding is being silently waived. A production release remains blocked by G76 clean-Windows validation; G73 was accepted through the documented user-authorized self-review path.

@@ -9,7 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
 import { DatabaseSync } from "node:sqlite";
@@ -23,12 +23,15 @@ import { createMediaFixtureServer } from "./media-fixture.js";
 
 const workDirectory = mkdtempSync(join(tmpdir(), "qx-packaged-e2e-"));
 const configFile = join(workDirectory, "config.json");
-const userData = join(workDirectory, "user-data");
+const userData = process.env.QX_E2E_USER_DATA?.trim()
+  ? resolve(process.env.QX_E2E_USER_DATA)
+  : join(workDirectory, "user-data");
 const localMediaFile = join(workDirectory, "local-fixture.mp4");
 const downloadDirectory = join(workDirectory, "downloads");
 const firstResult = join(workDirectory, "first-result.json");
 const secondResult = join(workDirectory, "second-result.json");
 let config = "";
+const useRealAria2 = process.env.QX_E2E_REAL_ARIA2 === "1";
 
 let configServer: Server | undefined;
 const mediaFixture = createMediaFixtureServer();
@@ -113,7 +116,7 @@ try {
     }],
   });
   const configUrl = await startConfigServer(config);
-  const executable = resolvePackagedExecutable();
+  const executable = process.env.QX_PACKAGED_EXECUTABLE ?? resolvePackagedExecutable();
   const first = await runPackagedExecutable(executable, {
     QX_ELECTRON_E2E: "1",
     QX_E2E_CONFIG_URL: configUrl,
@@ -131,7 +134,7 @@ try {
     QX_E2E_BACKUP: "1",
     QX_CAST_ADVERTISED_HOST: "127.0.0.1",
     QX_PUSH_TRUSTED_LOCAL_ORIGINS: mediaFixture.baseUrl,
-    QX_E2E_FAKE_ARIA2: "1",
+    ...(useRealAria2 ? { QX_E2E_DOWNLOAD_URL: mediaFixture.mp4Url } : { QX_E2E_FAKE_ARIA2: "1" }),
     QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,
     QX_PLAYBACK_FALLBACK_MODE: "auto",
     QX_LIVE_FAILOVER_MODE: "auto",
@@ -181,7 +184,7 @@ try {
     QX_E2E_BACKUP: "1",
     QX_CAST_ADVERTISED_HOST: "127.0.0.1",
     QX_PUSH_TRUSTED_LOCAL_ORIGINS: mediaFixture.baseUrl,
-    QX_E2E_FAKE_ARIA2: "1",
+    ...(useRealAria2 ? { QX_E2E_DOWNLOAD_URL: mediaFixture.mp4Url } : { QX_E2E_FAKE_ARIA2: "1" }),
     QX_E2E_EXPECTED_FAVORITE_ID: firstFavoriteId,
     QX_E2E_EXPECTED_FOLLOW_ID: firstFollowIdentity,
     QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,

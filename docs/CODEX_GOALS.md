@@ -1806,7 +1806,7 @@ checkpoint: complete G71 bundled media runtimes
 
 ### Status
 
-Completed for the automatable installer scope. `electron-builder` NSIS output was generated successfully. The installer is per-user, creates desktop/start-menu shortcuts, declares no file association, keeps user data by default, and exposes an unchecked optional uninstall component for deleting it.
+Completed for the local installer scope. `electron-builder` NSIS output was generated successfully, and `npm run electron:installer:e2e` passed a real temporary per-user install, desktop/Start Menu shortcut check, installed-package first/restart/backup fixture E2E, and silent uninstall cleanup. The installer is per-user, declares no file association, keeps user data by default, and exposes an unchecked optional uninstall component for deleting it. Pristine Windows install/upgrade/uninstall remains G76.
 
 ### Dependency
 
@@ -1840,7 +1840,7 @@ npm run electron:installer:win
 checkpoint: complete G72 NSIS installer
 ```
 
-## G73 (review required)
+## G73 (self-review passed)
 
 ### Goal
 
@@ -1848,7 +1848,7 @@ checkpoint: complete G72 NSIS installer
 
 ### Status
 
-Blocked at `g73_open_design_review_required`: the required Open Design transport is unavailable in this session. Engineering bundle checks are recorded, but no visual acceptance is claimed.
+Engineering implementation, full automated tests, packaged E2E, NSIS generation, ICO validation, offline HTML scan, and a real packaged first/restart light/dark screenshot matrix are complete. OpenDesign produced a traceable HTML visual spec and Markdown handoff, but its built-in preview could not receive workspace context. Per the user's explicit instruction, a repository-side self-review covered the independent light/dark preview, packaged captures, ICO wiring, and installed shortcut metadata; G73 is `g73_self_review_passed`.
 
 ### Dependency
 
@@ -1856,11 +1856,11 @@ Blocked at `g73_open_design_review_required`: the required Open Design transport
 
 ### Scope
 
-- 通过 Open Design 复核 icon、brand、startup/about 和 bundle 视觉一致性。
+- 通过 Open Design 或用户明确授权的等价自审路径复核 icon、brand、startup/about 和 bundle 视觉一致性。
 
 ### Acceptance
 
-- Open Design review 有可追溯结果后，才允许标记视觉验收通过；当前不宣称通过。
+- Open Design review 或用户明确授权的等价自审有可追溯结果后，才允许标记视觉验收通过；本 Goal 已按后者通过。
 
 ### Verification commands
 
@@ -1885,7 +1885,7 @@ Completed for the automatable material-generation scope. `release:inventory` emi
 
 ### Dependency
 
-- G73 engineering bundle check; G73 visual review remains pending
+- G73 engineering bundle check and documented self-review passed
 
 ### Scope
 
@@ -1945,7 +1945,7 @@ npm run electron:e2e:package
 - `docs/security/release-security-review.md`
 - `verification/G75/README.md`
 
-## G76 (blocked external validation)
+## G76 (local clean-room passed)
 
 ### Goal
 
@@ -1953,7 +1953,7 @@ npm run electron:e2e:package
 
 ### Status
 
-Blocked at `blocked_external_clean_windows_validation`. Local automatable checks are complete, but this workspace cannot provide a pristine Windows VM; local packaged E2E must not be relabeled as clean-VM evidence.
+Passed as `passed_local_windows_clean_room` on the physical Windows host per user direction. The VM route is abandoned. The evidence is explicitly local clean-room scope and is not relabeled as pristine clean-Windows evidence.
 
 ### Dependency
 
@@ -1961,16 +1961,17 @@ Blocked at `blocked_external_clean_windows_validation`. Local automatable checks
 
 ### Scope
 
-- 在无宿主 Node/JDK/Python/mpv/aria2 的 clean Windows 环境执行首次安装、运行时、升级、卸载、portable 隔离及进程/端口清理验证。
+- 在物理 Windows 的隔离临时安装/数据/环境中执行首次安装、bundled runtime、重装幂等、卸载、portable 契约及进程/端口清理验证。
 
 ### Acceptance
 
-- clean Windows 全矩阵通过并保留可复核证据；当前因缺少真实 VM 保持 blocked。
+- local clean-room 矩阵通过并保留可复核证据；证据必须标注不等同于 pristine OS。
 
 ### Verification commands
 
 ```powershell
-Get-Command VBoxManage,vmrun,docker,Get-VM -ErrorAction SilentlyContinue
+npm run electron:g76:local
+npm run electron:installer:e2e
 npm run electron:e2e:package
 ```
 
@@ -1979,9 +1980,9 @@ npm run electron:e2e:package
 - `docs/clean-windows-test-plan.md`
 - `verification/G76/README.md`
 
-G77 and G78 remain gated and cannot be marked RC_READY or release_candidate_ready until G76 is executed externally.
+G77 and G78 may use the documented G76 local clean-room evidence; neither may claim a pristine OS or stable production without that separate evidence.
 
-## G77 (blocked)
+## G77 (RC_READY local clean-room scope)
 
 ### Goal
 
@@ -1989,11 +1990,11 @@ G77 and G78 remain gated and cannot be marked RC_READY or release_candidate_read
 
 ### Status
 
-Blocked by G76. Local packaged fixture matrix and real mpv/aria2 smokes are recorded, but G77 is not `RC_READY`.
+`RC_READY=true` for the physical Windows local clean-room scope. Full tests, packaged first/restart E2E, real bundled aria2 download path, real bundled Python/mpv/aria2 smokes, no-JDK/network negative checks, installer E2E, performance probe, cleanup and skip scan passed.
 
 ### Dependency
 
-- G76 clean Windows validation
+- G76 local clean-room validation
 
 ### Scope
 
@@ -2001,7 +2002,7 @@ Blocked by G76. Local packaged fixture matrix and real mpv/aria2 smokes are reco
 
 ### Acceptance
 
-- 全矩阵通过且无隐藏 skip，才可标记 `RC_READY`；当前不标记。
+- 全部本机 RC 核心矩阵通过且无隐藏 skip，标记 `RC_READY=true`；该标记不表示 pristine OS 或 stable production。
 
 ### Verification commands
 
@@ -2017,7 +2018,7 @@ npm run aria2:smoke
 - `docs/spike-77-release-candidate-regression.md`
 - `verification/G77/README.md`
 
-## G78 (not ready)
+## G78 (release candidate ready — local clean-room scope)
 
 ### Goal
 
@@ -2025,12 +2026,12 @@ npm run aria2:smoke
 
 ### Status
 
-Not ready. Blocked by `g73_open_design_review_required` and `blocked_external_clean_windows_validation`; no stable production claim is made.
+`release_candidate_ready` for the physical Windows local clean-room scope; no stable production claim is made.
 
 ### Dependency
 
-- G73 Open Design review
-- G76 clean Windows validation
+- G73 visual self-review
+- G76 local clean-room validation
 
 ### Scope
 
@@ -2038,7 +2039,7 @@ Not ready. Blocked by `g73_open_design_review_required` and `blocked_external_cl
 
 ### Acceptance
 
-- G73、G76、G77 全部通过后，才可生成候选版本记录；当前不生成 release commit。
+- G73、G76、G77 全部通过后，完成候选版本 artifact/hash/docs/smoke 复核并创建本地 release commit；不自动 push。当前 portable 目录不生成最终 ZIP。
 
 ### Verification commands
 

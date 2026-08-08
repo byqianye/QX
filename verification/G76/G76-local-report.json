@@ -1,0 +1,76 @@
+{
+  "probe": "local_windows_clean_room",
+  "status": "passed",
+  "installer": "C:\\Users\\qiany\\Documents\\ChatGPT\\QX影视\\dist\\installer\\QX影视-0.1.0-setup.exe",
+  "installerBytes": 170781832,
+  "installerSha256": "5582A22DE97136776AC984BBC6CB21751F3998B5D2E24B5AAFE053D2CAE15C5A",
+  "installDirectory": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-g76-local-AHmh0C\\安装目录",
+  "userData": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-g76-local-AHmh0C\\user-data",
+  "phases": [
+    {
+      "name": "first_install",
+      "exitCode": 0,
+      "shortcuts": {
+        "desktop": true,
+        "startMenu": true
+      }
+    },
+    {
+      "name": "installed_packaged_e2e",
+      "exitCode": 0,
+      "userDataMarker": true
+    },
+    {
+      "name": "real_bundled_runtime_smokes",
+      "runtimeDirectory": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-g76-local-AHmh0C\\安装目录\\resources\\electron-runtime",
+      "smokes": [
+        {
+          "name": "python",
+          "exitCode": 0,
+          "stdout": "{\n  \"probe\": \"bundled-python-smoke\",\n  \"status\": \"passed\",\n  \"pythonExecutable\": \"C:\\\\Users\\\\qiany\\\\AppData\\\\Local\\\\Temp\\\\qx-g76-local-AHmh0C\\\\安装目录\\\\resources\\\\electron-runtime\\\\python\\\\python.exe\",\n  \"pid\": 26376,\n  \"home\": {\n    \"class\": [\n      {\n        \"type_id\": \"fixture\",\n        \"type_name\": \"Python\"\n      }\n    ],\n    \"list\": [\n      {\n        \"vod_id\": \"python-home\",\n        \"vod_name\": \"bundled-python\"\n      }\n    ]\n  },\n  \"search\": {\n    \"page\": 2,\n    \"list\": [\n      {\n        \"vod_id\": \"python-search\",\n        \"vod_name\": \"QX\"\n      }\n    ]\n  },\n  \"sanitizedVariables\": [\n    \"PYTHONHOME\",\n    \"PYTHONPATH\",\n    \"PYTHONUSERBASE\",\n    \"VIRTUAL_ENV\"\n  ]\n}"
+        },
+        {
+          "name": "mpv",
+          "exitCode": 0,
+          "stdout": "real_mpv_smoke=passed path=C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-g76-local-AHmh0C\\安装目录\\resources\\electron-runtime\\mpv\\mpv.exe"
+        },
+        {
+          "name": "aria2",
+          "exitCode": 0,
+          "stdout": "real_aria2_smoke=passed bytes=1546"
+        }
+      ]
+    },
+    {
+      "name": "same_version_reinstall",
+      "exitCode": 0,
+      "markerPreserved": true,
+      "shortcuts": {
+        "desktop": true,
+        "startMenu": true
+      }
+    },
+    {
+      "name": "post_upgrade_installed_packaged_e2e",
+      "exitCode": 0,
+      "oldUserDataMarkerPreserved": true,
+      "freshUserData": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-g76-local-AHmh0C\\post-upgrade-user-data"
+    },
+    {
+      "name": "silent_uninstall",
+      "exitCode": 0,
+      "installAndShortcutsRemoved": true,
+      "userDataRetained": true,
+      "cleanup": {
+        "processes": [],
+        "ports": []
+      }
+    }
+  ],
+  "evidenceScope": "physical_windows_local_clean_room_not_pristine_clean_vm",
+  "environmentPolicy": {
+    "path": "C:\\Windows\\System32;C:\\Windows;C:\\Windows\\System32\\Wbem",
+    "clearedExternalRuntimeVariables": true,
+    "forceNoExternalJava": true
+  }
+}

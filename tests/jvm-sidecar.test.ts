@@ -8,6 +8,7 @@ import { buildJvmArtifacts, removeJvmArtifacts } from "../src/spikes/jvm-build.j
 import { JvmSidecar } from "../src/spider/jvm-sidecar.js";
 
 const javaExecutable = resolveJavaExecutable();
+// Intentional environment guard: this suite starts a JVM sidecar and needs a real local Java executable.
 const jvmDescribe = javaExecutable ? describe : describe.skip;
 const movieLabel = "\u7535\u5f71";
 

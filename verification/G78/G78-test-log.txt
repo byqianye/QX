@@ -1,0 +1,7 @@
+Installer hash and version evidence: recorded
+`npm run electron:installer:e2e`: passed; real temporary install, shortcut, installed first/restart/backup fixture E2E, silent uninstall and cleanup
+Runtime inventory and SBOM: recorded
+Open Design review: user-authorized repository self-review passed
+G76 local clean-room matrix: passed
+G77 RC matrix: `RC_READY=true` (local clean-room scope)
+Release commit: created locally; push not performed

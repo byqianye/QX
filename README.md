@@ -26,7 +26,7 @@ Normal-mode data is stored under the Electron user-data directory, normally `%AP
 
 ## Limitations
 
-DRM playback, Android DEX spiders, bundled third-party media sources and hosted parsing services are outside this release scope. See [the user guide](docs/user/guide.md) and the release-gate records under `docs/` for troubleshooting and validation status.
+DRM playback, Android DEX spiders, bundled third-party media sources and hosted parsing services are outside this release scope. See [the user guide](docs/user/guide.md), its [chapter index](docs/user/guide.md#分章节阅读), and the release-gate records under `docs/` for troubleshooting and validation status.
 
 ## Development verification
 

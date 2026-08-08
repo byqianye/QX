@@ -1,0 +1,5 @@
+Automatable packaged E2E: passed locally, not clean-VM evidence
+System probe: only wsl.exe available; no usable WSL distro
+HypervisorPresent: False
+Clean install/upgrade/uninstall/offline/non-ASCII/cleanup matrix: not run
+

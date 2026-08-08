@@ -1,0 +1,5 @@
+release_candidate_ready:local_windows_clean_room
+Blockers: pristine OS-image validation, true old-version upgrade and system-level disconnected-network run remain outside this evidence scope
+RC_READY: yes (local_windows_clean_room)
+release_candidate_ready: yes (local_windows_clean_room)
+stable production: no

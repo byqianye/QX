@@ -880,6 +880,7 @@ async function openPlayerWindow(): Promise<void> {
     return;
   }
 
+  const iconPath = brandIconPath();
   const child = new BrowserWindow({
     width: 1120,
     height: 760,
@@ -887,6 +888,7 @@ async function openPlayerWindow(): Promise<void> {
     minHeight: 640,
     show: !SMOKE_MODE && !E2E_MODE,
     title: `${APP_NAME} · 播放`,
+    ...(iconPath ? { icon: iconPath } : {}),
     ...(mainWindow ? { parent: mainWindow } : {}),
     webPreferences: {
       contextIsolation: true,
@@ -970,12 +972,14 @@ async function createMainWindow(): Promise<void> {
   const displays = screen.getAllDisplays().map((display) => display.workArea);
   const restoredBounds = restoreWindowBounds(persisted.window, displays, screen.getPrimaryDisplay().workArea);
 
+  const iconPath = brandIconPath();
   mainWindow = new BrowserWindow({
     ...restoredBounds,
     minWidth: 960,
     minHeight: 640,
     show: !SMOKE_MODE && !E2E_MODE,
     title: APP_NAME,
+    ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -1032,6 +1036,16 @@ async function createMainWindow(): Promise<void> {
     await closeShell(true);
     app.quit();
   }
+}
+
+function brandIconPath(): string | undefined {
+  const candidates = app.isPackaged
+    ? [
+        join(process.resourcesPath, "brand", "qx-yingshi.ico"),
+        join(process.resourcesPath, "qx-yingshi.ico"),
+      ]
+    : [join(app.getAppPath(), "build", "assets", "qx-yingshi.ico")];
+  return candidates.find((candidate) => existsSync(candidate));
 }
 
 async function recoverDataDirectoryStartup(code: string | undefined): Promise<boolean> {
@@ -1128,6 +1142,7 @@ async function runE2e(baseUrl: string): Promise<void> {
         if (!mainWindow || mainWindow.isDestroyed()) throw new Error("Main window is unavailable for playback probe");
         return mainWindow.webContents.executeJavaScript(script);
       },
+      ...(process.env.QX_E2E_CAPTURE_DIR ? { captureWindow: captureE2eWindow } : {}),
       readWindowHtml: async () => {
         if (!mainWindow || mainWindow.isDestroyed()) throw new Error("Main window is unavailable for renderer probe");
         if (initialRendererRead) initialRendererRead = false;
@@ -1190,6 +1205,8 @@ async function runE2e(baseUrl: string): Promise<void> {
       ...(process.env.QX_E2E_LOCAL_MEDIA_FILE ? { localMediaFile: process.env.QX_E2E_LOCAL_MEDIA_FILE } : {}),
       verifyDownloads: Boolean(process.env.QX_E2E_DOWNLOAD_DIR),
       ...(process.env.QX_E2E_DOWNLOAD_DIR ? { downloadDirectory: process.env.QX_E2E_DOWNLOAD_DIR } : {}),
+      ...(process.env.QX_E2E_DOWNLOAD_URL ? { downloadUrl: process.env.QX_E2E_DOWNLOAD_URL } : {}),
+      realDownloads: process.env.QX_E2E_REAL_ARIA2 === "1",
       verifyPush: Boolean(process.env.QX_E2E_PUSH_URL),
       ...(process.env.QX_E2E_PUSH_URL ? { pushUrl: process.env.QX_E2E_PUSH_URL } : {}),
       verifyCast: Boolean(process.env.QX_E2E_CAST_SSDP_PORT),
@@ -1225,6 +1242,16 @@ async function runE2e(baseUrl: string): Promise<void> {
   }
   await closeShell(true);
   app.quit();
+}
+
+async function captureE2eWindow(name: string): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) throw new Error("Main window is unavailable for screenshot capture");
+  const directory = process.env.QX_E2E_CAPTURE_DIR;
+  if (!directory) return;
+  mkdirSync(directory, { recursive: true });
+  const runName = process.env.QX_E2E_FRESH_TRUST === "0" ? "restart" : "first";
+  const image = await mainWindow.webContents.capturePage();
+  writeFileSync(join(directory, `${runName}-${name}.png`), image.toPNG());
 }
 
 function queueWindowStatePersistence(): void {

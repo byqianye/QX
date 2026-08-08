@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import AppSidebar from "./AppSidebar.vue";
+import AboutPanel from "./AboutPanel.vue";
 import CategoryTabs from "./CategoryTabs.vue";
 import DetailDrawer from "./DetailDrawer.vue";
 import DiagnosticPanel from "./DiagnosticPanel.vue";
@@ -14,10 +15,6 @@ import HistoryView from "./HistoryView.vue";
 import CacheManagement from "./CacheManagement.vue";
 import StorageManagement from "./StorageManagement.vue";
 import BackupRestore from "./BackupRestore.vue";
-import LiveSourcesView from "./LiveSourcesView.vue";
-import LocalMediaView from "./LocalMediaView.vue";
-import DownloadsView from "./DownloadsView.vue";
-import EpgSourcesView from "./EpgSourcesView.vue";
 import MediaGrid from "./MediaGrid.vue";
 import PlaybackSelector from "./PlaybackSelector.vue";
 import PlaybackHealthPanel from "./PlaybackHealthPanel.vue";
@@ -38,6 +35,11 @@ import type {
   RendererViewStatePatch,
   HistoryResumeMode,
 } from "./state.js";
+
+const LazyDownloadsView = defineAsyncComponent({ loader: () => import("./DownloadsView.vue"), delay: 0 });
+const LazyEpgSourcesView = defineAsyncComponent({ loader: () => import("./EpgSourcesView.vue"), delay: 0 });
+const LazyLiveSourcesView = defineAsyncComponent({ loader: () => import("./LiveSourcesView.vue"), delay: 0 });
+const LazyLocalMediaView = defineAsyncComponent({ loader: () => import("./LocalMediaView.vue"), delay: 0 });
 
 const props = defineProps<{
   state: RendererState;
@@ -457,7 +459,7 @@ function navigationFromPage(page: string): RendererNavigation {
         />
 
         <template v-if="view === 'downloads'">
-          <DownloadsView
+          <LazyDownloadsView
             :state="props.state.downloads"
             :pending="props.pending"
             @select-folder="emit('downloadSelectFolder')"
@@ -472,7 +474,7 @@ function navigationFromPage(page: string): RendererNavigation {
           />
         </template>
         <template v-else-if="view === 'local'">
-          <LocalMediaView
+          <LazyLocalMediaView
             :state="props.state.localMedia"
             :history="props.state.history"
             :player="props.state.playback.player"
@@ -495,7 +497,7 @@ function navigationFromPage(page: string): RendererNavigation {
           />
         </template>
         <template v-else-if="view === 'live'">
-          <LiveSourcesView
+          <LazyLiveSourcesView
             :state="props.state.live"
             :pending="props.pending"
             :danmaku="props.state.danmaku"
@@ -541,6 +543,7 @@ function navigationFromPage(page: string): RendererNavigation {
               </select>
             </label>
           </SettingsSection>
+          <AboutPanel :storage="props.state.storage" />
           <SettingsSection title="LocalProxy" description="播放需要代理时，Electron 主进程负责管理代理会话与生命周期。">
             <div class="settings-row"><span>状态</span><strong>{{ props.state.playback.playback.available ? "按线路决定" : "等待播放线路" }}</strong></div>
             <button type="button" class="button-secondary" data-action="proxy-test">测试连接</button>
@@ -601,7 +604,7 @@ function navigationFromPage(page: string): RendererNavigation {
             @clear="emit('backupClear')"
             @open="emit('backupOpen')"
           />
-          <EpgSourcesView
+          <LazyEpgSourcesView
             :state="props.state.live.epg"
             :pending="props.pending"
             @preview="emit('epgPreview', $event)"

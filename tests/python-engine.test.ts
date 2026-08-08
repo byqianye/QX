@@ -12,6 +12,8 @@ import { PythonSidecar } from "../src/spider/python-sidecar.js";
 
 const pythonExecutable = process.env.QX_PYTHON ?? "python";
 const pythonAvailable = spawnSync(pythonExecutable, ["--version"], { stdio: "ignore", windowsHide: true }).status === 0;
+// Intentional environment guard: this unit suite requires a usable local Python executable;
+// the release path is covered separately by the bundled Python smoke.
 const pythonDescribe = pythonAvailable ? describe : describe.skip;
 const fixture = fileURLToPath(new URL("../fixtures/spiders/python-sidecar.py", import.meta.url));
 

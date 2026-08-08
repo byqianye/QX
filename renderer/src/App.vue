@@ -4,6 +4,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { RendererApi } from "./api.js";
 import ConfigImportView from "./ConfigImportView.vue";
 import { toAppError } from "./error.js";
+import LaunchSplash from "./LaunchSplash.vue";
 import PlayerWindow from "./PlayerWindow.vue";
 import SpiderView from "./SpiderView.vue";
 import {
@@ -27,6 +28,7 @@ const persistence = ref<RendererPersistenceState | null>(null);
 const restoreCandidate = ref<RendererPersistenceState | null>(null);
 const restored = ref(false);
 const isPlayerWindow = new URL(window.location.href).searchParams.get("player-window") === "1";
+const rendererTheme = computed<"light" | "dark">(() => persistence.value?.theme === "dark" ? "dark" : "light");
 let scrollTimer: ReturnType<typeof setTimeout> | undefined;
 let playerSyncTimer: ReturnType<typeof setTimeout> | undefined;
 let liveSyncTimer: ReturnType<typeof setTimeout> | undefined;
@@ -292,11 +294,13 @@ function playLocal(itemId: string, resumeMode?: HistoryResumeMode): void {
     v-else
     id="vue-renderer"
     data-testid="vue-renderer"
+    :data-theme="rendererTheme"
     :data-ready="String(state.ready)"
     :data-pending="pending ?? ''"
   >
+    <LaunchSplash v-if="!state.ready" />
     <ConfigImportView
-      v-if="showImport"
+      v-else-if="showImport"
       :state="state.import"
       :pending="pending"
       :persistence-diagnostic="persistence?.diagnostic"

@@ -154,6 +154,7 @@ describe("Vue renderer", () => {
     const wrapper = mount(SpiderView, {
       props: { state, pending: null, lineIndex: 0, order: "forward", initialNavigation: "local" },
     });
+    await vi.waitFor(() => expect(wrapper.find('[data-testid="local-media-page"]').exists()).toBe(true));
     expect(wrapper.get('[data-testid="local-media-page"]')).toBeTruthy();
     await wrapper.get('[data-action="local-open-file"]').trigger("click");
     expect(wrapper.emitted("localOpenFile")).toEqual([[]]);
@@ -264,6 +265,7 @@ describe("Vue renderer", () => {
     const wrapper = mount(SpiderView, {
       props: { state, pending: null, lineIndex: 0, order: "forward", initialNavigation: "local" },
     });
+    await vi.waitFor(() => expect(wrapper.find('[data-action="local-remove-history"]').exists()).toBe(true));
     await wrapper.get('[data-action="local-remove-history"]').trigger("click");
     expect(wrapper.emitted("localRemoveHistory")).toEqual([["local-history-1"]]);
   });
@@ -324,12 +326,30 @@ describe("Vue renderer", () => {
     const wrapper = mount(App);
     await flushPromises();
     expect(wrapper.get('[data-testid="config-import-form"]')).toBeTruthy();
+    expect(wrapper.get('[data-testid="first-launch-guide"]')).toBeTruthy();
     await wrapper.get('[data-action="confirm-import"]').trigger("click");
     await flushPromises();
 
     expect(wrapper.get('[data-testid="desktop-spider-ui"]')).toBeTruthy();
     expect(wrapper.get('[data-testid="search-form"]')).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith("/api/import/confirm", expect.objectContaining({ method: "POST" }));
+    wrapper.unmount();
+  });
+
+  it("shows the local startup splash until the initial state is ready", async () => {
+    let resolveState!: (response: { ok: boolean; json: () => Promise<RendererEnvelope> }) => void;
+    const fetchMock = vi.fn(() => new Promise<{ ok: boolean; json: () => Promise<RendererEnvelope> }>((resolve) => {
+      resolveState = resolve;
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const wrapper = mount(App);
+    await Promise.resolve();
+    expect(wrapper.get('[data-testid="launch-splash"]')).toBeTruthy();
+
+    resolveState({ ok: true, json: async () => readyEnvelope() });
+    await flushPromises();
+    expect(wrapper.find('[data-testid="launch-splash"]').exists()).toBe(false);
     wrapper.unmount();
   });
 
@@ -351,9 +371,13 @@ describe("Vue renderer", () => {
 
     const wrapper = mount(App);
     await flushPromises();
+    await flushPromises();
 
+    expect(wrapper.get('[data-testid="vue-renderer"]').attributes("data-theme")).toBe("dark");
     expect(wrapper.get('[data-testid="desktop-spider-ui"]').attributes("data-theme")).toBe("dark");
+    await vi.waitFor(() => expect(wrapper.find('[data-testid="epg-sources"]').exists()).toBe(true));
     expect(wrapper.findAll('[data-testid="settings-section"]')).toHaveLength(7);
+    expect(wrapper.get('[data-testid="about-panel"]')).toBeTruthy();
     expect(wrapper.get('[data-testid="cache-management"]')).toBeTruthy();
     expect(wrapper.get('[data-testid="storage-management"]')).toBeTruthy();
     expect((wrapper.get("#search-key").element as HTMLInputElement).value).toBe("蜘蛛侠");
@@ -618,6 +642,7 @@ describe("Vue renderer", () => {
 
     const wrapper = mount(App);
     await flushPromises();
+    await flushPromises();
 
     expect(wrapper.get('[data-testid="app-sidebar"]')).toBeTruthy();
     expect(wrapper.get('[data-testid="top-search-bar"]')).toBeTruthy();
@@ -637,6 +662,7 @@ describe("Vue renderer", () => {
     expect(wrapper.get('[data-action="downloads"]')).toBeTruthy();
     expect(wrapper.get('[data-testid="detail-drawer"]').text()).toContain("导演");
     await wrapper.get('[data-action="settings"]').trigger("click");
+    await flushPromises();
     expect(wrapper.findAll('[data-testid="settings-section"]').length).toBeGreaterThanOrEqual(5);
     expect(wrapper.get('[data-testid="epg-sources"]')).toBeTruthy();
     expect(wrapper.get('[data-action="epg-source-preview"]')).toBeTruthy();
@@ -647,6 +673,7 @@ describe("Vue renderer", () => {
     await themeMode.setValue("system");
     expect(wrapper.get('[data-testid="desktop-spider-ui"]').attributes("data-theme-mode")).toBe("system");
     await wrapper.get('[data-action="live-sources"]').trigger("click");
+    await vi.waitFor(() => expect(wrapper.find('[data-testid="live-sources"]').exists()).toBe(true));
     expect(wrapper.get('[data-testid="live-sources"]')).toBeTruthy();
     expect(wrapper.get('[data-action="live-source-preview"]')).toBeTruthy();
     wrapper.unmount();

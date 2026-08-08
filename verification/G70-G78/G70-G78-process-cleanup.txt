@@ -1,0 +1,3 @@
+Post-run process probe: no QX java/mpv/aria2/electron processes remained.
+The existing ComfyUI embedded Python process was external and left untouched.
+

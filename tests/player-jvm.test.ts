@@ -11,6 +11,7 @@ import { resolveJavaExecutable } from "../src/spikes/java-probe.js";
 import { JvmSidecar } from "../src/spider/jvm-sidecar.js";
 
 const javaExecutable = resolveJavaExecutable();
+// Intentional environment guard: player-sidecar coverage needs a real local Java executable.
 const jvmDescribe = javaExecutable ? describe : describe.skip;
 
 jvmDescribe("JVM-native playerContent vertical slice", () => {

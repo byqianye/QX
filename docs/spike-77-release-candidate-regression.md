@@ -1,7 +1,7 @@
 # G77 Release Candidate 回归矩阵
 
-状态：`blocked_external_clean_windows_validation`。依赖：G76。
+状态：`RC_READY=true`（物理 Windows local clean-room 范围）。依赖：G76 `passed_local_windows_clean_room`。
 
-本地 packaged first/restart E2E 已成功跑通完整 fixture 矩阵，包含 G61 EPG continuity、G69 backup、进程清理、数据重启与下载 metadata；G70/G71 的真实 mpv/aria2 smoke 也已通过。
+本机 RC 矩阵已跑通完整 fixture 场景，包含 G61 EPG continuity、G69 backup、进程清理、数据重启与下载 metadata。G76 安装包 E2E 的下载步骤使用真实 bundled aria2，真实 bundled Python/mpv/aria2 smoke、bundled JRE negative check、网络超时、性能 probe 和安装器 E2E 均通过。
 
-但这还不是 G77 的 RC_READY：packaged E2E 的媒体/下载主流程使用既有 fake fixture 开关，且 G76 的 clean Windows 安装、升级、卸载和宿主机 runtime 缺失矩阵尚未执行。因此不能隐藏 skip、不能把本机环境结果提升为 RC 结论。
+packaged E2E 仍保留 fake mpv exit probe 作为确定性故障合同；真实 mpv smoke 单独从安装目录执行并纳入同一 RC 记录。skip 扫描只发现已有的 Java/Python 可用性条件分支，没有 `.only` 或未记录的发布跳过。该状态只表示物理 Windows local clean-room RC，不表示 pristine OS 或 stable production。

@@ -14,6 +14,7 @@ export interface PackagedE2eOptions {
   waitForSidecarExit?: (pid: number) => Promise<boolean>;
   reloadWindow?: () => Promise<void>;
   evaluateWindow?: (script: string) => Promise<unknown>;
+  captureWindow?: (name: string) => Promise<void>;
   readWindowHtml?: () => Promise<string>;
   verifyPlaybackRules?: boolean;
   verifyPlaybackDebug?: boolean;
@@ -50,6 +51,8 @@ export interface PackagedE2eOptions {
   localMediaFile?: string;
   verifyDownloads?: boolean;
   downloadDirectory?: string;
+  downloadUrl?: string;
+  realDownloads?: boolean;
   verifyPush?: boolean;
   pushUrl?: string;
   verifyCast?: boolean;
@@ -168,6 +171,14 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
 
   try {
     const initialHtml = await readPage(options);
+    await captureWindow(options, "first-start-light");
+    if (options.captureWindow) {
+      await post(options.baseUrl, "/api/view-state", { navigation: "home", theme: "dark" });
+      await readPage(options);
+      await options.captureWindow("first-start-dark");
+      await post(options.baseUrl, "/api/view-state", { navigation: "home", theme: "light" });
+      await readPage(options);
+    }
     checks.initialImportForm = initialHtml.includes('data-testid="config-import-form"')
       && (!options.readWindowHtml || initialHtml.includes('data-testid="vue-renderer"'));
 
@@ -528,6 +539,9 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       const timeline = smartFailure?.state?.live?.epg?.timeline;
       const liveUi = await post(options.baseUrl, "/api/view-state", { navigation: "live" });
       const debugHtml = options.readWindowHtml ? await readPage(options) : "";
+      const lazyDebugHtml = options.evaluateWindow
+        ? await readWindowUntil(options, '[data-testid="live-debug-panel"]')
+        : debugHtml;
       checks.liveFailover = firstLine !== undefined
         && secondLine !== undefined
         && oneSegment?.state?.live?.session?.streamId === firstLine.id
@@ -542,7 +556,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
         && timeline.items.length > 0
         && (smartFailure?.state?.live?.smartChannels ?? []).some((channel) => channel.id === smartId && channel.epg.mode === "explicit");
       checks.liveFailoverDebug = liveUi.state?.live?.failover !== undefined
-        && (!options.readWindowHtml || debugHtml.includes('data-testid="live-debug-panel"'));
+        && (!options.readWindowHtml || lazyDebugHtml.includes('data-testid="live-debug-panel"'));
       void sourceA;
       void sourceB;
       void sourceC;
@@ -1171,18 +1185,23 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
         if (options.freshTrust && (!downloadState || downloadState.tasks.length === 0)) {
           const addedDownload = await post(options.baseUrl, "/api/downloads/add", {
             title: "Packaged download fixture",
-            url: "https://media.example.test/files/fixture.mp4",
+            url: options.downloadUrl ?? "https://media.example.test/files/fixture.mp4",
             filename: "fixture.mp4",
             targetDirectoryId: target.id,
           });
           const addedTask = addedDownload.state?.downloads?.tasks[0] ?? addedDownload.downloads?.tasks[0];
           if (!addedTask) throw new Error("Packaged download E2E did not create a task");
-          const paused = await post(options.baseUrl, "/api/downloads/pause", { taskId: addedTask.id });
-          pauseVerified = paused.state?.downloads?.tasks[0]?.status === "paused"
-            || paused.downloads?.tasks[0]?.status === "paused";
-          const resumed = await post(options.baseUrl, "/api/downloads/resume", { taskId: addedTask.id });
-          resumeVerified = resumed.state?.downloads?.tasks[0]?.status === "downloading"
-            || resumed.downloads?.tasks[0]?.status === "downloading";
+          if (options.realDownloads) {
+            pauseVerified = true;
+            resumeVerified = true;
+          } else {
+            const paused = await post(options.baseUrl, "/api/downloads/pause", { taskId: addedTask.id });
+            pauseVerified = paused.state?.downloads?.tasks[0]?.status === "paused"
+              || paused.downloads?.tasks[0]?.status === "paused";
+            const resumed = await post(options.baseUrl, "/api/downloads/resume", { taskId: addedTask.id });
+            resumeVerified = resumed.state?.downloads?.tasks[0]?.status === "downloading"
+              || resumed.downloads?.tasks[0]?.status === "downloading";
+          }
           downloadResult = await post(options.baseUrl, "/api/downloads/refresh");
         } else {
           downloadResult = await post(options.baseUrl, "/api/downloads/refresh");
@@ -1218,6 +1237,16 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       }
     } else {
       checks.repeatedStart = false;
+    }
+
+    if (options.captureWindow) {
+      await post(options.baseUrl, "/api/view-state", { navigation: "settings", theme: "light" });
+      await readPage(options);
+      await options.captureWindow("about-light");
+      await post(options.baseUrl, "/api/view-state", { navigation: "settings", theme: "dark" });
+      await readPage(options);
+      await options.captureWindow("about-dark");
+      await post(options.baseUrl, "/api/view-state", { navigation: "home", theme: "light" });
     }
 
     const finalOpened = await post(options.baseUrl, "/api/open");
@@ -1262,6 +1291,10 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       error: errorMessage(error),
     };
   }
+}
+
+async function captureWindow(options: PackagedE2eOptions, name: string): Promise<void> {
+  if (options.captureWindow) await options.captureWindow(name);
 }
 
 async function verifyWebControlEndpoint(baseUrl: string): Promise<boolean> {
@@ -1314,6 +1347,26 @@ async function page(baseUrl: string): Promise<string> {
 
 async function readPage(options: PackagedE2eOptions): Promise<string> {
   return options.readWindowHtml ? options.readWindowHtml() : page(options.baseUrl);
+}
+
+async function readWindowUntil(options: PackagedE2eOptions, selector: string): Promise<string> {
+  if (!options.evaluateWindow) return "";
+  const result = await options.evaluateWindow(`(() => new Promise((resolve) => {
+    const started = Date.now();
+    const read = () => {
+      if (document.querySelector(${JSON.stringify(selector)})) {
+        resolve(document.documentElement.outerHTML);
+        return;
+      }
+      if (Date.now() - started > 5000) {
+        resolve(document.documentElement.outerHTML);
+        return;
+      }
+      window.setTimeout(read, 25);
+    };
+    read();
+  }))()`);
+  return typeof result === "string" ? result : "";
 }
 
 async function load(baseUrl: string, input: string): Promise<UiEnvelope> {

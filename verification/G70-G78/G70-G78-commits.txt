@@ -1,0 +1,5 @@
+ec05611 checkpoint: complete G70-G71 bundled runtimes
+1f9b3e2 checkpoint: complete G72-G76 release preparation
+275fe28 checkpoint: harden release metadata and audit evidence
+b68d986 checkpoint: add bundled Python release smoke
+release: QX影视 0.1.0 (local release commit; push not performed)

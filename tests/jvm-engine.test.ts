@@ -52,6 +52,8 @@ describe("formal JVM engine boundaries", () => {
 });
 
 const javaExecutable = resolveJavaExecutable();
+// Intentional environment guard: lifecycle coverage requires a real local Java executable;
+// missing-host-runtime behavior is covered by the packaged negative probe.
 const jvmDescribe = javaExecutable ? describe : describe.skip;
 
 jvmDescribe("formal JVM engine lifecycle", () => {

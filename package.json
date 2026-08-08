@@ -13,13 +13,16 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "renderer:build": "vite build --config vite.config.ts",
+    "brand:assets": "tsx src/release/generate-brand-assets.ts",
     "electron:build-runtime": "tsx src/electron/package-runtime.ts",
-    "electron:build": "npm run electron:build-runtime && npm run renderer:build && tsc -p tsconfig.electron.json",
+    "electron:build": "npm run brand:assets && npm run electron:build-runtime && npm run renderer:build && tsc -p tsconfig.electron.json",
     "electron:dev": "npm run electron:build && electron .",
     "electron:smoke": "npm run electron:build && tsx src/electron/smoke-launch.ts",
-    "electron:package:win": "npm run electron:build && electron-packager . QX影视 --platform=win32 --arch=x64 --out=dist/electron-package --overwrite --prune=true --extra-resource=dist/electron-runtime",
+    "electron:package:win": "npm run electron:build && electron-packager . QX影视 --platform=win32 --arch=x64 --out=dist/electron-package --overwrite --prune=true --icon=build/assets/qx-yingshi.ico --extra-resource=dist/electron-runtime --extra-resource=build/assets/qx-yingshi.ico",
     "electron:installer:win": "npm run electron:build && electron-builder --win nsis",
     "electron:e2e:package": "npm run electron:package:win && tsx src/electron/e2e-launch.ts",
+    "electron:installer:e2e": "tsx src/electron/installer-e2e.ts",
+    "electron:g76:local": "tsx src/electron/g76-local-acceptance.ts",
     "electron:verify:no-jdk": "tsx src/electron/jdk-missing-launch.ts",
     "electron:verify:network-timeout": "tsx src/electron/network-timeout-launch.ts",
     "electron:acceptance": "npm run electron:e2e:package && npm run electron:verify:no-jdk && npm run electron:verify:network-timeout",
@@ -80,9 +83,14 @@
       {
         "from": "dist/electron-runtime",
         "to": "electron-runtime"
+      },
+      {
+        "from": "build/assets/qx-yingshi.ico",
+        "to": "brand/qx-yingshi.ico"
       }
     ],
     "win": {
+      "icon": "build/assets/qx-yingshi.ico",
       "target": [
         {
           "target": "nsis",

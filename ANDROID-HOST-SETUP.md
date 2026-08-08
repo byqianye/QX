@@ -28,3 +28,4 @@ The commands do not download Android system images automatically. Use an existin
 ## Blockers
 
 - `ANDROID_DEVICE_NOT_FOUND`
+- `ANDROID_POC_KEYWORD_REQUIRED`

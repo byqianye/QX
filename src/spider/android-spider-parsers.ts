@@ -13,6 +13,12 @@ export interface AndroidPlaybackRequest {
   id: string;
 }
 
+export interface AndroidPlaybackLineStats {
+  hasPlayFrom: boolean;
+  hasPlayUrl: boolean;
+  playLineCount: number;
+}
+
 export function parseAndroidSpiderResult(value: unknown): Record<string, unknown> {
   const raw = unwrapResult(value);
   const unwrapped = typeof raw === "string" ? parseJson(raw) : raw;
@@ -34,12 +40,18 @@ export function firstAndroidVodId(value: unknown): string | undefined {
 }
 
 export function hasAndroidPlaybackFields(value: unknown): boolean {
+  const stats = androidPlaybackLineStats(value);
+  return stats.hasPlayFrom && stats.hasPlayUrl;
+}
+
+export function androidPlaybackLineStats(value: unknown): AndroidPlaybackLineStats {
   const item = extractAndroidVodItems(value)[0];
-  return Boolean(item
-    && typeof item.vod_play_from === "string"
-    && item.vod_play_from.trim()
-    && typeof item.vod_play_url === "string"
-    && item.vod_play_url.trim());
+  const playFrom = typeof item?.vod_play_from === "string" ? item.vod_play_from.trim() : "";
+  const playUrl = typeof item?.vod_play_url === "string" ? item.vod_play_url.trim() : "";
+  const playLineCount = playUrl
+    ? playUrl.split("$$$").flatMap((group) => group.split("#")).filter((line) => line.trim().length > 0).length
+    : 0;
+  return { hasPlayFrom: playFrom.length > 0, hasPlayUrl: playUrl.length > 0, playLineCount };
 }
 
 export function firstAndroidPlaybackRequest(value: unknown): AndroidPlaybackRequest | undefined {

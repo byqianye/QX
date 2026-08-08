@@ -54,6 +54,10 @@ export interface AndroidSpiderBridgeClientOptions {
   artifactUrl?: string;
 }
 
+export interface AndroidSpiderBridgeRequestOptions {
+  signal?: AbortSignal;
+}
+
 export class AndroidSpiderBridgeClientError extends Error {
   public constructor(
     public readonly code: string,
@@ -72,6 +76,7 @@ interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
   timer: NodeJS.Timeout;
+  abortCleanup?: () => void;
 }
 
 interface SessionState {
@@ -87,10 +92,12 @@ export class AndroidSpiderBridgeClient {
   private readonly options: Required<Pick<AndroidSpiderBridgeClientOptions, "localPort" | "remotePort" | "requestTimeoutMs" | "healthTimeoutMs" | "operationTimeoutMs" | "artifactRemoteDirectory">> & AndroidSpiderBridgeClientOptions;
   private socket: net.Socket | null = null;
   private readonly pending = new Map<string, PendingRequest>();
+  private readonly ignoredResponseIds = new Set<string>();
   private receiveBuffer = "";
   private connectPromise: Promise<Record<string, unknown>> | null = null;
   private session: SessionState = {};
   private closed = false;
+  private recoveryUsed = false;
 
   public constructor(options: AndroidSpiderBridgeClientOptions) {
     this.options = {
@@ -188,6 +195,7 @@ export class AndroidSpiderBridgeClient {
     const result = await this.request("destroySpider", { spiderId });
     if (spiderId === this.session.spiderId) {
       delete this.session.spiderId;
+      delete this.session.createParams;
       delete this.session.initParams;
     }
     return result;
@@ -288,15 +296,23 @@ export class AndroidSpiderBridgeClient {
     }
   }
 
-  public async request(method: AndroidSpiderHostMethod, params: Record<string, unknown>, timeoutMs = this.timeoutFor(method), allowRecovery = true): Promise<unknown> {
+  public async request(
+    method: AndroidSpiderHostMethod,
+    params: Record<string, unknown>,
+    timeoutMs = this.timeoutFor(method),
+    allowRecovery = true,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     if (!this.isConnected) await this.connect();
+    throwIfAborted(signal, method);
     const requestParams = this.withSessionIds(params);
     try {
-      return await this.requestRaw(method, requestParams, timeoutMs);
+      return await this.requestRaw(method, requestParams, timeoutMs, signal);
     } catch (error) {
-      if (!allowRecovery || !isRecoverable(error) || method === "destroyAll" || method === "destroySpider") throw error;
-      await this.recoverOnce();
-      return this.requestRaw(method, this.withSessionIds(params), timeoutMs);
+      if (!allowRecovery || !isRecoverable(error) || method === "destroyAll" || method === "destroySpider" || this.recoveryUsed) throw error;
+      this.recoveryUsed = true;
+      await this.recoverOnce(signal);
+      return this.requestRaw(method, this.withSessionIds(params), timeoutMs, signal);
     }
   }
 
@@ -309,6 +325,7 @@ export class AndroidSpiderBridgeClient {
       if (!isRecord(health) || (health.status !== "ok" && health.status !== "online")) {
         throw this.error("HOST_OFFLINE", "Android Spider Host health check failed", "health", { health });
       }
+      this.recoveryUsed = false;
       return health;
     } catch (error) {
       await this.closeTransport();
@@ -351,7 +368,8 @@ export class AndroidSpiderBridgeClient {
     });
   }
 
-  private async recoverOnce(): Promise<void> {
+  private async recoverOnce(signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal, "recover");
     await this.closeTransport();
     try {
       await this.options.deviceManager.stopHost();
@@ -362,19 +380,19 @@ export class AndroidSpiderBridgeClient {
       await this.options.deviceManager.startHost();
       await this.options.deviceManager.forward(this.options.localPort, this.options.remotePort);
       await this.connectTransport();
-      await this.requestRaw("health", {}, this.options.healthTimeoutMs);
+      await this.requestRaw("health", {}, this.options.healthTimeoutMs, signal);
       if (this.session.jarParams) {
         if (this.session.jarLocalPath) {
           await this.options.deviceManager.push(this.session.jarLocalPath, String(this.session.jarParams.sourcePath));
         }
-        const jar = await this.requestRaw("loadJar", this.session.jarParams, this.options.requestTimeoutMs) as Record<string, unknown>;
+        const jar = await this.requestRaw("loadJar", this.session.jarParams, this.options.requestTimeoutMs, signal) as Record<string, unknown>;
         if (typeof jar.jarId === "string") this.session.jarId = jar.jarId;
       }
       if (this.session.createParams) {
         const created = await this.requestRaw("createSpider", {
           ...this.session.createParams,
           ...(this.session.jarId ? { jarId: this.session.jarId } : {}),
-        }) as Record<string, unknown>;
+        }, this.options.requestTimeoutMs, signal) as Record<string, unknown>;
         if (typeof created.spiderId === "string") this.session.spiderId = created.spiderId;
       }
       if (this.session.initParams) {
@@ -382,7 +400,7 @@ export class AndroidSpiderBridgeClient {
           ...this.session.initParams,
           ...(this.session.spiderId ? { spiderId: this.session.spiderId } : {}),
         };
-        await this.requestRaw("init", this.session.initParams);
+        await this.requestRaw("init", this.session.initParams, this.options.operationTimeoutMs, signal);
       }
     } catch (error) {
       await this.closeTransport();
@@ -391,21 +409,39 @@ export class AndroidSpiderBridgeClient {
     }
   }
 
-  private requestRaw(method: AndroidSpiderHostMethod, params: Record<string, unknown>, timeoutMs = this.options.requestTimeoutMs): Promise<unknown> {
+  private requestRaw(
+    method: AndroidSpiderHostMethod,
+    params: Record<string, unknown>,
+    timeoutMs = this.options.requestTimeoutMs,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     const socket = this.socket;
     if (!socket || socket.destroyed) return Promise.reject(this.error("HOST_OFFLINE", "Android Spider Host socket is unavailable", method));
+    if (signal?.aborted) return Promise.reject(this.error("ANDROID_BRIDGE_ABORTED", `Android Spider Host request aborted: ${method}`, method));
     const id = randomUUID();
     const request = JSON.stringify({ id, protocolVersion: 1, method, params });
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
+        const pending = this.pending.get(id);
         this.pending.delete(id);
+        this.ignoredResponseIds.add(id);
+        pending?.abortCleanup?.();
         reject(this.error("ANDROID_BRIDGE_TIMEOUT", `Android Spider Host request timed out: ${method}`, method));
       }, Math.max(1, timeoutMs));
-      this.pending.set(id, { method, resolve, reject, timer });
+      const onAbort = () => {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        this.ignoredResponseIds.add(id);
+        reject(this.error("ANDROID_BRIDGE_ABORTED", `Android Spider Host request aborted: ${method}`, method));
+      };
+      const abortCleanup = signal ? () => signal.removeEventListener("abort", onAbort) : undefined;
+      this.pending.set(id, { method, resolve, reject, timer, ...(abortCleanup ? { abortCleanup } : {}) });
+      if (signal) signal.addEventListener("abort", onAbort, { once: true });
       try {
         socket.write(`${request}\n`);
       } catch (error) {
         clearTimeout(timer);
+        abortCleanup?.();
         this.pending.delete(id);
         reject(this.error("HOST_OFFLINE", `Unable to send Android Spider Host request: ${method}`, method, undefined, error));
       }
@@ -437,11 +473,13 @@ export class AndroidSpiderBridgeClient {
       return;
     }
     const pending = this.pending.get(value.id);
+    if (!pending && this.ignoredResponseIds.delete(value.id)) return;
     if (!pending) {
       this.handleSocketFailure(source, this.error("PROTOCOL_UNKNOWN_RESPONSE", `Unknown Android Spider Host response id: ${value.id}`, "protocol"));
       return;
     }
     clearTimeout(pending.timer);
+    pending.abortCleanup?.();
     this.pending.delete(value.id);
     if (value.success) {
       pending.resolve(value.result);
@@ -473,6 +511,7 @@ export class AndroidSpiderBridgeClient {
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
       this.pending.delete(id);
+      pending.abortCleanup?.();
       pending.reject(error);
     }
   }
@@ -506,6 +545,12 @@ export class AndroidSpiderBridgeClient {
       ...(this.options.artifactUrl ? { artifactUrl: this.options.artifactUrl } : {}),
       ...diagnostics,
     }, cause === undefined ? undefined : { cause });
+  }
+}
+
+function throwIfAborted(signal: AbortSignal | undefined, stage: string): void {
+  if (signal?.aborted) {
+    throw new AndroidSpiderBridgeClientError("ANDROID_BRIDGE_ABORTED", `Android Spider Host request aborted: ${stage}`, stage);
   }
 }
 

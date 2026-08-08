@@ -1,7 +1,7 @@
 # Runtime Diagnostics V4
 
 Status: **BLOCKED**
-Generated: 2026-08-08T16:20:19.124Z
+Generated: 2026-08-08T16:34:07.944Z
 
 ## Single-source diagnostics
 
@@ -23,3 +23,4 @@ Generated: 2026-08-08T16:20:19.124Z
 ## Blockers
 
 - `ANDROID_DEVICE_NOT_FOUND`
+- `ANDROID_POC_KEYWORD_REQUIRED`

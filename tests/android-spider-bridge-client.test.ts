@@ -77,6 +77,35 @@ describe("AndroidSpiderBridgeClient", () => {
       await expect(client.request("runtimeInfo", {})).rejects.toMatchObject({ code: "ANDROID_BRIDGE_TIMEOUT" });
       expect(manager.started).toBe(1);
       expect(manager.stopped).toBe(1);
+      await expect(client.request("runtimeInfo", {})).rejects.toMatchObject({ code: "ANDROID_BRIDGE_TIMEOUT" });
+      expect(manager.started).toBe(1);
+      expect(manager.stopped).toBe(1);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("aborts a pending request without restarting the Host", async () => {
+    const server = await createServer((request, socket) => {
+      if (request.method === "health") respond(socket, request.id, { status: "ok" });
+    });
+    const manager = new FakeDeviceManager();
+    const client = new AndroidSpiderBridgeClient({
+      deviceManager: manager,
+      localPort: server.port,
+      remotePort: server.port,
+      healthTimeoutMs: 100,
+      requestTimeoutMs: 1_000,
+    });
+    const controller = new AbortController();
+    try {
+      await client.connect();
+      const pending = client.request("runtimeInfo", {}, 1_000, true, controller.signal);
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({ code: "ANDROID_BRIDGE_ABORTED" });
+      expect(manager.started).toBe(0);
+      expect(manager.stopped).toBe(0);
     } finally {
       await client.close();
       await server.close();

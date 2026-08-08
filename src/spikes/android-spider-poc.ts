@@ -13,6 +13,7 @@ import { RuntimeAuditService } from "../spider/runtime-audit-service.js";
 import { AndroidDeviceManager } from "../spider/android-device-manager.js";
 import { AndroidSpiderBridgeClient } from "../spider/android-spider-bridge-client.js";
 import {
+  androidPlaybackLineStats,
   extractAndroidVodItems,
   firstAndroidPlaybackRequest,
   firstAndroidVodId,
@@ -76,6 +77,8 @@ export async function runAndroidSpiderPoc(
   if (!snapshot.deviceFound) blockers.push("ANDROID_DEVICE_NOT_FOUND");
   if (!hostApkFound) blockers.push("HOST_APK_NOT_FOUND");
   if (requiresArm64(artifact.nativeLibraries)) blockers.push("requires_arm64");
+  const keyword = readKeyword();
+  if (!keyword) blockers.push("ANDROID_POC_KEYWORD_REQUIRED");
 
   const attempts: AndroidSpiderPocAttempt[] = [
     { operation: "health", status: "not_run" },
@@ -90,11 +93,10 @@ export async function runAndroidSpiderPoc(
     health: { status: "NOT_RUN" },
     loadJar: { status: "NOT_RUN" },
     createSpider: { status: "NOT_RUN" },
-    searchContent: { status: "NOT_RUN", keyword: process.env.QX_ANDROID_POC_KEYWORD?.trim() || "测试" },
+    searchContent: { status: "NOT_RUN", ...(keyword ? { keyword } : {}) },
     detailContent: { status: "NOT_RUN" },
     playerContent: { status: "NOT_RUN" },
   };
-  const keyword = process.env.QX_ANDROID_POC_KEYWORD?.trim() || "测试";
   let classResolution: AndroidHostDiagnosticsReport["classResolution"];
   let initDiagnostics: AndroidHostOperationDiagnostics | undefined;
   let artifactDiagnostics: AndroidHostDiagnosticsReport["artifact"] = {
@@ -106,7 +108,7 @@ export async function runAndroidSpiderPoc(
   let normalizedError;
   let client: AndroidSpiderBridgeClient | undefined;
 
-  if (snapshot.deviceFound && hostApkFound) {
+  if (snapshot.deviceFound && hostApkFound && keyword) {
     try {
       await manager.install(hostApkPath);
       hostInstalled = true;
@@ -174,10 +176,12 @@ export async function runAndroidSpiderPoc(
       const detailResult = await client.detailContent([firstId]);
       const detailItems = extractAndroidVodItems(detailResult);
       const detailValidation = validateAndroidDetail(detailResult);
-      const detailPlayable = hasAndroidPlaybackFields(detailResult);
+      const playbackStats = androidPlaybackLineStats(detailResult);
+      const detailPlayable = playbackStats.hasPlayFrom && playbackStats.hasPlayUrl;
       operations.detailContent = {
         status: detailValidation.valid ? "PASS" : "FAIL",
         durationMs: Date.now() - detailStarted,
+        ...playbackStats,
         details: detailValidation.valid
           ? detailPlayable ? "DETAIL_PLAYABLE_PASS" : "detail fields present; no playback lines"
           : `missing ${detailValidation.missing.join(", ")}`,
@@ -285,7 +289,7 @@ export async function runAndroidSpiderPoc(
     siteKey: normalized.key,
     siteName: normalized.name,
     api: normalized.api,
-    keyword,
+    ...(keyword ? { keyword } : {}),
     status: status === "FAILED" ? "FAIL" : status,
     environment: {
       sdkFound: snapshot.sdkFound,
@@ -385,6 +389,16 @@ function record(value: unknown): Record<string, unknown> {
 
 function firstString(...values: unknown[]): string | undefined {
   return values.find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim();
+}
+
+function readKeyword(): string | undefined {
+  const environment = process.env.QX_ANDROID_POC_KEYWORD?.trim();
+  if (environment) return environment;
+  const equalsArgument = process.argv.find((value) => value.startsWith("--keyword="));
+  if (equalsArgument) return equalsArgument.slice("--keyword=".length).trim() || undefined;
+  const index = process.argv.indexOf("--keyword");
+  const next = index >= 0 ? process.argv[index + 1]?.trim() : undefined;
+  return next || undefined;
 }
 
 function requiresArm64(nativeLibraries: readonly string[]): boolean {

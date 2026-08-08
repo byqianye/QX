@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  androidPlaybackLineStats,
   extractAndroidVodItems,
   firstAndroidPlaybackRequest,
   firstAndroidVodId,
@@ -29,6 +30,7 @@ describe("Android Spider result parsers", () => {
       }],
     };
     expect(hasAndroidPlaybackFields(detail)).toBe(true);
+    expect(androidPlaybackLineStats(detail)).toEqual({ hasPlayFrom: true, hasPlayUrl: true, playLineCount: 3 });
     expect(firstAndroidPlaybackRequest(detail)).toEqual({ flag: "线路A", id: "https://example.test/play-1.m3u8" });
     expect(validateAndroidDetail(detail)).toEqual({ valid: true, missing: [] });
     expect(validateAndroidDetail({ list: [{ vod_id: "missing" }] })).toEqual({

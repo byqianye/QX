@@ -122,6 +122,13 @@ final class SpiderRuntime implements Closeable {
         }
         File destination = new File(cacheDir, actualSha + ".jar");
         boolean cacheHit = destination.isFile() && destination.length() == source.length();
+        if (cacheHit) {
+            try {
+                cacheHit = actualSha.equals(sha256(destination));
+            } catch (RpcException ignored) {
+                cacheHit = false;
+            }
+        }
         try {
             if (!cacheHit) {
                 copyFile(source, destination);
@@ -174,9 +181,18 @@ final class SpiderRuntime implements Closeable {
             throw new RpcException("JAR_NOT_LOADED", "Spider JAR is not loaded: " + jarId, "createSpider");
         }
         String api = params.optString("api", "").trim();
-        String expectedClass = params.optString("expectedClass", SpiderClassResolver.expectedClass(api)).trim();
+        String expectedClass = SpiderClassResolver.expectedClass(api);
+        String requestedClass = params.optString("expectedClass", "").trim();
         if (expectedClass.isEmpty()) {
             throw new RpcException("SPIDER_CLASS_NAME_INVALID", "Unable to resolve Spider class from api: " + api, "createSpider", object("api", api, "jarPath", jar.path.getAbsolutePath()));
+        }
+        if (!requestedClass.isEmpty() && !SpiderClassResolver.isExpectedClass(api, requestedClass)) {
+            throw new RpcException(
+                    "SPIDER_CLASS_NAME_INVALID",
+                    "expectedClass must be derived from api: " + expectedClass,
+                    "createSpider",
+                    object("api", api, "requestedClass", requestedClass, "expectedClass", expectedClass, "jarPath", jar.path.getAbsolutePath())
+            );
         }
         Class<?> spiderClass;
         try {

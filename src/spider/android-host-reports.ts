@@ -40,6 +40,9 @@ export interface AndroidHostOperationDiagnostics {
   durationMs?: number;
   keyword?: string;
   resultCount?: number;
+  hasPlayFrom?: boolean;
+  hasPlayUrl?: boolean;
+  playLineCount?: number;
   urlPresent?: boolean;
   parse?: string;
   jx?: boolean;
@@ -209,6 +212,9 @@ function operationDetails(operation: AndroidHostOperationDiagnostics | undefined
     operation.durationMs === undefined ? undefined : `${operation.durationMs}ms`,
     operation.keyword ? `keyword=${operation.keyword}` : undefined,
     operation.resultCount === undefined ? undefined : `resultCount=${operation.resultCount}`,
+    operation.hasPlayFrom === undefined ? undefined : `hasPlayFrom=${operation.hasPlayFrom}`,
+    operation.hasPlayUrl === undefined ? undefined : `hasPlayUrl=${operation.hasPlayUrl}`,
+    operation.playLineCount === undefined ? undefined : `playLineCount=${operation.playLineCount}`,
     operation.urlPresent === undefined ? undefined : `urlPresent=${operation.urlPresent}`,
     operation.parse ? `parse=${operation.parse}` : undefined,
     operation.jx === undefined ? undefined : `jx=${operation.jx}`,

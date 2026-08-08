@@ -1,11 +1,10 @@
 # Android Spider PoC Report V2
 
 Status: **BLOCKED**
-Generated: 2026-08-08T16:20:19.124Z
+Generated: 2026-08-08T16:34:07.944Z
 Config: `http://xn--z7x900a.net/`
 Source: `csp_FeiMaoUC` / ⚡┃闪电┃优汐
 API: `csp_Duopan`
-Keyword: `测试`
 
 ## Artifact
 
@@ -34,6 +33,7 @@ Keyword: `测试`
 ## Blockers
 
 - `ANDROID_DEVICE_NOT_FOUND`
+- `ANDROID_POC_KEYWORD_REQUIRED`
 
 ## Notes
 

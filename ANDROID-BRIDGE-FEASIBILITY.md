@@ -27,6 +27,7 @@ This Goal does not claim Android DEX execution without an Android-compatible Hos
 ## Why this is blocked
 
 - ANDROID_DEVICE_NOT_FOUND
+- ANDROID_POC_KEYWORD_REQUIRED
 
 ## Required Android Host surface
 

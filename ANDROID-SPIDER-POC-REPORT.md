@@ -1,7 +1,7 @@
 # Android Spider PoC Report
 
 Status: **BLOCKED**
-Generated: 2026-08-08T16:20:19.124Z
+Generated: 2026-08-08T16:34:07.944Z
 Config: `http://xn--z7x900a.net/`
 Source: `csp_FeiMaoUC` / ⚡┃闪电┃优汐
 API: `csp_Duopan`
@@ -40,7 +40,7 @@ API: `csp_Duopan`
   "rootCause": "ANDROID_DEVICE_NOT_FOUND",
   "workingDirectory": "C:\\Users\\qiany\\Documents\\ChatGPT\\QX影视",
   "isPackaged": false,
-  "stack": "Error: Android Spider Host prerequisites are unavailable: ANDROID_DEVICE_NOT_FOUND\n    at runAndroidSpiderPoc (C:\\Users\\qiany\\Documents\\ChatGPT\\QX影视\\src\\spikes\\android-spider-poc.ts:232:31)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)"
+  "stack": "Error: Android Spider Host prerequisites are unavailable: ANDROID_DEVICE_NOT_FOUND\n    at runAndroidSpiderPoc (C:\\Users\\qiany\\Documents\\ChatGPT\\QX影视\\src\\spikes\\android-spider-poc.ts:236:31)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)"
 }
 ```
 

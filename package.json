@@ -46,7 +46,8 @@
     "spike:douban-desktop-ui": "tsx src/spikes/douban-desktop-ui-probe.ts",
     "spike:douban-desktop-import": "tsx src/spikes/douban-desktop-import-probe.ts",
     "spike:douban-player": "tsx src/spikes/douban-player-probe.ts",
-    "spike": "tsx src/spikes/run-all.ts"
+    "spike": "tsx src/spikes/run-all.ts",
+    "runtime:audit": "tsx src/spikes/runtime-audit.ts"
   },
   "dependencies": {
     "hls.js": "^1.6.17",

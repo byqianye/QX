@@ -1,0 +1,878 @@
+{
+  "generatedAt": "2026-08-08T14:18:47.609Z",
+  "sourceUrl": "http://xn--z7x900a.net/",
+  "sites": [
+    {
+      "siteKey": "豆瓣",
+      "siteName": "🐼┃公众号：我不是肥猫┃",
+      "type": 3,
+      "api": "csp_Douban",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "native",
+      "searchable": false,
+      "supported": true,
+      "reason": "native_supported",
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true
+      }
+    },
+    {
+      "siteKey": "豆瓣预告",
+      "siteName": "🐼┃豆瓣┃预告",
+      "type": 3,
+      "api": "csp_YGP",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": false,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "config",
+      "siteName": "🐼┃配置┃中心",
+      "type": 3,
+      "api": "csp_Config",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "csp_FeiMaoUC",
+      "siteName": "⚡┃闪电┃优汐",
+      "type": 3,
+      "api": "csp_Duopan",
+      "ext": {
+        "site_urls": [
+          "http://shandian.blog/",
+          "http://sd.sduc.site/"
+        ],
+        "threadinfo": {
+          "chunksize": 512,
+          "threads": 16
+        },
+        "url_key": "FeiMaoUC"
+      },
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "csp_Duopan",
+      "siteName": "🖍︎┃蜡笔┃影视",
+      "type": 3,
+      "api": "csp_Duopan",
+      "ext": {
+        "site_urls": [
+          "http://tvpanpan.site",
+          "http://feimo.fun",
+          "http://xiaocgege.shop",
+          "http://www.xiaocgege.shop",
+          "https://www.xiaocge.fun"
+        ],
+        "threadinfo": {
+          "chunksize": 512,
+          "threads": 16
+        },
+        "url_key": "Duopan2"
+      },
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "csp_Netfixtv",
+      "siteName": "💌┃️至臻┃影视",
+      "type": 3,
+      "api": "csp_Duopan",
+      "ext": {
+        "site_urls": [
+          "https://www.zhizhen8.click",
+          "https://pan.mihdr.top",
+          "https://www.zhizhen1.top",
+          "https://www.mihdr.top",
+          "https://www.miqk.cc"
+        ],
+        "url_key": "Netfixtv2",
+        "threadinfo": {
+          "chunksize": 512,
+          "threads": 16
+        }
+      },
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "潮流",
+      "siteName": "🏜┃潮流┃APP",
+      "type": 3,
+      "api": "csp_AppRJ",
+      "ext": "http://v.rbotv.cn",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "肥猫",
+      "siteName": "🐼┃肥猫┃APP",
+      "type": 3,
+      "api": "csp_AppGet",
+      "ext": "https://cms140.yhg.one|bM7iC9eA3oZ1nB7z",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "干饭",
+      "siteName": "🍚┃干饭┃APP",
+      "type": 3,
+      "api": "csp_AppGet",
+      "ext": "https://mk1080.top/get.txt|c60d88b2eep53za8",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "光盘",
+      "siteName": "📀┃光盘┃APP",
+      "type": 3,
+      "api": "csp_AppQi",
+      "ext": "https://yun-1316442804.cos.ap-guangzhou.myqcloud.com/600.txt|FTgP4Gq8zPiqbt7M",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "行动",
+      "siteName": "😌┃行动┃APP",
+      "type": 3,
+      "api": "csp_AppQi",
+      "ext": "https://qj4.catbb.xyz|eecbio48dsq13kkk",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "再来",
+      "siteName": "✌️┃再来┃APP",
+      "type": 3,
+      "api": "csp_AppGet",
+      "ext": "https://vv.229d.cn|8888888888888888",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "一碗",
+      "siteName": "🥣┃一碗┃APP",
+      "type": 3,
+      "api": "csp_AppGet",
+      "ext": "https://app.95112475.xyz|5a9w6x58dsq6z3a6",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "蔬菜",
+      "siteName": "🫛┃蔬菜┃APP",
+      "type": 3,
+      "api": "csp_AppGet",
+      "ext": "https://allinadmin.oss-cn-hangzhou.aliyuncs.com/bk/9.txt|88689667dce61725",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "永永",
+      "siteName": "♾️┃永永┃APP",
+      "type": 3,
+      "api": "csp_AppGet",
+      "ext": "https://444421.xyz|#getapp@TMD@2025|120",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "csp_Jpys",
+      "siteName": "🥇️┃金牌┃影视",
+      "type": 3,
+      "api": "csp_Jpys",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "csp_Wwys",
+      "siteName": "🌾️┃农民┃影视",
+      "type": 3,
+      "api": "csp_Wwys",
+      "ext": "https://vip.wwgz.cn:5200",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "荐片",
+      "siteName": "🎬┃荐片┃影视",
+      "type": 3,
+      "api": "csp_Jianpian",
+      "ext": "https://api.ztcgi.com",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "csp_SaoHuo",
+      "siteName": "🔥┃火火┃影视",
+      "type": 3,
+      "api": "csp_SaoHuo",
+      "ext": "https://shdy5.us",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "csp_Gz360",
+      "siteName": "🍉┃瓜子┃影视",
+      "type": 3,
+      "api": "csp_Gz360",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "厂长",
+      "siteName": "🏭┃厂长┃影视",
+      "type": 3,
+      "api": "csp_Czsapp",
+      "ext": "https://www.czzy89.com",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "csp_SP360",
+      "siteName": "📺┃360┃官源",
+      "type": 3,
+      "api": "csp_SP360",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "csp_Bili",
+      "siteName": "🅱┃️哔哩┃合集",
+      "type": 3,
+      "api": "csp_Bili",
+      "ext": {
+        "json": "https://nos.netease.com/ysf/0075389dca9afadd4614e9713765ff17.txt",
+        "cookie": ""
+      },
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "csp_Dm84",
+      "siteName": "🤣┃动漫┃巴士",
+      "type": 3,
+      "api": "csp_Dm84",
+      "ext": "https://dm84.net",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "方舟",
+      "siteName": "🐷┃方舟┃动漫",
+      "type": 3,
+      "api": "csp_AppGet",
+      "ext": "https://www.cyfz.top|e72cdfd629e8895d",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "番薯",
+      "siteName": "🍠┃番薯┃动漫",
+      "type": 3,
+      "api": "csp_AppGet",
+      "ext": "https://new.app.bytegooty.com|N4yj7l7xKxHF4*gz",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "csp_FirstAid",
+      "siteName": "🚑┃急救┃教学",
+      "type": 3,
+      "api": "csp_FirstAid",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": false,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "酷狗",
+      "siteName": "🐾┃酷狗┃音乐",
+      "type": 3,
+      "api": "csp_Kugou",
+      "ext": {
+        "classes": [
+          {
+            "type_name": "酷狗",
+            "type_id": "kugou"
+          }
+        ]
+      },
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "MTV",
+      "siteName": "🎧┃明星┃MV",
+      "type": 3,
+      "api": "csp_Bili",
+      "ext": {
+        "json": "https://img2.gelonghui.com/library/2b4eb-8fb08a6b-f9f1-48d8-816a-1bc712a85fefnull",
+        "cookie": ""
+      },
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "看球",
+      "siteName": "⚾┃看球┃直播",
+      "type": 3,
+      "api": "csp_Kanqiu",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "瓜子",
+      "siteName": "🏀┃瓜子┃体育",
+      "type": 3,
+      "api": "csp_GuaziTY",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": false,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "米搜",
+      "siteName": "🌖┃米搜┃网盘",
+      "type": 3,
+      "api": "csp_MiSou",
+      "ext": "http://127.0.0.1:9978/file/fatcat/kk.txt",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "csp_PanSearch",
+      "siteName": "🚃┃盘搜┃网盘",
+      "type": 3,
+      "api": "csp_PanSearch",
+      "ext": "http://127.0.0.1:9978/file/fatcat/token.txt",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "儿童",
+      "siteName": "📚┃儿童┃启蒙",
+      "type": 3,
+      "api": "https://gh-proxy.net/https://raw.githubusercontent.com/fantaiying7/EXT/refs/heads/main/drpy2.min.js",
+      "ext": "https://gh-proxy.net/https://raw.githubusercontent.com/fantaiying7/EXT/refs/heads/main/%E5%85%94%E5%B0%8F%E8%B4%9D.js",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "javascript",
+      "searchable": false,
+      "supported": true,
+      "reason": "js_supported",
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true
+      }
+    },
+    {
+      "siteKey": "csp_少儿",
+      "siteName": "📚┃少儿┃教育",
+      "type": 3,
+      "api": "csp_Bili",
+      "ext": {
+        "json": "https://img2.gelonghui.com/library/1903b-eb0f1675-2437-4e72-bcf0-427b1626d79fnull",
+        "cookie": ""
+      },
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "csp_小学",
+      "siteName": "📚┃小学┃课堂",
+      "type": 3,
+      "api": "csp_Bili",
+      "ext": {
+        "json": "https://img2.gelonghui.com/library/a1140-144855fe-3eaa-44f3-b689-6812c233de54null",
+        "cookie": ""
+      },
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "csp_初中",
+      "siteName": "📚┃初中┃课堂",
+      "type": 3,
+      "api": "csp_Bili",
+      "ext": {
+        "json": "https://img2.gelonghui.com/library/ba156-73e16cad-8257-4f33-b8c0-e051e72e546dnull",
+        "cookie": ""
+      },
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "csp_高中",
+      "siteName": "📚┃高中┃课堂",
+      "type": 3,
+      "api": "csp_Bili",
+      "ext": {
+        "json": "https://img2.gelonghui.com/library/e44b3-4a82ab48-e014-49b2-bb66-ee5207e8f195null",
+        "cookie": ""
+      },
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": true,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    },
+    {
+      "siteKey": "push_agent",
+      "siteName": "关注公众号：肥猫宝贝",
+      "type": 3,
+      "api": "csp_Push",
+      "ext": ".json/txt/ken.txt",
+      "spiderUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "runtime": "android-dex",
+      "searchable": false,
+      "supported": false,
+      "reason": "android_dex_runtime_not_available",
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": false,
+        "detail": false,
+        "player": false
+      }
+    }
+  ],
+  "summary": {
+    "totalSites": 39,
+    "searchableSites": 33,
+    "supportedSites": 2,
+    "searchableSupportedSites": 0,
+    "runtimeCounts": {
+      "cms-json": 0,
+      "cms-xml": 0,
+      "native": 1,
+      "javascript": 1,
+      "android-dex": 37,
+      "jvm-jar": 0,
+      "python": 0,
+      "unknown": 0
+    },
+    "unsupportedReasons": {
+      "android_dex_runtime_not_available": 37
+    }
+  },
+  "artifacts": [
+    {
+      "url": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "md5": "f7c90ebd0a6632f3347eeeb8d9bd555e",
+      "inspection": {
+        "url": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+        "sha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+        "size": 864852,
+        "format": "jar",
+        "hasClassesDex": true,
+        "hasJvmClasses": false,
+        "dexCount": 1,
+        "classCount": 0,
+        "nativeLibraries": [],
+        "assets": [
+          "assets/push.html"
+        ],
+        "runtimeRequirement": "android-dex"
+      }
+    }
+  ]
+}

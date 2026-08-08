@@ -1,7 +1,7 @@
-import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 
 import { parseTvBoxConfig, type TvBoxSite } from "../config/decoder.js";
@@ -10,7 +10,16 @@ import { JarInspector } from "../spider/jar-inspector.js";
 import { SpiderArtifactCache } from "../spider/spider-artifact-cache.js";
 import { SpiderArtifactResolver } from "../spider/spider-artifact-resolver.js";
 import { RuntimeAuditService } from "../spider/runtime-audit-service.js";
-import { AndroidSpiderBridge } from "../spider/android-spider-bridge.js";
+import { AndroidDeviceManager } from "../spider/android-device-manager.js";
+import { AndroidSpiderBridgeClient } from "../spider/android-spider-bridge-client.js";
+import {
+  extractAndroidVodItems,
+  firstAndroidPlaybackRequest,
+  firstAndroidVodId,
+  hasAndroidPlaybackFields,
+  parseAndroidSpiderResult,
+  validateAndroidDetail,
+} from "../spider/android-spider-parsers.js";
 import { normalizeRuntimeError } from "../spider/runtime-errors.js";
 import {
   renderAndroidBridgeFeasibility,
@@ -21,6 +30,14 @@ import {
   type AndroidSpiderPocAttempt,
   type AndroidSpiderPocReport,
 } from "../spider/android-spider-reports.js";
+import {
+  renderAndroidHostSetup,
+  renderAndroidSpiderHostReport,
+  renderAndroidSpiderPocV2,
+  renderRuntimeDiagnosticsV4,
+  type AndroidHostDiagnosticsReport,
+  type AndroidHostOperationDiagnostics,
+} from "../spider/android-host-reports.js";
 import { defaultConfigUrl } from "./config-probe.js";
 
 export async function runAndroidSpiderPoc(
@@ -42,8 +59,24 @@ export async function runAndroidSpiderPoc(
   if (!declaration) throw new Error("Configuration does not declare a Spider artifact");
   const resolved = await new SpiderArtifactResolver().resolveSpiderArtifact(configUrl, declaration, cache);
   const artifact = await new JarInspector().inspectFile(resolved.localPath, resolved.artifactUrl);
-  const environment = inspectEnvironment();
-  const blockers = missingPrerequisites(environment);
+
+  const hostApkPath = process.env.QX_ANDROID_HOST_APK?.trim()
+    || join(process.cwd(), "android-spider-host", "app", "build", "outputs", "apk", "debug", "app-debug.apk");
+  const manager = new AndroidDeviceManager({
+    ...(process.env.QX_ANDROID_SDK_PATH ? { sdkPath: process.env.QX_ANDROID_SDK_PATH } : {}),
+    ...(process.env.ADB ? { adbPath: process.env.ADB } : {}),
+    ...(process.env.QX_ANDROID_DEVICE_SERIAL ? { serial: process.env.QX_ANDROID_DEVICE_SERIAL } : {}),
+  });
+  const snapshot = await manager.check();
+  const hostApkFound = existsSync(hostApkPath);
+  let hostInstalled = false;
+  let hostOnline = false;
+  let rpcHealth: Record<string, unknown> | undefined;
+  const blockers = [...snapshot.diagnostics.filter((value) => value !== "ANDROID_DEVICE_NOT_FOUND")];
+  if (!snapshot.deviceFound) blockers.push("ANDROID_DEVICE_NOT_FOUND");
+  if (!hostApkFound) blockers.push("HOST_APK_NOT_FOUND");
+  if (requiresArm64(artifact.nativeLibraries)) blockers.push("requires_arm64");
+
   const attempts: AndroidSpiderPocAttempt[] = [
     { operation: "health", status: "not_run" },
     { operation: "loadJar", status: "not_run" },
@@ -53,66 +86,150 @@ export async function runAndroidSpiderPoc(
     { operation: "detailContent", status: "not_run" },
     { operation: "playerContent", status: "not_run" },
   ];
+  const operations: Record<string, AndroidHostOperationDiagnostics> = {
+    health: { status: "NOT_RUN" },
+    loadJar: { status: "NOT_RUN" },
+    createSpider: { status: "NOT_RUN" },
+    searchContent: { status: "NOT_RUN", keyword: process.env.QX_ANDROID_POC_KEYWORD?.trim() || "测试" },
+    detailContent: { status: "NOT_RUN" },
+    playerContent: { status: "NOT_RUN" },
+  };
+  const keyword = process.env.QX_ANDROID_POC_KEYWORD?.trim() || "测试";
+  let classResolution: AndroidHostDiagnosticsReport["classResolution"];
+  let initDiagnostics: AndroidHostOperationDiagnostics | undefined;
+  let artifactDiagnostics: AndroidHostDiagnosticsReport["artifact"] = {
+    url: resolved.artifactUrl,
+    path: resolved.localPath,
+    size: artifact.size,
+    sha256: artifact.sha256,
+  };
   let normalizedError;
-  if (blockers.length === 0 && environment.hostExecutable) {
-    const bridge = new AndroidSpiderBridge({
-      hostExecutable: environment.hostExecutable,
-      siteKey: normalized.key,
-      sourceName: normalized.name,
-      artifactUrl: resolved.artifactUrl,
-      artifactPath: resolved.localPath,
-      isPackaged: false,
-    });
+  let client: AndroidSpiderBridgeClient | undefined;
+
+  if (snapshot.deviceFound && hostApkFound) {
     try {
-      await bridge.start();
-      await runBridgeAttempt(attempts, "health", () => bridge.health());
-      await runBridgeAttempt(attempts, "loadJar", () => bridge.loadJar(resolved.localPath, resolved.artifactUrl));
-      await runBridgeAttempt(attempts, "createSpider", () => bridge.createSpider(site.api ?? "", normalized.key, expectedClass(site.api)));
-      await runBridgeAttempt(attempts, "init", () => bridge.init(typeof site.ext === "string" ? site.ext : ""));
-      const searchResponse = await runBridgeAttempt(attempts, "searchContent", () => bridge.searchContent("测试", false, 1));
-      const searchItems = responseList(searchResponse);
-      if (searchItems.length === 0) {
-        failAttempt(attempts, "searchContent", "searchContent returned no results");
-        throw new Error("Android Spider searchContent returned no results");
-      }
-      const firstId = responseId(searchItems[0]);
-      if (!firstId) {
-        failAttempt(attempts, "searchContent", "searchContent returned an item without vod_id");
-        throw new Error("Android Spider searchContent returned an item without vod_id");
-      }
-      const detailResponse = await runBridgeAttempt(attempts, "detailContent", () => bridge.detailContent([firstId]));
-      if (responseList(detailResponse).length === 0) {
-        failAttempt(attempts, "detailContent", "detailContent returned no details");
-        throw new Error("Android Spider detailContent returned no details");
-      }
-      if (hasPlaybackLines(detailResponse)) {
-        await runBridgeAttempt(attempts, "playerContent", () => bridge.playerContent("", firstId));
-      } else {
-        const playerAttempt = attempts.find((attempt) => attempt.operation === "playerContent");
-        if (playerAttempt) playerAttempt.details = "not attempted: detailContent returned no playback lines";
-      }
-    } catch (error) {
-      const errorDetails = error instanceof Error && "details" in error
-        ? (error as { details?: typeof normalizedError }).details
-        : undefined;
-      normalizedError = errorDetails ?? normalizeRuntimeError(error, {
-        runtimeKind: "android-dex",
+      await manager.install(hostApkPath);
+      hostInstalled = true;
+      await manager.startHost();
+      client = new AndroidSpiderBridgeClient({
+        deviceManager: manager,
         siteKey: normalized.key,
         sourceName: normalized.name,
         artifactUrl: resolved.artifactUrl,
-        artifactPath: resolved.localPath,
       });
-      blockers.push(normalizedError?.code ?? "android_bridge_failed");
+      rpcHealth = await client.connect();
+      hostOnline = true;
+      operations.health = { status: "PASS", details: "health response received" };
+      markAttempt(attempts, "health", "passed");
+
+      const loaded = await runOperation(attempts, "loadJar", () => client!.loadJar(resolved.localPath, resolved.artifactUrl));
+      const loadedRecord = record(loaded);
+      operations.loadJar = { status: "PASS", details: "DexClassLoader accepted artifact" };
+      artifactDiagnostics = {
+        ...artifactDiagnostics,
+        ...(typeof loadedRecord.sha256 === "string" ? { androidSha256: loadedRecord.sha256 } : {}),
+        ...(typeof loadedRecord.jarId === "string" ? { jarId: loadedRecord.jarId } : {}),
+        ...(Array.isArray(loadedRecord.candidateSpiderClasses) ? { candidateSpiderClasses: loadedRecord.candidateSpiderClasses.filter((value): value is string => typeof value === "string") } : {}),
+      };
+
+      const expectedClass = expectedAndroidSpiderClass(normalized.api);
+      try {
+        const created = await runOperation(attempts, "createSpider", () => client!.createSpider(normalized.api, expectedClass, normalized.key));
+        const createdRecord = record(created);
+        classResolution = {
+          api: normalized.api,
+          siteKey: normalized.key,
+          expectedClass,
+          ...(typeof createdRecord.resolvedClass === "string" ? { resolvedClass: createdRecord.resolvedClass } : {}),
+          classExists: createdRecord.classExists === true,
+          candidateSpiderClasses: artifactDiagnostics.candidateSpiderClasses ?? [],
+          status: "PASS",
+        };
+        operations.createSpider = { status: "PASS", details: expectedClass };
+      } catch (error) {
+        classResolution = classDiagnosticsFromError(normalized.api, normalized.key, expectedClass, artifactDiagnostics.candidateSpiderClasses ?? [], error);
+        throw error;
+      }
+
+      const initStarted = Date.now();
+      await runOperation(attempts, "init", () => client!.init(Object.prototype.hasOwnProperty.call(site, "ext") ? site.ext : ""));
+      initDiagnostics = { status: "PASS", durationMs: Date.now() - initStarted, details: "real Android Application Context supplied" };
+
+      const searchStarted = Date.now();
+      const searchResult = await client.searchContent(keyword, false, 1);
+      const searchItems = extractAndroidVodItems(searchResult);
+      operations.searchContent = {
+        status: searchItems.length > 0 ? "PASS" : "FAIL",
+        durationMs: Date.now() - searchStarted,
+        keyword,
+        resultCount: searchItems.length,
+        details: searchItems.length > 0 ? "SEARCH_PASS" : "search list was empty",
+      };
+      markAttempt(attempts, "searchContent", searchItems.length > 0 ? "passed" : "failed", operations.searchContent.details);
+      if (searchItems.length === 0) throw new Error("SEARCH_FAIL: searchContent returned no results");
+
+      const firstId = firstAndroidVodId(searchResult);
+      if (!firstId) throw new Error("SEARCH_FAIL: result did not contain vod_id");
+      const detailStarted = Date.now();
+      const detailResult = await client.detailContent([firstId]);
+      const detailItems = extractAndroidVodItems(detailResult);
+      const detailValidation = validateAndroidDetail(detailResult);
+      const detailPlayable = hasAndroidPlaybackFields(detailResult);
+      operations.detailContent = {
+        status: detailValidation.valid ? "PASS" : "FAIL",
+        durationMs: Date.now() - detailStarted,
+        details: detailValidation.valid
+          ? detailPlayable ? "DETAIL_PLAYABLE_PASS" : "detail fields present; no playback lines"
+          : `missing ${detailValidation.missing.join(", ")}`,
+      };
+      markAttempt(attempts, "detailContent", detailValidation.valid ? "passed" : "failed", operations.detailContent.details);
+      if (!detailValidation.valid || detailItems.length === 0) throw new Error(`DETAIL_FAIL: ${detailValidation.missing.join(", ")}`);
+
+      const playback = firstAndroidPlaybackRequest(detailResult);
+      if (!hasAndroidPlaybackFields(detailResult) || !playback) {
+        operations.playerContent = { status: "BLOCKED", details: "detailContent had no playable lines" };
+        markAttempt(attempts, "playerContent", "blocked", operations.playerContent.details);
+      } else {
+        const playerStarted = Date.now();
+        const playerResult = await client.playerContent(playback.flag, playback.id);
+        const playerPayload = parseAndroidSpiderResult(playerResult);
+        const playerUrl = firstString(playerPayload.url, playerPayload.link, playerPayload.playUrl);
+        const headerPresent = playerPayload.header !== undefined || playerPayload.headers !== undefined;
+        operations.playerContent = {
+          status: playerUrl ? "PASS" : "FAIL",
+          durationMs: Date.now() - playerStarted,
+          urlPresent: Boolean(playerUrl),
+          parse: typeof playerPayload.parse === "boolean" ? String(playerPayload.parse) : typeof playerPayload.parse === "string" ? playerPayload.parse : "unknown",
+          jx: playerPayload.jx === true || playerPayload.jx === 1,
+          headerPresent,
+          format: typeof playerPayload.format === "string" ? playerPayload.format : "unknown",
+          details: playerUrl ? "PLAYER_CONTENT_PASS" : "player response did not contain url",
+        };
+        markAttempt(attempts, "playerContent", playerUrl ? "passed" : "failed", operations.playerContent.details);
+        if (!playerUrl) throw new Error("PLAYER_FAIL: playerContent returned no playable URL");
+      }
+    } catch (error) {
+      const details = error instanceof Error && "diagnostics" in error
+        ? (error as { diagnostics?: Record<string, unknown> }).diagnostics
+        : undefined;
+      normalizedError = normalizeRuntimeError(error, {
+        runtimeKind: "android-dex",
+        siteKey: normalized.key,
+        sourceKey: normalized.key,
+        sourceName: normalized.name,
+        artifactUrl: resolved.artifactUrl,
+        artifactPath: resolved.localPath,
+        workingDirectory: process.cwd(),
+        isPackaged: false,
+        ...(details ? { rootCause: String(details.code ?? "android_host_failed") } : {}),
+      });
+      if (normalizedError.code) blockers.push(normalizedError.code);
     } finally {
-      await bridge.destroy();
+      if (client) await client.destroyAll();
     }
   } else {
-    const hostPath = environment.hostExecutable ?? join(process.cwd(), "android-spider-host.exe");
-    const raw = Object.assign(new Error(`Android Spider Host is missing: ${hostPath}`), {
-      code: "ENOENT",
-      syscall: "spawn",
-      path: hostPath,
-    });
+    const code = blockers[0] ?? "ANDROID_HOST_NOT_READY";
+    const raw = Object.assign(new Error(`Android Spider Host prerequisites are unavailable: ${code}`), { code });
     normalizedError = normalizeRuntimeError(raw, {
       runtimeKind: "android-dex",
       siteKey: normalized.key,
@@ -122,11 +239,26 @@ export async function runAndroidSpiderPoc(
       artifactPath: resolved.localPath,
       workingDirectory: process.cwd(),
       isPackaged: false,
-      rootCause: "runtime_host_missing",
+      rootCause: code,
     });
   }
 
-  const status = attempts.some((attempt) => attempt.status === "failed")
+  const environment: AndroidEnvironmentAudit = {
+    ...(snapshot.adbPath ? { adbPath: snapshot.adbPath } : {}),
+    ...(snapshot.adbVersion ? { adbVersion: snapshot.adbVersion } : {}),
+    adbDevices: snapshot.devices.map((device) => `${device.serial}\t${device.state}`).join("\n"),
+    connectedDevice: snapshot.deviceFound,
+    ...(snapshot.device?.serial ? { deviceSerial: snapshot.device.serial } : {}),
+    ...(snapshot.sdkPath ? { androidSdkPath: snapshot.sdkPath } : {}),
+    androidSdkAvailable: snapshot.sdkFound,
+    javaCompilerAvailable: spawnSync("javac", ["-version"], { stdio: "ignore", windowsHide: true }).status === 0,
+    ...(hostApkFound ? { hostApkPath } : {}),
+    hostApkAvailable: hostApkFound,
+    hostInstalled,
+    hostOnline,
+    hostAvailable: hostOnline,
+  };
+  const status: AndroidSpiderPocReport["status"] = attempts.some((attempt) => attempt.status === "failed")
     ? "FAILED"
     : blockers.length > 0
       ? "BLOCKED"
@@ -143,124 +275,92 @@ export async function runAndroidSpiderPoc(
     environment,
     status,
     attempts,
-    blockers,
+    blockers: [...new Set(blockers)],
     ...(normalizedError ? { normalizedError } : {}),
   };
   const audit = await new RuntimeAuditService({ artifactCache: cache, sourceUrl: configUrl }).audit(config, configUrl);
+  const hostReport: AndroidHostDiagnosticsReport = {
+    generatedAt: report.generatedAt,
+    configUrl,
+    siteKey: normalized.key,
+    siteName: normalized.name,
+    api: normalized.api,
+    keyword,
+    status: status === "FAILED" ? "FAIL" : status,
+    environment: {
+      sdkFound: snapshot.sdkFound,
+      ...(snapshot.sdkPath ? { sdkPath: snapshot.sdkPath } : {}),
+      adbFound: snapshot.adbFound,
+      ...(snapshot.adbPath ? { adbPath: snapshot.adbPath } : {}),
+      deviceFound: snapshot.deviceFound,
+      ...(snapshot.device?.serial ? { deviceSerial: snapshot.device.serial } : {}),
+      hostApkFound,
+      ...(hostApkFound ? { hostApkPath } : {}),
+      hostInstalled,
+      hostOnline,
+      ...(rpcHealth ? { rpcHealth } : {}),
+    },
+    artifact: artifactDiagnostics,
+    ...(classResolution ? { classResolution } : {}),
+    ...(initDiagnostics ? { init: initDiagnostics } : {}),
+    operations,
+    blockers: [...new Set(blockers)],
+    notes: [
+      "Host availability is based on ADB device reachability, package installation, and RPC health; no android-spider-host.exe check is used.",
+      "Cleartext HTTP is disabled by default; a source that requires it is reported as CLEARTEXT_NOT_PERMITTED.",
+    ],
+  };
   await writeFile(join(outputRoot, "ANDROID-BRIDGE-FEASIBILITY.md"), renderAndroidBridgeFeasibility(report), "utf8");
   await writeFile(join(outputRoot, "ANDROID-SPIDER-POC-REPORT.md"), renderAndroidSpiderPoc(report), "utf8");
   await writeFile(join(outputRoot, "ENOENT-AUDIT.md"), renderEnoentAudit(report, audit), "utf8");
   await writeFile(join(outputRoot, "RUNTIME-DIAGNOSTICS-V3.md"), renderRuntimeDiagnosticsV3(report, audit), "utf8");
-  console.log(JSON.stringify({ status, site: normalized.key, blockers, summary: audit.summary }, null, 2));
+  await writeFile(join(outputRoot, "ANDROID-HOST-SETUP.md"), renderAndroidHostSetup(hostReport), "utf8");
+  await writeFile(join(outputRoot, "ANDROID-SPIDER-POC-REPORT-V2.md"), renderAndroidSpiderPocV2(hostReport), "utf8");
+  await writeFile(join(outputRoot, "ANDROID-SPIDER-HOST-REPORT.md"), renderAndroidSpiderHostReport(hostReport), "utf8");
+  await writeFile(join(outputRoot, "RUNTIME-DIAGNOSTICS-V4.md"), renderRuntimeDiagnosticsV4(hostReport), "utf8");
+  console.log(JSON.stringify({ status: hostReport.status, site: normalized.key, blockers: hostReport.blockers, summary: audit.summary }, null, 2));
   return report;
 }
 
-async function runBridgeAttempt(
+async function runOperation(
   attempts: AndroidSpiderPocAttempt[],
   operation: string,
   action: () => Promise<unknown>,
 ): Promise<unknown> {
-  const attempt = attempts.find((value) => value.operation === operation);
-  if (!attempt) return undefined;
+  const started = Date.now();
   try {
-    const response = await action();
-    if (isRecord(response) && response.ok === false) {
-      attempt.status = "failed";
-      const message = isRecord(response.error) && typeof response.error.message === "string" ? response.error.message : "remote_error";
-      const code = isRecord(response.error) && typeof response.error.code === "string" ? response.error.code : "ANDROID_BRIDGE_REMOTE_ERROR";
-      const diagnostics = isRecord(response.error) && isRecord(response.error.diagnostics) ? response.error.diagnostics : undefined;
-      attempt.details = `${code}: ${message}`;
-      throw Object.assign(new Error(`${code}: ${message}${diagnosticText(diagnostics)}`), { code, diagnostics });
-    }
-    attempt.status = "passed";
-    return response;
+    const result = await action();
+    markAttempt(attempts, operation, "passed", `${Date.now() - started}ms`);
+    return result;
   } catch (error) {
-    attempt.status = "failed";
-    attempt.details = error instanceof Error ? error.message : String(error);
+    markAttempt(attempts, operation, "failed", error instanceof Error ? error.message : String(error));
     throw error;
   }
 }
 
-function failAttempt(attempts: AndroidSpiderPocAttempt[], operation: string, details: string): void {
-  const attempt = attempts.find((attempt) => attempt.operation === operation);
-  if (attempt) {
-    attempt.status = "failed";
-    attempt.details = details;
-  }
+function markAttempt(attempts: AndroidSpiderPocAttempt[], operation: string, status: AndroidSpiderPocAttempt["status"], details?: string): void {
+  const attempt = attempts.find((value) => value.operation === operation);
+  if (!attempt) return;
+  attempt.status = status;
+  if (details) attempt.details = details;
 }
 
-function responseList(response: unknown): readonly Record<string, unknown>[] {
-  const value = responseValue(response);
-  if (!isRecord(value) || !Array.isArray(value.list)) return [];
-  return value.list.filter(isRecord);
-}
-
-function responseId(item: Record<string, unknown> | undefined): string | undefined {
-  if (!item) return undefined;
-  const value = item.vod_id ?? item.vodId ?? item.id;
-  return typeof value === "string" || typeof value === "number" ? String(value) : undefined;
-}
-
-function hasPlaybackLines(response: unknown): boolean {
-  const first = responseList(response)[0];
-  if (!first) return false;
-  return (typeof first.vod_play_url === "string" && first.vod_play_url.trim().length > 0)
-    || (typeof first.vod_play_from === "string" && first.vod_play_from.trim().length > 0);
-}
-
-function responseValue(response: unknown): unknown {
-  if (!isRecord(response)) return undefined;
-  const value = response.result;
-  if (typeof value !== "string") return value;
-  try {
-    return JSON.parse(value) as unknown;
-  } catch {
-    return value;
-  }
-}
-
-function diagnosticText(diagnostics: Record<string, unknown> | undefined): string {
-  if (!diagnostics) return "";
-  const values = Object.entries(diagnostics)
-    .filter(([, value]) => typeof value === "string" || typeof value === "number" || typeof value === "boolean")
-    .map(([key, value]) => `${key}=${String(value)}`);
-  return values.length > 0 ? ` (${values.join(", ")})` : "";
-}
-
-function inspectEnvironment(): AndroidEnvironmentAudit {
-  const adb = spawnSync("adb", ["version"], { encoding: "utf8", windowsHide: true });
-  const devices = spawnSync("adb", ["devices"], { encoding: "utf8", windowsHide: true });
-  const adbPath = process.env.ADB ?? (adb.status === 0 ? "adb" : undefined);
-  const sdkCandidates = [
-    process.env.ANDROID_HOME,
-    process.env.ANDROID_SDK_ROOT,
-    join(homedir(), "AppData", "Local", "Android", "Sdk"),
-  ].filter((value): value is string => typeof value === "string" && value.length > 0);
-  const androidSdkPath = sdkCandidates.find((value) => existsSync(value));
-  const hostExecutable = process.env.QX_ANDROID_SPIDER_HOST?.trim() || undefined;
-  const deviceOutput = typeof devices.stdout === "string" ? devices.stdout : "";
-  const adbVersion = typeof adb.stdout === "string" && adb.stdout.trim()
-    ? adb.stdout.trim().split("\n")[0]?.trim()
+function classDiagnosticsFromError(api: string, siteKey: string, expectedClass: string, candidates: readonly string[], error: unknown): NonNullable<AndroidHostDiagnosticsReport["classResolution"]> {
+  const diagnostics = error instanceof Error && "diagnostics" in error
+    ? (error as { diagnostics?: Record<string, unknown> }).diagnostics
     : undefined;
   return {
-    ...(adbPath ? { adbPath } : {}),
-    ...(adbVersion ? { adbVersion } : {}),
-    adbDevices: deviceOutput.trim(),
-    connectedDevice: /^.+\tdevice$/mu.test(deviceOutput),
-    ...(androidSdkPath ? { androidSdkPath } : {}),
-    androidSdkAvailable: androidSdkPath !== undefined,
-    javaCompilerAvailable: spawnSync("javac", ["-version"], { stdio: "ignore", windowsHide: true }).status === 0,
-    ...(hostExecutable ? { hostExecutable } : {}),
-    hostAvailable: hostExecutable !== undefined && existsSync(hostExecutable),
+    api,
+    siteKey,
+    expectedClass,
+    ...(typeof diagnostics?.resolvedClass === "string" ? { resolvedClass: diagnostics.resolvedClass } : {}),
+    classExists: diagnostics?.classExists === true,
+    candidateSpiderClasses: Array.isArray(diagnostics?.candidateSpiderClasses)
+      ? diagnostics.candidateSpiderClasses.filter((value): value is string => typeof value === "string")
+      : candidates,
+    status: "FAIL",
+    details: error instanceof Error ? error.message : String(error),
   };
-}
-
-function missingPrerequisites(environment: AndroidEnvironmentAudit): string[] {
-  return [
-    !environment.androidSdkAvailable ? "android_sdk_missing" : "",
-    !environment.connectedDevice ? "android_device_missing" : "",
-    !environment.hostAvailable ? "runtime_host_missing" : "",
-  ].filter(Boolean);
 }
 
 function selectSite(sites: readonly TvBoxSite[]): TvBoxSite | undefined {
@@ -274,13 +374,24 @@ function selectSite(sites: readonly TvBoxSite[]): TvBoxSite | undefined {
   }) ?? candidates[0];
 }
 
-function expectedClass(api: string | undefined): string {
+function expectedAndroidSpiderClass(api: string | undefined): string {
   const name = api?.replace(/^csp_/i, "").trim();
-  return name ? `com.github.catvod.spider.${name}` : "";
+  return name && /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(name) ? `com.github.catvod.spider.${name}` : "";
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function record(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  return values.find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim();
+}
+
+function requiresArm64(nativeLibraries: readonly string[]): boolean {
+  if (nativeLibraries.length === 0) return false;
+  const hasX86 = nativeLibraries.some((value) => /(?:^|[\\/])(?:x86|x86_64)(?:[\\/]|$)/iu.test(value));
+  const hasArm = nativeLibraries.some((value) => /(?:^|[\\/])(?:armeabi|armeabi-v7a|arm64-v8a)(?:[\\/]|$)/iu.test(value));
+  return hasArm && !hasX86;
 }
 
 if (process.argv[1]?.endsWith("android-spider-poc.ts")) {

@@ -12,6 +12,11 @@ export interface AndroidEnvironmentAudit {
   javaCompilerAvailable: boolean;
   hostExecutable?: string;
   hostAvailable: boolean;
+  hostApkPath?: string;
+  hostApkAvailable?: boolean;
+  hostInstalled?: boolean;
+  hostOnline?: boolean;
+  deviceSerial?: string;
 }
 
 export interface AndroidSpiderPocAttempt {
@@ -51,7 +56,8 @@ export function renderAndroidBridgeFeasibility(report: AndroidSpiderPocReport): 
     `- Connected Android device: ${environment.connectedDevice ? "yes" : "no"}`,
     `- Android SDK: ${environment.androidSdkAvailable ? `available at \`${cell(environment.androidSdkPath ?? "") }\`` : "missing"}`,
     `- Java compiler: ${environment.javaCompilerAvailable ? "available" : "missing"}`,
-    `- Android Spider Host executable: ${environment.hostAvailable ? `available at \`${cell(environment.hostExecutable ?? "") }\`` : "missing"}`,
+    `- Android Spider Host health: ${(environment.hostOnline ?? environment.hostAvailable) ? "online" : "offline"}`,
+    `- Android Spider Host APK: ${environment.hostApkAvailable ? `available at \`${cell(environment.hostApkPath ?? "") }\`` : "not checked"}`,
     "",
     "## Real artifact",
     "",

@@ -1,6 +1,6 @@
 # ENOENT Root-Cause Audit
 
-Generated: 2026-08-08T15:34:48.343Z
+Generated: 2026-08-08T16:20:19.124Z
 Configuration source: `http://xn--z7x900a.net/`
 
 ENOENT is not used as the user-facing root cause. Each failure is classified with the missing path and runtime context.
@@ -9,13 +9,13 @@ ENOENT is not used as the user-facing root cause. Each failure is classified wit
 
 | Source | Runtime | Audit result | Root cause |
 | --- | --- | --- | --- |
-| ⚡┃闪电┃优汐 (csp_FeiMaoUC) | android-dex | BLOCKED | runtime_host_missing |
+| ⚡┃闪电┃优汐 (csp_FeiMaoUC) | android-dex | BLOCKED | ANDROID_DEVICE_NOT_FOUND |
 
 ## Diagnostic fields
 
-- errorCode: `runtime_host_missing`
-- syscall: `spawn`
-- missingPath: `C:\Users\qiany\Documents\ChatGPT\QX影视\android-spider-host.exe`
+- errorCode: `ANDROID_DEVICE_NOT_FOUND`
+- syscall: `unknown`
+- missingPath: `unknown`
 - sourceKey: `csp_FeiMaoUC`
 - sourceName: ⚡┃闪电┃优汐
 - runtimeKind: `android-dex`

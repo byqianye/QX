@@ -6,11 +6,12 @@ This Goal does not claim Android DEX execution without an Android-compatible Hos
 
 ## Environment evidence
 
-- adb: adb (Android Debug Bridge version 1.0.41)
+- adb: C:\Users\qiany\.workbuddy\android-toolchain\sdk\platform-tools\adb.exe (Android Debug Bridge version 1.0.41 Version 37.0.0-14910828 Installed as C:\Users\qiany\.workbuddy\android-toolchain\sdk\platform-tools\adb.exe Running on Windows 10.0.26200)
 - Connected Android device: no
-- Android SDK: missing
+- Android SDK: available at `C:\Users\qiany\.workbuddy\android-toolchain\sdk`
 - Java compiler: missing
-- Android Spider Host executable: missing
+- Android Spider Host health: offline
+- Android Spider Host APK: available at `C:\Users\qiany\Documents\ChatGPT\QX影视\android-spider-host\app\build\outputs\apk\debug\app-debug.apk`
 
 ## Real artifact
 
@@ -25,9 +26,7 @@ This Goal does not claim Android DEX execution without an Android-compatible Hos
 
 ## Why this is blocked
 
-- android_sdk_missing
-- android_device_missing
-- runtime_host_missing
+- ANDROID_DEVICE_NOT_FOUND
 
 ## Required Android Host surface
 

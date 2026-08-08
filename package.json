@@ -36,6 +36,7 @@
     "spike:java": "tsx src/spikes/java-probe.ts",
     "spike:jvm": "tsx src/spikes/jvm-probe.ts",
     "spike:player": "tsx src/spikes/playable-player-probe.ts",
+    "spike:android-spider": "tsx src/spikes/android-spider-poc.ts",
     "spike:douban": "tsx src/spikes/douban-probe.ts",
     "spike:douban-detail": "tsx src/spikes/douban-detail-probe.ts",
     "spike:douban-detail-sidecar": "tsx src/spikes/douban-detail-sidecar-probe.ts",
@@ -47,7 +48,12 @@
     "spike:douban-desktop-import": "tsx src/spikes/douban-desktop-import-probe.ts",
     "spike:douban-player": "tsx src/spikes/douban-player-probe.ts",
     "spike": "tsx src/spikes/run-all.ts",
-    "runtime:audit": "tsx src/spikes/runtime-audit.ts"
+    "runtime:audit": "tsx src/spikes/runtime-audit.ts",
+    "android-host:build": "tsx scripts/android-host.ts build",
+    "android-host:install": "tsx scripts/android-host.ts install",
+    "android-host:start": "tsx scripts/android-host.ts start",
+    "android-host:stop": "tsx scripts/android-host.ts stop",
+    "android-host:check": "tsx scripts/android-host.ts check"
   },
   "dependencies": {
     "hls.js": "^1.6.17",

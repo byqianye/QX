@@ -12,6 +12,7 @@ import { JarInspector } from "../src/spider/jar-inspector.js";
 import { NativeSpiderRegistry } from "../src/spider/native-spider-registry.js";
 import { SpiderRuntimeDetector } from "../src/spider/spider-runtime-detector.js";
 import { SpiderRuntimeManager } from "../src/spider/spider-runtime.js";
+import type { AndroidSpiderBridgeClient } from "../src/spider/android-spider-bridge-client.js";
 
 describe("Spider Runtime detection and artifacts", () => {
   it("prefers a registered native adapter for csp_Douban", async () => {
@@ -46,6 +47,75 @@ describe("Spider Runtime detection and artifacts", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  it("supports only the real PoC Android DEX site", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "qx-runtime-validated-dex-"));
+    const jarPath = join(directory, "spider.jar");
+    writeFileSync(jarPath, zipFile(["classes.dex"]));
+    try {
+      const result = await new SpiderRuntimeDetector().detect({
+        key: "csp_FeiMaoUC",
+        type: 3,
+        api: "csp_Duopan",
+        jar: jarPath,
+      });
+      expect(result).toMatchObject({
+        runtime: "android-dex",
+        supported: true,
+        reason: "android_dex_runtime_supported",
+        artifactPath: jarPath,
+      });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("runs the validated Android DEX site through the RuntimeManager client seam", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "qx-runtime-validated-client-"));
+    const jarPath = join(directory, "spider.jar");
+    writeFileSync(jarPath, zipFile(["classes.dex"]));
+    const calls: string[] = [];
+    const client = {
+      connect: async () => { calls.push("connect"); return {}; },
+      health: async () => { calls.push("health"); return { status: "ok" }; },
+      loadJar: async () => { calls.push("loadJar"); return { jarId: "jar-1" }; },
+      createSpider: async (api: string, expectedClass: string, siteKey: string) => {
+        calls.push(`createSpider:${api}:${expectedClass}:${siteKey}`);
+        return { spiderId: "spider-1" };
+      },
+      init: async () => { calls.push("init"); return {}; },
+      searchContent: async () => { calls.push("searchContent"); return { list: [{ vod_id: "poc-1", vod_name: "真实 PoC" }] }; },
+      homeContent: async () => ({ list: [] }),
+      categoryContent: async () => ({ list: [] }),
+      detailContent: async () => ({ list: [{ vod_id: "poc-1", vod_name: "真实 PoC" }] }),
+      playerContent: async () => ({ parse: 0, url: "https://example.test/video.m3u8" }),
+      destroy: async () => { calls.push("destroy"); },
+    } as unknown as AndroidSpiderBridgeClient;
+    const site = { key: "csp_FeiMaoUC", type: 3, api: "csp_Duopan", jar: jarPath };
+    const manager = new SpiderRuntimeManager({
+      config: { sites: [site] },
+      androidBridgeClientFactory: () => client,
+    });
+    try {
+      const runtime = await manager.getRuntime(site);
+      expect(runtime.kind).toBe("android-dex");
+      expect(runtime.capabilities.search).toBe(true);
+      await runtime.init(site, { sourceId: "android-poc", siteKey: site.key, ext: "{}" });
+      await expect(runtime.search({ key: "庆余年" })).resolves.toMatchObject({ items: [{ id: "poc-1", name: "真实 PoC" }] });
+      expect(calls).toEqual([
+        "connect",
+        "health",
+        "loadJar",
+        "createSpider:csp_Duopan:com.github.catvod.spider.Duopan:csp_FeiMaoUC",
+        "init",
+        "searchContent",
+      ]);
+    } finally {
+      await manager.destroy();
+      rmSync(directory, { recursive: true, force: true });
+    }
+    expect(calls.at(-1)).toBe("destroy");
   });
 
   it("resolves a local Spider declaration relative to a file config", async () => {

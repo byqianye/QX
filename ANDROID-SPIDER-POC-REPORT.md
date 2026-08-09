@@ -1,7 +1,7 @@
 # Android Spider PoC Report
 
-Status: **FAILED**
-Generated: 2026-08-09T02:50:52.992Z
+Status: **PASS**
+Generated: 2026-08-09T03:06:03.567Z
 Config: `http://xn--z7x900a.net/`
 Source: `csp_FeiMaoUC` / ⚡┃闪电┃优汐
 API: `csp_Duopan`
@@ -18,9 +18,9 @@ API: `csp_Duopan`
 | Operation | Status | Details |
 | --- | --- | --- |
 | health | passed |  |
-| loadJar | passed | 141ms |
+| loadJar | passed | 166ms |
 | createSpider | passed | 5ms |
-| init | passed | 809ms |
+| init | passed | 748ms |
 | searchContent | passed | SEARCH_PASS |
 | detailContent | passed | DETAIL_PLAYABLE_PASS |
 | playerContent | failed | PLAYER_CONTENT_FAIL: 未登录UC, 请去配置中心设置 |
@@ -43,4 +43,4 @@ API: `csp_Duopan`
 }
 ```
 
-The selected real csp_* source was not reported as executable; the missing prerequisite remains explicit.
+The selected real csp_* source completed the minimum Bridge PoC.

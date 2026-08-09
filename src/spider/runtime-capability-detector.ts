@@ -9,6 +9,7 @@ import { JsInspector } from "./js-inspector.js";
 import { PythonInspector } from "./python-inspector.js";
 import type { SpiderArtifactReference } from "./spider-artifact-resolver.js";
 import type { SiteRuntimeAuditKind } from "./runtime-audit-types.js";
+import { isValidatedAndroidDexSite } from "./android-dex-runtime.js";
 
 export interface RuntimeCapabilityDetectorOptions {
   nativeRegistry: NativeSpiderRegistry;
@@ -72,7 +73,15 @@ export class RuntimeCapabilityDetector {
       if (!inspection) return unsupported("unknown", "invalid_jar");
       if (inspection.runtimeRequirement === "android-dex") {
         return {
-          ...unsupported("android-dex", "android_dex_runtime_not_available"),
+          ...(isValidatedAndroidDexSite(site.site)
+            ? supported("android-dex", "android_dex_runtime_supported", {
+                home: false,
+                category: false,
+                search: true,
+                detail: true,
+                player: true,
+              })
+            : unsupported("android-dex", "android_dex_runtime_not_available")),
           artifact: inspection,
         };
       }

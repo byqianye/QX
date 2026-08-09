@@ -15,6 +15,7 @@ import type { SpiderResponse } from "../src/spider/rpc.js";
 import { ImportTrustStore } from "../src/config/trust.js";
 import { ConfigHistoryStore } from "../src/config/history.js";
 import type { SourceCapabilities, Vod } from "../src/source/media-source.js";
+import type { SpiderRuntimeManagerPort } from "../src/spider/runtime-types.js";
 
 describe("real configuration import", () => {
   const servers: DesktopSpiderUiServer[] = [];
@@ -324,6 +325,79 @@ describe("real configuration import", () => {
       searchSuccessSites: expect.arrayContaining(["playable-1", "playable-2", "playable-3", "playable-4"]),
     });
     expect(result.candidates.filter((candidate) => candidate.playable)).toHaveLength(4);
+  });
+
+  it("routes the validated Android DEX site through RuntimeManager without a desktop binding", async () => {
+    const androidRuntime = {
+      kind: "android-dex",
+      capabilities: {
+        home: true,
+        category: true,
+        search: true,
+        detail: true,
+        playback: true,
+        localProxy: false,
+        filters: false,
+        pagination: true,
+        engine: "jvm",
+      },
+      init: async () => undefined,
+      search: async () => ({
+        page: 1,
+        items: [{ id: "android-1", name: "Shared title", raw: {}, vod_id: "android-1", vod_name: "Shared title" }],
+      }),
+      detail: async () => [{
+        id: "android-1",
+        name: "Shared title",
+        raw: {},
+        vod_id: "android-1",
+        vod_name: "Shared title",
+        vod_play_from: "UC",
+        vod_play_url: "Episode 1$https://media.example.invalid/android.m3u8",
+      }],
+      destroy: async () => undefined,
+    };
+    const runtimeManager = {
+      supports: async (site: { api?: string }) => site.api === "csp_Duopan"
+        ? {
+            runtime: "android-dex",
+            supported: true,
+            reason: "android_dex_runtime_supported",
+            capabilities: androidRuntime.capabilities,
+          }
+        : {
+            runtime: "native",
+            supported: true,
+            reason: "native_supported",
+            capabilities: { ...androidRuntime.capabilities, engine: "jvm" },
+          },
+      getRuntime: async () => androidRuntime,
+    } as unknown as SpiderRuntimeManagerPort;
+    const importer = createImporter({ runtimeManagerFactory: () => runtimeManager });
+    await importer.import(JSON.stringify({
+      sites: [
+        { key: "douban", type: 3, api: "csp_Douban" },
+        { key: "csp_FeiMaoUC", type: 3, api: "csp_Duopan", ext: "{}" },
+      ],
+    }));
+    importer.confirm();
+
+    const result = await importer.resolvePlaybackSources({
+      id: "meta-1",
+      name: "Shared title",
+      raw: {},
+      vod_id: "meta-1",
+      vod_name: "Shared title",
+    });
+
+    expect(result.searchedSites).toContain("csp_FeiMaoUC");
+    expect(result.diagnostics.sites).toContainEqual(expect.objectContaining({
+      siteKey: "csp_FeiMaoUC",
+      runtime: "android-dex",
+      supported: true,
+      initialization: "success",
+      search: "success",
+    }));
   });
 
   it("can select the JVM-native playable source for the player spike", async () => {

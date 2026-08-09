@@ -33,6 +33,8 @@ import { SpiderRuntimeDetector, type SpiderRuntimeDetectorOptions } from "./spid
 import { quickJsScriptReference, pythonScriptReference } from "../desktop/source-router.js";
 import { PythonDesktopClient } from "./python-client.js";
 import { AndroidSpiderBridge, AndroidSpiderBridgeError, type AndroidSpiderBridgeResponse } from "./android-spider-bridge.js";
+import { AndroidSpiderBridgeClient } from "./android-spider-bridge-client.js";
+import { isValidatedAndroidDexSite } from "./android-dex-runtime.js";
 
 export interface SpiderRuntimeManagerOptions extends SpiderRuntimeDetectorOptions {
   config?: TvBoxConfig;
@@ -40,6 +42,7 @@ export interface SpiderRuntimeManagerOptions extends SpiderRuntimeDetectorOption
   nativeRuntime?: (site: TvBoxSite) => SpiderRuntime | undefined | Promise<SpiderRuntime | undefined>;
   /** @deprecated RuntimeManager wiring remains opt-in until the real Android PoC passes on a device. */
   androidBridgeFactory?: (site: TvBoxSite, support: RuntimeSupport) => AndroidSpiderBridge | undefined | Promise<AndroidSpiderBridge | undefined>;
+  androidBridgeClientFactory?: (site: TvBoxSite, support: RuntimeSupport) => AndroidSpiderBridgeClient | undefined | Promise<AndroidSpiderBridgeClient | undefined>;
   pythonExecutable?: string;
   pythonEnvironment?: NodeJS.ProcessEnv;
   jsWorker?: Omit<JsSpiderWorkerOptions, "script">;
@@ -86,6 +89,10 @@ export class SpiderRuntimeManager {
   private async createRuntime(site: TvBoxSite): Promise<SpiderRuntime> {
     const support = await this.supports(site);
     if (support.runtime === "android-dex") {
+      if (support.supported && isValidatedAndroidDexSite(site)) {
+        const client = await this.options.androidBridgeClientFactory?.(site, support);
+        if (client) return new AndroidDexRuntime(site, support, client);
+      }
       const bridge = await this.options.androidBridgeFactory?.(site, support);
       return bridge ? new AndroidSpiderRuntime(site, support, bridge) : new AndroidJarRuntime(support);
     }
@@ -250,6 +257,87 @@ export class AndroidJarRuntime implements SpiderRuntime {
   public detail(_ids: string[]): Promise<VodDetail[]> { return unsupportedOperation(); }
   public player(_request: PlayerRequest): Promise<PlayerResult> { return unsupportedOperation(); }
   public destroy(): Promise<void> { return Promise.resolve(); }
+}
+
+export class AndroidDexRuntime implements SpiderRuntime {
+  public readonly kind: SpiderRuntimeKind = "android-dex";
+  public readonly capabilities = runtimeCapabilities("jvm", {
+    search: true,
+    detail: true,
+    player: true,
+  });
+  private initialized = false;
+
+  public constructor(
+    private readonly site: TvBoxSite,
+    private readonly support: RuntimeSupport,
+    private readonly client: AndroidSpiderBridgeClient,
+  ) {}
+
+  public supports(_site: TvBoxSite): Promise<RuntimeSupport> {
+    return Promise.resolve({
+      ...this.support,
+      supported: true,
+      reason: "android_dex_runtime_supported",
+      capabilities: this.capabilities,
+    });
+  }
+
+  public async init(site = this.site, context: SourceInitContext = defaultContext(site)): Promise<void> {
+    if (this.initialized) return;
+    const artifactPath = this.support.artifactPath;
+    if (!artifactPath) throw new Error("Android Spider artifact path is unavailable");
+    await this.client.connect();
+    await this.client.health();
+    await this.client.loadJar(artifactPath, this.support.artifactUrl);
+    await this.client.createSpider(
+      site.api ?? "",
+      expectedAndroidSpiderClass(site.api),
+      site.key ?? site.api ?? "site",
+    );
+    await this.client.init(context.ext ?? serializeFongMiExt(site.ext));
+    this.initialized = true;
+  }
+
+  public async home(filter = false): Promise<HomeResult> {
+    return normalizeHomeResult(await this.client.homeContent(filter));
+  }
+
+  public async homeVideo(): Promise<VodPage> {
+    return normalizeHomeAsPage(await this.home());
+  }
+
+  public async category(request: CategoryRequest): Promise<VodPage> {
+    const page = request.page ?? 1;
+    return normalizeVodPage(await this.client.categoryContent(
+      request.typeId,
+      page,
+      request.filter ?? false,
+      { ...(request.extend ?? {}) },
+    ), page);
+  }
+
+  public async search(request: SearchRequest): Promise<VodPage> {
+    const page = request.page ?? 1;
+    return normalizeVodPage(await this.client.searchContent(request.key, request.quick ?? false, page), page);
+  }
+
+  public async detail(ids: string[]): Promise<VodDetail[]> {
+    return normalizeVodDetails(await this.client.detailContent(ids));
+  }
+
+  public async player(request: PlayerRequest): Promise<PlayerResult> {
+    return normalizePlayerResult(await this.client.playerContent(
+      request.flag,
+      request.id,
+      [...(request.vipFlags ?? [])],
+    ));
+  }
+
+  public async destroy(): Promise<void> {
+    this.initialized = false;
+    await this.client.destroy();
+  }
 }
 
 export class AndroidSpiderRuntime implements SpiderRuntime {

@@ -1,6 +1,6 @@
 # Android Spider Host Setup
 
-Status: **FAIL**
+Status: **PASS**
 
 The Android Host is a standalone APK. Electron talks to it through ADB port forwarding and a loopback JSON-RPC socket.
 

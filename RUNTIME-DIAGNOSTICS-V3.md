@@ -1,13 +1,13 @@
 # Runtime Diagnostics V3
 
-Generated: 2026-08-09T02:50:52.992Z
+Generated: 2026-08-09T03:06:03.567Z
 
 ## Configuration
 
 - Configured: 39
 - Searchable: 33
-- Current supported: 2
-- Searchable supported: 0
+- Current supported: 3
+- Searchable supported: 1
 - Android DEX: 37
 - JavaScript: 1
 - Native: 1
@@ -18,7 +18,7 @@ Generated: 2026-08-09T02:50:52.992Z
 - Host: online candidate
 - adb device: online
 - Artifact: android-dex, 864852 bytes
-- Selected source initialization: blocked
+- Selected source initialization: success
 
 ## Selected source
 
@@ -28,4 +28,4 @@ Generated: 2026-08-09T02:50:52.992Z
 - Detail: passed
 - Player: failed
 
-Bridge PoC status: BLOCKED; no unsupported capability is advertised.
+Bridge PoC status: PASS

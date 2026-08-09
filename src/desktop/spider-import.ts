@@ -296,6 +296,7 @@ export class DesktopSpiderImportController {
         detail: support.capabilities.detail,
       };
       const runtimeSupported = support.supported && resolverCapabilities.search && resolverCapabilities.detail;
+      const runtimeBindingAvailable = binding !== undefined || support.runtime === "android-dex";
       const metadataOnly = knownMetadataOnlySite(siteKey, configured.api);
       const enabled = managed?.enabled !== false
         && managed?.trusted !== false
@@ -303,7 +304,7 @@ export class DesktopSpiderImportController {
       const normalized = normalizeFongMiSite(configured, this.stateValue.source ?? undefined, index);
       const skipReason = !runtimeSupported
         ? support.reason
-        : binding === undefined
+        : !runtimeBindingAvailable
           ? unsupportedRuntimeReason(normalized.type, configured.api)
         : !enabled
           ? (managed?.enabled === false ? "site_disabled" : "source_health_circuit_open")
@@ -317,7 +318,7 @@ export class DesktopSpiderImportController {
         enabled,
         searchable: configured.searchable === undefined ? true : configured.searchable,
         quickSearch: configured.quickSearch === undefined ? false : configured.quickSearch,
-        supported: runtimeSupported && binding !== undefined,
+        supported: runtimeSupported && runtimeBindingAvailable,
         runtime: support.runtime,
         runtimeReason: support.reason,
         capabilities: resolverCapabilities,
@@ -827,7 +828,7 @@ export class DesktopSpiderImportController {
       const getRuntime = async () => {
         runtimePromise ??= runtimeManager.getRuntime(configured);
         const runtime = await runtimePromise;
-        if (runtime.kind === "android-dex" || runtime.kind === "unsupported") {
+        if (runtime.kind === "unsupported") {
           throw new Error(site.skipReason ?? "unsupported_runtime");
         }
         if (!runtime.capabilities.search || !runtime.capabilities.detail) {

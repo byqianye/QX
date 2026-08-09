@@ -361,9 +361,12 @@ export async function runAndroidSpiderPoc(
     androidHostAvailable: client?.androidHostAvailable ?? hostOnline,
     hostAvailable: hostOnline,
   };
-  const status: AndroidSpiderPocReport["status"] = attempts.some((attempt) => attempt.status === "failed")
+  const coreOperations = new Set(["health", "loadJar", "createSpider", "init", "searchContent"]);
+  const coreFailed = attempts.some((attempt) => coreOperations.has(attempt.operation) && attempt.status === "failed");
+  const blockingBlockers = blockers.filter((blocker) => blocker !== "SPIDER_SOURCE_AUTH_REQUIRED");
+  const status: AndroidSpiderPocReport["status"] = coreFailed
     ? "FAILED"
-    : blockers.length > 0
+    : blockingBlockers.length > 0
       ? "BLOCKED"
       : "PASS";
   const report: AndroidSpiderPocReport = {

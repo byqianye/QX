@@ -24,6 +24,9 @@ import type { LiveFailoverMode } from "../live/live-types.js";
 import { EngineRouter } from "../engine/engine-router.js";
 import { SpiderArtifactCache } from "../spider/spider-artifact-cache.js";
 import { NativeSpiderRuntime, SpiderRuntimeManager } from "../spider/spider-runtime.js";
+import { AndroidDeviceManager } from "../spider/android-device-manager.js";
+import { AndroidSpiderBridgeClient } from "../spider/android-spider-bridge-client.js";
+import { isValidatedAndroidDexSite } from "../spider/android-dex-runtime.js";
 import { readJellyfinEnvironment } from "../jellyfin/jellyfin-adapter.js";
 import { resolveJavaExecutable } from "../spikes/java-probe.js";
 import {
@@ -455,13 +458,28 @@ function createShell(): DesktopShellRuntime {
       const router = new EngineRouter({ maxActiveSessions: 4, idleSessionMs: 30_000 });
       const jellyfinConfig = readJellyfinEnvironment(process.env);
       engineRouter = router;
-      const createRuntimeManager = (config: TvBoxConfig, sourceUrl?: string) => new SpiderRuntimeManager({
+      const createRuntimeManager = (config: TvBoxConfig, sourceUrl?: string) => {
+        const androidDeviceManager = new AndroidDeviceManager({
+          ...(process.env.QX_ANDROID_SDK_PATH ? { sdkPath: process.env.QX_ANDROID_SDK_PATH } : {}),
+          ...(process.env.QX_ANDROID_DEVICE_SERIAL ? { serial: process.env.QX_ANDROID_DEVICE_SERIAL } : {}),
+        });
+        return new SpiderRuntimeManager({
         config,
         ...(sourceUrl ? { sourceUrl } : {}),
         artifactCache: new SpiderArtifactCache(join(getDataStorageService().directories().dataRoot, "spider-cache"), {
           timeoutMs: REQUEST_TIMEOUT_MS,
         }),
         pythonExecutable: runtime.pythonExecutable ?? (app.isPackaged ? "" : process.env.QX_PYTHON ?? "python"),
+        androidBridgeClientFactory: async (site, support) => {
+          if (!isValidatedAndroidDexSite(site) || !support.artifactPath) return undefined;
+          await androidDeviceManager.startHost();
+          return new AndroidSpiderBridgeClient({
+            deviceManager: androidDeviceManager,
+            ...(site.key ?? site.api ? { siteKey: site.key ?? site.api } : {}),
+            ...(site.name ? { sourceName: site.name } : {}),
+            ...(support.artifactUrl ? { artifactUrl: support.artifactUrl } : {}),
+          });
+        },
         nativeRuntime: async (nativeSite) => {
           const binding = router.resolve(config, nativeSite);
           if (binding.engine !== "jvm") return undefined;
@@ -493,7 +511,8 @@ function createShell(): DesktopShellRuntime {
             capabilities: binding.capabilities,
           });
         },
-      });
+        });
+      };
       const importer = new DesktopSpiderImportController({
         trustStore,
         history: configHistory,

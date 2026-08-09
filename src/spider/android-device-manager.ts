@@ -12,6 +12,10 @@ export interface AndroidDevice {
   model?: string;
   product?: string;
   transportId?: string;
+  androidVersion?: string;
+  sdkInt?: number;
+  abi?: string;
+  bootCompleted?: boolean;
 }
 
 export interface AndroidEnvironmentSnapshot {
@@ -20,6 +24,9 @@ export interface AndroidEnvironmentSnapshot {
   adbPath?: string;
   adbFound: boolean;
   adbVersion?: string;
+  emulatorPath?: string;
+  emulatorFound: boolean;
+  avds: readonly string[];
   devices: readonly AndroidDevice[];
   device?: AndroidDevice;
   deviceFound: boolean;
@@ -35,6 +42,7 @@ export interface AndroidDeviceManagerPort {
   stopHost(): Promise<void>;
   push(localPath: string, remotePath: string): Promise<void>;
   shell(args: readonly string[]): Promise<string>;
+  waitForBoot?(): Promise<AndroidDevice>;
 }
 
 export interface AndroidDeviceManagerOptions {
@@ -44,12 +52,14 @@ export interface AndroidDeviceManagerOptions {
   hostPackage?: string;
   hostActivity?: string;
   commandTimeoutMs?: number;
+  bootTimeoutMs?: number;
+  bootPollMs?: number;
   env?: NodeJS.ProcessEnv;
 }
 
 export class AndroidDeviceManagerError extends Error {
   public constructor(
-    public readonly code: "ANDROID_SDK_NOT_FOUND" | "ADB_NOT_FOUND" | "ANDROID_DEVICE_NOT_FOUND" | "ADB_COMMAND_FAILED",
+    public readonly code: "ANDROID_SDK_NOT_FOUND" | "ADB_NOT_FOUND" | "ANDROID_DEVICE_NOT_FOUND" | "ANDROID_DEVICE_SERIAL_REQUIRED" | "ANDROID_DEVICE_BOOT_TIMEOUT" | "ANDROID_HOST_NOT_INSTALLED" | "ADB_COMMAND_FAILED",
     message: string,
     public readonly diagnostics?: Readonly<Record<string, unknown>>,
     options?: ErrorOptions,
@@ -65,13 +75,16 @@ interface AdbResult {
 }
 
 export class AndroidDeviceManager implements AndroidDeviceManagerPort {
-  private readonly options: Required<Pick<AndroidDeviceManagerOptions, "commandTimeoutMs" | "hostPackage" | "hostActivity">> & AndroidDeviceManagerOptions;
+  private readonly options: Required<Pick<AndroidDeviceManagerOptions, "commandTimeoutMs" | "bootTimeoutMs" | "bootPollMs" | "hostPackage" | "hostActivity">> & AndroidDeviceManagerOptions;
   private adbPathValue: string | undefined;
+  private emulatorPathValue: string | undefined;
   private deviceValue: AndroidDevice | undefined;
 
   public constructor(options: AndroidDeviceManagerOptions = {}) {
     this.options = {
       commandTimeoutMs: 10_000,
+      bootTimeoutMs: 120_000,
+      bootPollMs: 1_000,
       hostPackage: "com.qx.yingshi.androidhost",
       hostActivity: "com.qx.yingshi.androidhost.MainActivity",
       ...options,
@@ -93,6 +106,8 @@ export class AndroidDeviceManager implements AndroidDeviceManagerPort {
 
     let adbPath: string | undefined;
     let adbVersion: string | undefined;
+    let emulatorPath: string | undefined;
+    let avds: readonly string[] = [];
     let devices: readonly AndroidDevice[] = [];
     try {
       adbPath = await this.resolveAdbPath();
@@ -103,7 +118,21 @@ export class AndroidDeviceManager implements AndroidDeviceManagerPort {
       diagnostics.push(code);
     }
 
-    const device = selectDevice(devices, this.options.serial);
+    try {
+      emulatorPath = await this.resolveEmulatorPath();
+      avds = await this.listAvds();
+    } catch {
+      // A physical device is a valid Android runtime; emulator discovery is diagnostic only.
+    }
+
+    let device = selectDevice(devices, this.options.serial);
+    if (device?.state === "device") {
+      device = await this.enrichDevice(device);
+    }
+    if (this.options.serial === undefined && multiplePhysicalDevicesRequireSerial(devices)) {
+      diagnostics.push("ANDROID_DEVICE_SERIAL_REQUIRED");
+      device = undefined;
+    }
     if (!device || device.state !== "device") diagnostics.push("ANDROID_DEVICE_NOT_FOUND");
     if (device?.state === "device") this.deviceValue = device;
     return {
@@ -112,6 +141,9 @@ export class AndroidDeviceManager implements AndroidDeviceManagerPort {
       ...(adbPath ? { adbPath } : {}),
       adbFound: adbPath !== undefined,
       ...(adbVersion ? { adbVersion } : {}),
+      ...(emulatorPath ? { emulatorPath } : {}),
+      emulatorFound: emulatorPath !== undefined,
+      avds,
       devices,
       ...(device ? { device } : {}),
       deviceFound: device?.state === "device",
@@ -133,6 +165,13 @@ export class AndroidDeviceManager implements AndroidDeviceManagerPort {
   public async requireDevice(): Promise<AndroidDevice> {
     const devices = await this.listDevices();
     const selected = selectDevice(devices, this.options.serial);
+    if (!this.options.serial && multiplePhysicalDevicesRequireSerial(devices)) {
+      throw new AndroidDeviceManagerError(
+        "ANDROID_DEVICE_SERIAL_REQUIRED",
+        "Multiple physical Android devices are online; set QX_ANDROID_DEVICE_SERIAL",
+        { devices },
+      );
+    }
     if (!selected || selected.state !== "device") {
       throw new AndroidDeviceManagerError(
         "ANDROID_DEVICE_NOT_FOUND",
@@ -142,8 +181,27 @@ export class AndroidDeviceManager implements AndroidDeviceManagerPort {
         { serial: this.options.serial ?? "", devices },
       );
     }
-    this.deviceValue = selected;
-    return selected;
+    this.deviceValue = await this.enrichDevice(selected);
+    return this.deviceValue;
+  }
+
+  public async waitForBoot(): Promise<AndroidDevice> {
+    const device = this.deviceValue ?? await this.requireDevice();
+    const deadline = Date.now() + this.options.bootTimeoutMs;
+    let current = device;
+    while (Date.now() <= deadline) {
+      current = await this.enrichDevice(current);
+      if (current.bootCompleted) {
+        this.deviceValue = current;
+        return current;
+      }
+      await delay(Math.min(this.options.bootPollMs, Math.max(1, deadline - Date.now())));
+    }
+    throw new AndroidDeviceManagerError(
+      "ANDROID_DEVICE_BOOT_TIMEOUT",
+      `Android device did not finish booting within ${this.options.bootTimeoutMs}ms: ${current.serial}`,
+      { serial: current.serial, timeoutMs: this.options.bootTimeoutMs, device: current },
+    );
   }
 
   public async forward(localPort: number, remotePort: number): Promise<void> {
@@ -163,6 +221,13 @@ export class AndroidDeviceManager implements AndroidDeviceManagerPort {
   public async install(apkPath: string): Promise<void> {
     const device = await this.requireDevice();
     await this.runAdb(["-s", device.serial, "install", "-r", apkPath], false);
+    if (!(await this.isHostInstalled())) {
+      throw new AndroidDeviceManagerError(
+        "ANDROID_HOST_NOT_INSTALLED",
+        `Android Host package was not found after install: ${this.options.hostPackage}`,
+        { packageName: this.options.hostPackage, apkPath, serial: device.serial },
+      );
+    }
   }
 
   public async startHost(): Promise<void> {
@@ -228,6 +293,50 @@ export class AndroidDeviceManager implements AndroidDeviceManagerPort {
     });
   }
 
+  public async resolveEmulatorPath(): Promise<string> {
+    if (this.emulatorPathValue) return this.emulatorPathValue;
+    const env = this.options.env ?? process.env;
+    const sdkPath = this.sdkPath;
+    const command = process.platform === "win32" ? "emulator.exe" : "emulator";
+    const candidates = [
+      this.options.env?.QX_ANDROID_EMULATOR_PATH,
+      sdkPath ? join(sdkPath, "emulator", command) : undefined,
+      findOnPath(command, env.Path ?? env.PATH),
+    ].filter((value): value is string => typeof value === "string" && value.length > 0);
+    for (const candidate of candidates) {
+      if (candidate === "emulator" || candidate === "emulator.exe" || existsSync(candidate)) {
+        this.emulatorPathValue = candidate;
+        return candidate;
+      }
+    }
+    throw new AndroidDeviceManagerError("ADB_NOT_FOUND", "Android emulator binary was not found", { sdkPath: sdkPath ?? "", candidates });
+  }
+
+  public async listAvds(): Promise<readonly string[]> {
+    const emulator = await this.resolveEmulatorPath();
+    try {
+      const result = await execFileAsync(emulator, ["-list-avds"], {
+        env: this.options.env ?? process.env,
+        encoding: "utf8",
+        timeout: this.options.commandTimeoutMs,
+        windowsHide: true,
+      });
+      return result.stdout.split(/\r?\n/u).map((value) => value.trim()).filter(Boolean);
+    } catch (error) {
+      throw new AndroidDeviceManagerError("ADB_COMMAND_FAILED", "Unable to list Android AVDs", { emulatorPath: emulator }, { cause: error });
+    }
+  }
+
+  private async enrichDevice(device: AndroidDevice): Promise<AndroidDevice> {
+    if (device.state !== "device") return device;
+    try {
+      const result = await this.runAdb(["-s", device.serial, "shell", "getprop"], false);
+      return { ...device, ...parseAndroidDeviceProperties(result.stdout) };
+    } catch {
+      return device;
+    }
+  }
+
   private async runAdb(args: readonly string[], _withDevice: boolean): Promise<AdbResult> {
     const adb = await this.resolveAdbPath();
     try {
@@ -279,7 +388,7 @@ function findOnPath(command: string, pathValue: string | undefined): string | un
   }
   try {
     const lookup = process.platform === "win32" ? "where.exe" : "which";
-    const result = execFileSync(lookup, [command], { encoding: "utf8", windowsHide: true });
+    const result = execFileSync(lookup, [command], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
     const first = result.trim().split(/\r?\n/u)[0];
     return first || undefined;
   } catch {
@@ -310,7 +419,41 @@ function parseDevices(stdout: string): AndroidDevice[] {
     });
 }
 
-function selectDevice(devices: readonly AndroidDevice[], serial: string | undefined): AndroidDevice | undefined {
+export function selectAndroidDevice(devices: readonly AndroidDevice[], serial: string | undefined): AndroidDevice | undefined {
   if (serial) return devices.find((device) => device.serial === serial);
-  return devices.find((device) => device.state === "device") ?? devices[0];
+  const ready = devices.filter((device) => device.state === "device");
+  const emulator = ready.find((device) => device.serial.startsWith("emulator-"));
+  if (emulator) return emulator;
+  return ready.length === 1 ? ready[0] : undefined;
+}
+
+function selectDevice(devices: readonly AndroidDevice[], serial: string | undefined): AndroidDevice | undefined {
+  return selectAndroidDevice(devices, serial);
+}
+
+function multiplePhysicalDevicesRequireSerial(devices: readonly AndroidDevice[]): boolean {
+  const ready = devices.filter((device) => device.state === "device");
+  return ready.length > 1 && !ready.some((device) => device.serial.startsWith("emulator-"));
+}
+
+export function parseAndroidDeviceProperties(stdout: string): Pick<AndroidDevice, "model" | "androidVersion" | "sdkInt" | "abi" | "bootCompleted"> {
+  const properties: Record<string, string> = {};
+  for (const line of stdout.split(/\r?\n/u)) {
+    const match = line.match(/^\[([^\]]+)\]: \[([^\]]*)\]$/u);
+    if (match?.[1] !== undefined && match[2] !== undefined) properties[match[1]] = match[2];
+  }
+  const sdk = Number.parseInt(properties["ro.build.version.sdk"] ?? "", 10);
+  const abi = properties["ro.product.cpu.abilist"]?.split(",")[0]?.trim() || properties["ro.product.cpu.abi"];
+  const boot = properties["sys.boot_completed"] === "1" || properties["dev.bootcomplete"] === "1";
+  return {
+    ...(properties["ro.product.model"] ? { model: properties["ro.product.model"] } : {}),
+    ...(properties["ro.build.version.release"] ? { androidVersion: properties["ro.build.version.release"] } : {}),
+    ...(Number.isInteger(sdk) ? { sdkInt: sdk } : {}),
+    ...(abi ? { abi } : {}),
+    bootCompleted: boot,
+  };
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

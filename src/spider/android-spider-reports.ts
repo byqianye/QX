@@ -5,9 +5,16 @@ import type { RuntimeErrorInfo } from "./runtime-errors.js";
 export interface AndroidEnvironmentAudit {
   adbPath?: string;
   adbVersion?: string;
+  emulatorPath?: string;
+  avds?: readonly string[];
   adbDevices: string;
   connectedDevice: boolean;
   androidSdkPath?: string;
+  deviceModel?: string;
+  androidVersion?: string;
+  sdkInt?: number;
+  abi?: string;
+  bootCompleted?: boolean;
   androidSdkAvailable: boolean;
   javaCompilerAvailable: boolean;
   hostExecutable?: string;

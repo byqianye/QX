@@ -5,8 +5,15 @@ export interface AndroidHostEnvironmentDiagnostics {
   sdkPath?: string;
   adbFound: boolean;
   adbPath?: string;
+  emulatorPath?: string;
+  avds?: readonly string[];
   deviceFound: boolean;
   deviceSerial?: string;
+  deviceModel?: string;
+  androidVersion?: string;
+  sdkInt?: number;
+  abi?: string;
+  bootCompleted?: boolean;
   hostApkFound: boolean;
   hostApkPath?: string;
   hostInstalled: boolean;
@@ -22,6 +29,7 @@ export interface AndroidHostArtifactDiagnostics {
   sha256: string;
   androidSha256?: string;
   jarId?: string;
+  dexCount?: number;
   candidateSpiderClasses?: readonly string[];
 }
 
@@ -42,7 +50,9 @@ export interface AndroidHostOperationDiagnostics {
   initException?: string;
   contextDependent?: boolean;
   keyword?: string;
+  rawResponseLength?: number;
   resultCount?: number;
+  vodYearPresent?: boolean;
   hasPlayFrom?: boolean;
   hasPlayUrl?: boolean;
   playLineCount?: number;
@@ -125,6 +135,8 @@ export function renderAndroidSpiderPocV2(report: AndroidHostDiagnosticsReport): 
       `- Windows SHA-256: ${code(report.artifact.sha256)}`,
       `- Android SHA-256: ${code(report.artifact.androidSha256 ?? "not verified")}`,
       `- Jar ID: ${code(report.artifact.jarId ?? "not loaded")}`,
+      `- Dex count: ${report.artifact.dexCount ?? "unknown"}`,
+      `- loadJar duration: ${report.operations.loadJar?.durationMs ?? "not run"}ms`,
     ] : ["- Artifact was not available."]),
     "",
     "## Class resolution",
@@ -180,6 +192,70 @@ export function renderAndroidSpiderHostReport(report: AndroidHostDiagnosticsRepo
   ].join("\n");
 }
 
+export function renderAndroidSpiderRealRun(report: AndroidHostDiagnosticsReport): string {
+  const environment = report.environment;
+  const health = environment.rpcHealth ?? {};
+  const search = report.operations.searchContent;
+  const detail = report.operations.detailContent;
+  const player = report.operations.playerContent;
+  return [
+    "# Android Spider Real Run",
+    "",
+    `Final: **${report.status}**`,
+    `Generated: ${report.generatedAt}`,
+    "",
+    "## Environment Doctor",
+    "",
+    `- SDK: ${environment.sdkFound ? "PASS" : "BLOCKED"}${environment.sdkPath ? ` (${code(environment.sdkPath)})` : ""}`,
+    `- ADB: ${environment.adbFound ? "PASS" : "BLOCKED"}${environment.adbPath ? ` (${code(environment.adbPath)})` : ""}`,
+    `- Device: ${environment.deviceFound ? "PASS" : "BLOCKED"}${environment.deviceSerial ? ` (${code(environment.deviceSerial)})` : ""}`,
+    `- Model: ${code(environment.deviceModel ?? "unknown")}`,
+    `- Android: ${code(environment.androidVersion ?? "unknown")}`,
+    `- SDK int: ${environment.sdkInt ?? "unknown"}`,
+    `- ABI: ${code(environment.abi ?? "unknown")}`,
+    `- Boot completed: ${environment.bootCompleted === true ? "PASS" : "BLOCKED"}`,
+    `- Emulator / AVD: ${environment.emulatorPath ? `${code(environment.emulatorPath)} / ${(environment.avds ?? []).map(code).join(", ") || "none"}` : "not available"}`,
+    `- Host APK / installed / RPC: ${environment.hostApkFound ? "PASS" : "BLOCKED"} / ${environment.hostInstalled ? "PASS" : "BLOCKED"} / ${environment.hostOnline ? "PASS" : "BLOCKED"}`,
+    `- Host version: ${code(typeof health.version === "string" ? health.version : "unknown")}`,
+    "",
+    "## Source and runtime",
+    "",
+    `- Source: ${code(report.siteKey)} / ${report.siteName}`,
+    `- API: ${code(report.api)}`,
+    `- Runtime: ${code("android-dex")}`,
+    `- Keyword: ${code(report.keyword ?? "not supplied")}`,
+    `- Artifact: ${report.artifact ? `${code(report.artifact.path)}, SHA Windows=${code(report.artifact.sha256)}, SHA Android=${code(report.artifact.androidSha256 ?? "not verified")}` : "not loaded"}`,
+    `- DexClassLoader: ${report.operations.loadJar?.status ?? "NOT_RUN"}, jarId=${code(report.artifact?.jarId ?? "not loaded")}, dexCount=${report.artifact?.dexCount ?? "unknown"}, loadDuration=${report.operations.loadJar?.durationMs ?? "unknown"}ms`,
+    `- Resolved class: ${code(report.classResolution?.resolvedClass ?? "not resolved")}, classExists=${report.classResolution?.classExists === true}`,
+    "",
+    "## Lifecycle and real source calls",
+    "",
+    "| Stage | Status | Evidence |",
+    "| --- | --- | --- |",
+    `| health | ${report.operations.health?.status ?? "NOT_RUN"} | ${operationDetails(report.operations.health)} |`,
+    `| loadJar | ${report.operations.loadJar?.status ?? "NOT_RUN"} | ${operationDetails(report.operations.loadJar)} |`,
+    `| createSpider | ${report.operations.createSpider?.status ?? "NOT_RUN"} | ${operationDetails(report.operations.createSpider)} |`,
+    `| init | ${report.init?.status ?? "NOT_RUN"} | ${operationDetails(report.init)} |`,
+    `| searchContent | ${search?.status ?? "NOT_RUN"} | ${operationDetails(search)} |`,
+    `| detailContent | ${detail?.status ?? "NOT_RUN"} | ${operationDetails(detail)} |`,
+    `| playerContent | ${player?.status ?? "NOT_RUN"} | ${operationDetails(player)} |`,
+    "",
+    "## Search / detail / player summary",
+    "",
+    `- Search: ${search?.status ?? "NOT_RUN"}, rawResponseLength=${search?.rawResponseLength ?? "unknown"}, resultCount=${search?.resultCount ?? "unknown"}`,
+    `- Detail: ${detail?.status ?? "NOT_RUN"}, vodYearPresent=${detail?.vodYearPresent ?? "unknown"}, hasPlayFrom=${detail?.hasPlayFrom ?? "unknown"}, hasPlayUrl=${detail?.hasPlayUrl ?? "unknown"}, playLineCount=${detail?.playLineCount ?? "unknown"}`,
+    `- Player: ${player?.status ?? "NOT_RUN"}, urlPresent=${player?.urlPresent ?? "unknown"}, parse=${player?.parse ?? "unknown"}, jx=${player?.jx ?? "unknown"}, format=${player?.format ?? "unknown"}, headerPresent=${player?.headerPresent ?? "unknown"}`,
+    "",
+    "## RuntimeManager gate",
+    "",
+    report.status === "PASS"
+      ? "AndroidDexRuntime.supported=true is eligible only after this report's real health/load/create/init/search PASS evidence."
+      : "AndroidDexRuntime.supported remains false; RuntimeManager and PlaybackSourceResolver are not advertised as Android-capable.",
+    "",
+    ...(report.blockers.length > 0 ? ["## Blockers", "", ...report.blockers.map((item) => `- ${code(item)}`), ""] : []),
+  ].join("\n");
+}
+
 export function renderRuntimeDiagnosticsV4(report: AndroidHostDiagnosticsReport): string {
   const environment = report.environment;
   return [
@@ -195,10 +271,12 @@ export function renderRuntimeDiagnosticsV4(report: AndroidHostDiagnosticsReport)
     `| Android SDK | ${environment.sdkFound ? "PASS" : "BLOCKED"} | ${code(environment.sdkPath ?? "ANDROID_SDK_NOT_FOUND")} |`,
     `| ADB | ${environment.adbFound ? "PASS" : "BLOCKED"} | ${code(environment.adbPath ?? "ADB_NOT_FOUND")} |`,
     `| Device | ${environment.deviceFound ? "PASS" : "BLOCKED"} | ${code(environment.deviceSerial ?? "ANDROID_DEVICE_NOT_FOUND")} |`,
+    `| Device facts | ${environment.deviceFound ? "PASS" : "NOT_RUN"} | ${code([environment.deviceModel, environment.androidVersion, environment.sdkInt === undefined ? undefined : `sdkInt=${environment.sdkInt}`, environment.abi].filter((value): value is string => value !== undefined).join(" / ") || "unknown")} |`,
+    `| Boot completed | ${environment.bootCompleted === true ? "PASS" : "BLOCKED"} | ${environment.bootCompleted === true ? "sys.boot_completed=1" : "ANDROID_DEVICE_BOOT_TIMEOUT or not run"} |`,
     `| Host APK | ${environment.hostApkFound ? "PASS" : "BLOCKED"} | ${code(environment.hostApkPath ?? "HOST_APK_NOT_FOUND")} |`,
     `| Host installed | ${environment.hostInstalled ? "PASS" : "BLOCKED"} | ${environment.hostInstalled ? "package installed" : "package missing"} |`,
     `| RPC health | ${environment.hostOnline ? "PASS" : "BLOCKED"} | ${environment.hostOnline ? "health response received" : "HOST_OFFLINE"} |`,
-    `| Artifact | ${report.artifact?.androidSha256 ? "PASS" : "NOT_RUN"} | ${code(report.artifact?.androidSha256 ?? "JAR_NOT_TRANSFERRED")} |`,
+    `| Artifact | ${report.artifact?.androidSha256 ? "PASS" : "NOT_RUN"} | ${code(report.artifact?.androidSha256 ?? "JAR_NOT_TRANSFERRED")} dexCount=${report.artifact?.dexCount ?? "unknown"} |`,
     `| Class | ${report.classResolution?.status ?? "NOT_RUN"} | ${code(report.classResolution?.resolvedClass ?? report.classResolution?.expectedClass ?? "CLASS_NOT_RESOLVED")} |`,
     `| Init | ${report.init?.status ?? "NOT_RUN"} | ${operationDetails(report.init)} |`,
     `| Search | ${report.operations.searchContent?.status ?? "NOT_RUN"} | ${operationDetails(report.operations.searchContent)} |`,
@@ -218,7 +296,9 @@ function operationDetails(operation: AndroidHostOperationDiagnostics | undefined
     operation.initException ? `initException=${operation.initException}` : undefined,
     operation.contextDependent === undefined ? undefined : `contextDependent=${operation.contextDependent}`,
     operation.keyword ? `keyword=${operation.keyword}` : undefined,
+    operation.rawResponseLength === undefined ? undefined : `rawResponseLength=${operation.rawResponseLength}`,
     operation.resultCount === undefined ? undefined : `resultCount=${operation.resultCount}`,
+    operation.vodYearPresent === undefined ? undefined : `vodYearPresent=${operation.vodYearPresent}`,
     operation.hasPlayFrom === undefined ? undefined : `hasPlayFrom=${operation.hasPlayFrom}`,
     operation.hasPlayUrl === undefined ? undefined : `hasPlayUrl=${operation.hasPlayUrl}`,
     operation.playLineCount === undefined ? undefined : `playLineCount=${operation.playLineCount}`,

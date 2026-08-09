@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   renderAndroidHostSetup,
+  renderAndroidSpiderRealRun,
   renderAndroidSpiderHostReport,
   renderAndroidSpiderPocV2,
   renderRuntimeDiagnosticsV4,
@@ -56,6 +57,8 @@ describe("Android Host reports V2/V4", () => {
     expect(renderAndroidHostSetup(report)).toContain("Android Host available: false");
     expect(renderAndroidSpiderPocV2(report)).toContain("initException=missing Android context");
     expect(renderAndroidSpiderPocV2(report)).toContain("contextDependent=true");
+    expect(renderAndroidSpiderRealRun(report)).toContain("AndroidDexRuntime.supported remains false");
+    expect(renderAndroidSpiderRealRun(report)).toContain("resultCount=unknown");
     expect(renderRuntimeDiagnosticsV4(report)).toContain("| RPC health | BLOCKED |");
     expect(renderRuntimeDiagnosticsV4(report)).not.toContain("android-spider-host.exe");
   });

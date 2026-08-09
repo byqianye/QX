@@ -24,6 +24,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 final class SpiderRuntime implements Closeable {
     private final Context context;
@@ -101,6 +103,7 @@ final class SpiderRuntime implements Closeable {
     }
 
     private JSONObject loadJar(JSONObject params) throws RpcException {
+        long started = System.nanoTime();
         String sourcePath = firstString(params, "sourcePath", "jarPath");
         if (sourcePath.isEmpty()) {
             throw new RpcException("ARTIFACT_PATH_MISSING", "loadJar requires sourcePath", "loadJar");
@@ -156,6 +159,8 @@ final class SpiderRuntime implements Closeable {
                 "path", destination.getAbsolutePath(),
                 "sha256", actualSha,
                 "size", destination.length(),
+                "dexCount", countDexFiles(destination),
+                "loadDurationMs", (System.nanoTime() - started) / 1_000_000L,
                 "candidateSpiderClasses", handle.candidateClasses,
                 "cacheHit", cacheHit
         );
@@ -545,6 +550,20 @@ final class SpiderRuntime implements Closeable {
             // Candidate enumeration is diagnostic only; class loading remains authoritative.
         }
         return values;
+    }
+
+    private static int countDexFiles(File jar) {
+        int count = 0;
+        try (ZipFile zip = new ZipFile(jar)) {
+            Enumeration<? extends ZipEntry> entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                String name = entries.nextElement().getName();
+                if (name.matches("classes[0-9]*\\.dex")) count++;
+            }
+        } catch (IOException | RuntimeException ignored) {
+            // DexClassLoader remains authoritative; this is diagnostic only.
+        }
+        return count;
     }
 
     private static String sha256(File file) throws RpcException {

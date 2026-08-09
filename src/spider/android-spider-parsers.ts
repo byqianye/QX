@@ -72,7 +72,7 @@ export function firstAndroidPlaybackRequest(value: unknown): AndroidPlaybackRequ
 
 export function validateAndroidDetail(value: unknown): { valid: boolean; missing: readonly string[] } {
   const item = extractAndroidVodItems(value)[0];
-  const required = ["vod_id", "vod_name", "vod_pic", "vod_content"] as const;
+  const required = ["vod_id", "vod_name", "vod_pic", "vod_content", "vod_year"] as const;
   const missing = required.filter((field) => {
     const fieldValue = item?.[field];
     return fieldValue === undefined || fieldValue === null || String(fieldValue).trim() === "";

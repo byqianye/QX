@@ -1,7 +1,7 @@
 # Android Spider PoC Report V2
 
 Status: **BLOCKED**
-Generated: 2026-08-08T16:49:07.941Z
+Generated: 2026-08-09T01:33:40.661Z
 Config: `http://xn--z7x900a.net/`
 Source: `csp_FeiMaoUC` / ⚡┃闪电┃优汐
 API: `csp_Duopan`
@@ -13,6 +13,8 @@ API: `csp_Duopan`
 - Windows SHA-256: `04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab`
 - Android SHA-256: `not verified`
 - Jar ID: `not loaded`
+- Dex count: 1
+- loadJar duration: not runms
 
 ## Class resolution
 

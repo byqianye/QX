@@ -25,6 +25,7 @@ describe("Android Spider result parsers", () => {
         vod_name: "Demo",
         vod_pic: "https://example.test/demo.jpg",
         vod_content: "A real detail",
+        vod_year: "2026",
         vod_play_from: "线路A$$$线路B",
         vod_play_url: "正片$https://example.test/play-1.m3u8#备用$https://example.test/play-2.m3u8$$$正片$https://example.test/play-3.m3u8",
       }],
@@ -35,7 +36,7 @@ describe("Android Spider result parsers", () => {
     expect(validateAndroidDetail(detail)).toEqual({ valid: true, missing: [] });
     expect(validateAndroidDetail({ list: [{ vod_id: "missing" }] })).toEqual({
       valid: false,
-      missing: ["vod_name", "vod_pic", "vod_content"],
+      missing: ["vod_name", "vod_pic", "vod_content", "vod_year"],
     });
   });
 });

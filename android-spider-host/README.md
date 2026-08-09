@@ -25,6 +25,12 @@ npm run android-host:check
 npm run android-host:stop
 ```
 
+Run `npm run android-host:check` first. It reports the SDK, ADB, emulator/AVD,
+device serial/model/Android version/sdkInt/ABI, APK, installation, and RPC
+health. With multiple devices, the command prefers an `emulator-*` serial;
+otherwise set `QX_ANDROID_DEVICE_SERIAL` explicitly. The real-source PoC also
+requires `QX_ANDROID_POC_KEYWORD` and never supplies a default keyword.
+
 The Host loads the pushed Spider artifact with Android `DexClassLoader` and
 stores the verified copy under the app's private files directory. It is not a
 Windows executable and does not use `dex2jar`, a JVM `ClassLoader`, or Node

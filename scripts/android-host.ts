@@ -24,12 +24,14 @@ async function main(): Promise<void> {
   });
   if (command === "install") {
     requireApk();
+    await manager.waitForBoot();
     await manager.install(apkPath);
-    console.log(JSON.stringify({ status: "PASS", operation: "install", apkPath }, null, 2));
+    console.log(JSON.stringify({ status: "PASS", operation: "install", apkPath, device: await manager.requireDevice() }, null, 2));
     return;
   }
   if (command === "start") {
-    await manager.requireDevice();
+    await manager.waitForBoot();
+    if (!(await manager.isHostInstalled())) throw new Error("HOST_NOT_INSTALLED: run npm run android-host:install first");
     await manager.startHost();
     const client = new AndroidSpiderBridgeClient({ deviceManager: manager });
     try {
@@ -82,7 +84,17 @@ async function checkAndroidHost(manager: AndroidDeviceManager): Promise<void> {
     status,
     sdk: { found: environment.sdkFound, path: environment.sdkPath },
     adb: { found: environment.adbFound, path: environment.adbPath, version: environment.adbVersion },
-    device: { found: environment.deviceFound, serial: environment.device?.serial, devices: environment.devices },
+    emulator: { found: environment.emulatorFound, path: environment.emulatorPath, avds: environment.avds },
+    device: {
+      found: environment.deviceFound,
+      serial: environment.device?.serial,
+      model: environment.device?.model,
+      androidVersion: environment.device?.androidVersion,
+      sdkInt: environment.device?.sdkInt,
+      abi: environment.device?.abi,
+      bootCompleted: environment.device?.bootCompleted,
+      devices: environment.devices,
+    },
     hostApk: { found: hostApkFound, path: apkPath },
     hostInstalled,
     hostOnline,

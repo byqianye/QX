@@ -33,6 +33,7 @@ import {
 } from "../spider/android-spider-reports.js";
 import {
   renderAndroidHostSetup,
+  renderAndroidSpiderRealRun,
   renderAndroidSpiderHostReport,
   renderAndroidSpiderPocV2,
   renderRuntimeDiagnosticsV4,
@@ -72,6 +73,8 @@ export async function runAndroidSpiderPoc(
   const hostApkFound = existsSync(hostApkPath);
   let hostInstalled = false;
   let hostOnline = false;
+  let selectedDevice = snapshot.device;
+  let bootReady = snapshot.deviceFound;
   let rpcHealth: Record<string, unknown> | undefined;
   const blockers = [...snapshot.diagnostics.filter((value) => value !== "ANDROID_DEVICE_NOT_FOUND")];
   if (!snapshot.deviceFound) blockers.push("ANDROID_DEVICE_NOT_FOUND");
@@ -79,6 +82,17 @@ export async function runAndroidSpiderPoc(
   if (requiresArm64(artifact.nativeLibraries)) blockers.push("requires_arm64");
   const keyword = readKeyword();
   if (!keyword) blockers.push("ANDROID_POC_KEYWORD_REQUIRED");
+  if (snapshot.deviceFound) {
+    try {
+      selectedDevice = await manager.waitForBoot();
+    } catch (error) {
+      bootReady = false;
+      const code = error instanceof Error && "code" in error && typeof (error as { code?: unknown }).code === "string"
+        ? (error as { code: string }).code
+        : "ANDROID_DEVICE_BOOT_TIMEOUT";
+      blockers.push(code);
+    }
+  }
 
   const attempts: AndroidSpiderPocAttempt[] = [
     { operation: "health", status: "not_run" },
@@ -104,14 +118,16 @@ export async function runAndroidSpiderPoc(
     path: resolved.localPath,
     size: artifact.size,
     sha256: artifact.sha256,
+    dexCount: artifact.dexCount,
   };
   let normalizedError;
   let client: AndroidSpiderBridgeClient | undefined;
 
-  if (snapshot.deviceFound && hostApkFound) {
+  if (bootReady && hostApkFound) {
     try {
       await manager.install(hostApkPath);
-      hostInstalled = true;
+      hostInstalled = await manager.isHostInstalled();
+      if (!hostInstalled) throw new Error("ANDROID_HOST_NOT_INSTALLED: Host package verification failed after install");
       await manager.startHost();
       client = new AndroidSpiderBridgeClient({
         deviceManager: manager,
@@ -126,11 +142,16 @@ export async function runAndroidSpiderPoc(
 
       const loaded = await runOperation(attempts, "loadJar", () => client!.loadJar(resolved.localPath, resolved.artifactUrl));
       const loadedRecord = record(loaded);
-      operations.loadJar = { status: "PASS", details: "DexClassLoader accepted artifact" };
+      operations.loadJar = {
+        status: "PASS",
+        ...(typeof loadedRecord.loadDurationMs === "number" ? { durationMs: loadedRecord.loadDurationMs } : {}),
+        details: "DexClassLoader accepted artifact",
+      };
       artifactDiagnostics = {
         ...artifactDiagnostics,
         ...(typeof loadedRecord.sha256 === "string" ? { androidSha256: loadedRecord.sha256 } : {}),
         ...(typeof loadedRecord.jarId === "string" ? { jarId: loadedRecord.jarId } : {}),
+        ...(typeof loadedRecord.dexCount === "number" ? { dexCount: loadedRecord.dexCount } : { dexCount: artifact.dexCount }),
         ...(Array.isArray(loadedRecord.candidateSpiderClasses) ? { candidateSpiderClasses: loadedRecord.candidateSpiderClasses.filter((value): value is string => typeof value === "string") } : {}),
       };
 
@@ -180,6 +201,7 @@ export async function runAndroidSpiderPoc(
           status: searchItems.length > 0 ? "PASS" : "FAIL",
           durationMs: Date.now() - searchStarted,
           keyword,
+          rawResponseLength: rawResponseLength(searchResult),
           resultCount: searchItems.length,
           details: searchItems.length > 0 ? "SEARCH_PASS" : "search list was empty",
         };
@@ -197,6 +219,7 @@ export async function runAndroidSpiderPoc(
         operations.detailContent = {
           status: detailValidation.valid ? "PASS" : "FAIL",
           durationMs: Date.now() - detailStarted,
+          vodYearPresent: detailValidation.missing.includes("vod_year") === false,
           ...playbackStats,
           details: detailValidation.valid
             ? detailPlayable ? "DETAIL_PLAYABLE_PASS" : "detail fields present; no playback lines"
@@ -265,9 +288,16 @@ export async function runAndroidSpiderPoc(
   const environment: AndroidEnvironmentAudit = {
     ...(snapshot.adbPath ? { adbPath: snapshot.adbPath } : {}),
     ...(snapshot.adbVersion ? { adbVersion: snapshot.adbVersion } : {}),
+    ...(snapshot.emulatorPath ? { emulatorPath: snapshot.emulatorPath } : {}),
+    avds: snapshot.avds,
     adbDevices: snapshot.devices.map((device) => `${device.serial}\t${device.state}`).join("\n"),
     connectedDevice: snapshot.deviceFound,
     ...(snapshot.device?.serial ? { deviceSerial: snapshot.device.serial } : {}),
+    ...(selectedDevice?.model ? { deviceModel: selectedDevice.model } : {}),
+    ...(selectedDevice?.androidVersion ? { androidVersion: selectedDevice.androidVersion } : {}),
+    ...(selectedDevice?.sdkInt !== undefined ? { sdkInt: selectedDevice.sdkInt } : {}),
+    ...(selectedDevice?.abi ? { abi: selectedDevice.abi } : {}),
+    ...(selectedDevice?.bootCompleted !== undefined ? { bootCompleted: selectedDevice.bootCompleted } : {}),
     ...(snapshot.sdkPath ? { androidSdkPath: snapshot.sdkPath } : {}),
     androidSdkAvailable: snapshot.sdkFound,
     javaCompilerAvailable: spawnSync("javac", ["-version"], { stdio: "ignore", windowsHide: true }).status === 0,
@@ -314,6 +344,13 @@ export async function runAndroidSpiderPoc(
       ...(snapshot.adbPath ? { adbPath: snapshot.adbPath } : {}),
       deviceFound: snapshot.deviceFound,
       ...(snapshot.device?.serial ? { deviceSerial: snapshot.device.serial } : {}),
+      ...(snapshot.emulatorPath ? { emulatorPath: snapshot.emulatorPath } : {}),
+      avds: snapshot.avds,
+      ...(selectedDevice?.model ? { deviceModel: selectedDevice.model } : {}),
+      ...(selectedDevice?.androidVersion ? { androidVersion: selectedDevice.androidVersion } : {}),
+      ...(selectedDevice?.sdkInt !== undefined ? { sdkInt: selectedDevice.sdkInt } : {}),
+      ...(selectedDevice?.abi ? { abi: selectedDevice.abi } : {}),
+      ...(selectedDevice?.bootCompleted !== undefined ? { bootCompleted: selectedDevice.bootCompleted } : {}),
       hostApkFound,
       ...(hostApkFound ? { hostApkPath } : {}),
       hostInstalled,
@@ -338,6 +375,7 @@ export async function runAndroidSpiderPoc(
   await writeFile(join(outputRoot, "ANDROID-HOST-SETUP.md"), renderAndroidHostSetup(hostReport), "utf8");
   await writeFile(join(outputRoot, "ANDROID-SPIDER-POC-REPORT-V2.md"), renderAndroidSpiderPocV2(hostReport), "utf8");
   await writeFile(join(outputRoot, "ANDROID-SPIDER-HOST-REPORT.md"), renderAndroidSpiderHostReport(hostReport), "utf8");
+  await writeFile(join(outputRoot, "ANDROID-SPIDER-REAL-RUN.md"), renderAndroidSpiderRealRun(hostReport), "utf8");
   await writeFile(join(outputRoot, "RUNTIME-DIAGNOSTICS-V4.md"), renderRuntimeDiagnosticsV4(hostReport), "utf8");
   console.log(JSON.stringify({ status: hostReport.status, site: normalized.key, blockers: hostReport.blockers, summary: audit.summary }, null, 2));
   return report;
@@ -402,6 +440,16 @@ function expectedAndroidSpiderClass(api: string | undefined): string {
 
 function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function rawResponseLength(value: unknown): number {
+  if (typeof value === "string") return value.length;
+  if (record(value).raw && typeof record(value).raw === "string") return String(record(value).raw).length;
+  try {
+    return JSON.stringify(value).length;
+  } catch {
+    return 0;
+  }
 }
 
 function firstString(...values: unknown[]): string | undefined {

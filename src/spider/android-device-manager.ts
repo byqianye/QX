@@ -52,6 +52,7 @@ export interface AndroidDeviceManagerOptions {
   hostPackage?: string;
   hostActivity?: string;
   commandTimeoutMs?: number;
+  installTimeoutMs?: number;
   bootTimeoutMs?: number;
   bootPollMs?: number;
   env?: NodeJS.ProcessEnv;
@@ -75,7 +76,7 @@ interface AdbResult {
 }
 
 export class AndroidDeviceManager implements AndroidDeviceManagerPort {
-  private readonly options: Required<Pick<AndroidDeviceManagerOptions, "commandTimeoutMs" | "bootTimeoutMs" | "bootPollMs" | "hostPackage" | "hostActivity">> & AndroidDeviceManagerOptions;
+  private readonly options: Required<Pick<AndroidDeviceManagerOptions, "commandTimeoutMs" | "installTimeoutMs" | "bootTimeoutMs" | "bootPollMs" | "hostPackage" | "hostActivity">> & AndroidDeviceManagerOptions;
   private adbPathValue: string | undefined;
   private emulatorPathValue: string | undefined;
   private deviceValue: AndroidDevice | undefined;
@@ -83,6 +84,7 @@ export class AndroidDeviceManager implements AndroidDeviceManagerPort {
   public constructor(options: AndroidDeviceManagerOptions = {}) {
     this.options = {
       commandTimeoutMs: 10_000,
+      installTimeoutMs: 120_000,
       bootTimeoutMs: 120_000,
       bootPollMs: 1_000,
       hostPackage: "com.qx.yingshi.androidhost",
@@ -220,7 +222,7 @@ export class AndroidDeviceManager implements AndroidDeviceManagerPort {
 
   public async install(apkPath: string): Promise<void> {
     const device = await this.requireDevice();
-    await this.runAdb(["-s", device.serial, "install", "-r", apkPath], false);
+    await this.runAdb(["-s", device.serial, "install", "-r", apkPath], false, this.options.installTimeoutMs);
     if (!(await this.isHostInstalled())) {
       throw new AndroidDeviceManagerError(
         "ANDROID_HOST_NOT_INSTALLED",
@@ -337,14 +339,14 @@ export class AndroidDeviceManager implements AndroidDeviceManagerPort {
     }
   }
 
-  private async runAdb(args: readonly string[], _withDevice: boolean): Promise<AdbResult> {
+  private async runAdb(args: readonly string[], _withDevice: boolean, timeoutMs = this.options.commandTimeoutMs): Promise<AdbResult> {
     const adb = await this.resolveAdbPath();
     try {
       const result = await execFileAsync(adb, [...args], {
         cwd: this.options.env?.QX_ANDROID_WORKING_DIRECTORY,
         env: this.options.env ?? process.env,
         encoding: "utf8",
-        timeout: this.options.commandTimeoutMs,
+        timeout: timeoutMs,
         windowsHide: true,
         maxBuffer: 4 * 1024 * 1024,
       });

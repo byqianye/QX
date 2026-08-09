@@ -139,6 +139,7 @@ final class SpiderRuntime implements Closeable {
         } catch (IOException error) {
             throw new RpcException("JAR_TRANSFER_FAILED", error.getMessage() == null ? "Unable to copy Spider artifact" : error.getMessage(), "loadJar");
         }
+        makeReadOnly(destination);
         String jarId = actualSha.substring(0, Math.min(16, actualSha.length()));
         String optimizedDir = new File(context.getCodeCacheDir(), "spider-dex").getAbsolutePath();
         File optimized = new File(optimizedDir);
@@ -240,6 +241,7 @@ final class SpiderRuntime implements Closeable {
         Object extValue = params.has("ext") ? params.opt("ext") : "";
         String ext = extValue == null || extValue == JSONObject.NULL ? "" : String.valueOf(extValue);
         long started = System.nanoTime();
+        boolean runtimeContextInitialized = initializeSpiderContext(spider, params);
         Object[][] candidates = new Object[][]{{context, ext}, {ext}, {context}};
         Method initMethod = findMethod(spider.instance.getClass(), "init", candidates);
         boolean contextDependent = initMethod != null && usesAndroidContext(initMethod);
@@ -259,8 +261,48 @@ final class SpiderRuntime implements Closeable {
                 "initialized", true,
                 "initDurationMs", (System.nanoTime() - started) / 1_000_000L,
                 "contextDependent", invocation.contextDependent,
+                "runtimeContextInitialized", runtimeContextInitialized,
                 "methodResult", result == null ? JSONObject.NULL : result
         );
+    }
+
+    private boolean initializeSpiderContext(SpiderHandle spider, JSONObject params) throws RpcException {
+        Class<?> initClass;
+        try {
+            initClass = Class.forName("com.github.catvod.spider.Init", true, spider.instance.getClass().getClassLoader());
+        } catch (ClassNotFoundException ignored) {
+            return false;
+        } catch (LinkageError error) {
+            throw new RpcException(
+                    "SPIDER_CONTEXT_INIT_FAILED",
+                    message(error),
+                    "init",
+                    object("className", "com.github.catvod.spider.Init"),
+                    debugStack(params, error)
+            );
+        }
+
+        Method method;
+        try {
+            method = initClass.getMethod("init", Context.class);
+        } catch (NoSuchMethodException ignored) {
+            return false;
+        }
+        try {
+            method.invoke(null, context);
+            return true;
+        } catch (IllegalAccessException | InvocationTargetException | RuntimeException error) {
+            Throwable cause = error instanceof InvocationTargetException && ((InvocationTargetException) error).getCause() != null
+                    ? ((InvocationTargetException) error).getCause()
+                    : error;
+            throw new RpcException(
+                    "SPIDER_CONTEXT_INIT_FAILED",
+                    message(cause),
+                    "init",
+                    object("className", initClass.getName(), "method", "init"),
+                    debugStack(params, cause)
+            );
+        }
     }
 
     private JSONObject homeContent(JSONObject params) throws RpcException {
@@ -564,6 +606,12 @@ final class SpiderRuntime implements Closeable {
             // DexClassLoader remains authoritative; this is diagnostic only.
         }
         return count;
+    }
+
+    private static void makeReadOnly(File file) throws RpcException {
+        if (!file.setReadable(true, false) || !file.setWritable(false, false) || file.canWrite()) {
+            throw new RpcException("DEX_ARTIFACT_NOT_READONLY", "Android Spider artifact must be read-only before DexClassLoader", "loadJar", object("path", file.getAbsolutePath()));
+        }
     }
 
     private static String sha256(File file) throws RpcException {

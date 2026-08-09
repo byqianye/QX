@@ -1,16 +1,16 @@
 # Android Spider Bridge Feasibility
 
-Status: **BLOCKED**
+Status: **FAILED**
 
 This Goal does not claim Android DEX execution without an Android-compatible Host. The artifact below was downloaded and inspected statically only.
 
 ## Environment evidence
 
 - adb: C:\Users\qiany\.workbuddy\android-toolchain\sdk\platform-tools\adb.exe (Android Debug Bridge version 1.0.41 Version 37.0.0-14910828 Installed as C:\Users\qiany\.workbuddy\android-toolchain\sdk\platform-tools\adb.exe Running on Windows 10.0.26200)
-- Connected Android device: no
+- Connected Android device: yes
 - Android SDK: available at `C:\Users\qiany\.workbuddy\android-toolchain\sdk`
 - Java compiler: missing
-- Android Spider Host health: offline
+- Android Spider Host health: online
 - Android Spider Host APK: available at `C:\Users\qiany\Documents\ChatGPT\QX影视\android-spider-host\app\build\outputs\apk\debug\app-debug.apk`
 
 ## Real artifact
@@ -26,8 +26,7 @@ This Goal does not claim Android DEX execution without an Android-compatible Hos
 
 ## Why this is blocked
 
-- ANDROID_DEVICE_NOT_FOUND
-- ANDROID_POC_KEYWORD_REQUIRED
+- SPIDER_SOURCE_AUTH_REQUIRED
 
 ## Required Android Host surface
 

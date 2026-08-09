@@ -1,6 +1,6 @@
 # ENOENT Root-Cause Audit
 
-Generated: 2026-08-08T16:49:07.941Z
+Generated: 2026-08-09T02:50:52.992Z
 Configuration source: `http://xn--z7x900a.net/`
 
 ENOENT is not used as the user-facing root cause. Each failure is classified with the missing path and runtime context.
@@ -9,11 +9,11 @@ ENOENT is not used as the user-facing root cause. Each failure is classified wit
 
 | Source | Runtime | Audit result | Root cause |
 | --- | --- | --- | --- |
-| ⚡┃闪电┃优汐 (csp_FeiMaoUC) | android-dex | BLOCKED | ANDROID_DEVICE_NOT_FOUND |
+| ⚡┃闪电┃优汐 (csp_FeiMaoUC) | android-dex | FAILED | none |
 
 ## Diagnostic fields
 
-- errorCode: `ANDROID_DEVICE_NOT_FOUND`
+- errorCode: `SPIDER_SOURCE_AUTH_REQUIRED`
 - syscall: `unknown`
 - missingPath: `unknown`
 - sourceKey: `csp_FeiMaoUC`

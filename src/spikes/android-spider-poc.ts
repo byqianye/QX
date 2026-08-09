@@ -125,8 +125,11 @@ export async function runAndroidSpiderPoc(
 
   if (bootReady && hostApkFound) {
     try {
-      await manager.install(hostApkPath);
       hostInstalled = await manager.isHostInstalled();
+      if (!hostInstalled) {
+        await manager.install(hostApkPath);
+        hostInstalled = await manager.isHostInstalled();
+      }
       if (!hostInstalled) throw new Error("ANDROID_HOST_NOT_INSTALLED: Host package verification failed after install");
       await manager.startHost();
       client = new AndroidSpiderBridgeClient({
@@ -140,20 +143,30 @@ export async function runAndroidSpiderPoc(
       operations.health = { status: "PASS", details: "health response received" };
       markAttempt(attempts, "health", "passed");
 
-      const loaded = await runOperation(attempts, "loadJar", () => client!.loadJar(resolved.localPath, resolved.artifactUrl));
-      const loadedRecord = record(loaded);
-      operations.loadJar = {
-        status: "PASS",
-        ...(typeof loadedRecord.loadDurationMs === "number" ? { durationMs: loadedRecord.loadDurationMs } : {}),
-        details: "DexClassLoader accepted artifact",
-      };
-      artifactDiagnostics = {
-        ...artifactDiagnostics,
-        ...(typeof loadedRecord.sha256 === "string" ? { androidSha256: loadedRecord.sha256 } : {}),
-        ...(typeof loadedRecord.jarId === "string" ? { jarId: loadedRecord.jarId } : {}),
-        ...(typeof loadedRecord.dexCount === "number" ? { dexCount: loadedRecord.dexCount } : { dexCount: artifact.dexCount }),
-        ...(Array.isArray(loadedRecord.candidateSpiderClasses) ? { candidateSpiderClasses: loadedRecord.candidateSpiderClasses.filter((value): value is string => typeof value === "string") } : {}),
-      };
+      const loadStarted = Date.now();
+      try {
+        const loaded = await runOperation(attempts, "loadJar", () => client!.loadJar(resolved.localPath, resolved.artifactUrl));
+        const loadedRecord = record(loaded);
+        operations.loadJar = {
+          status: "PASS",
+          ...(typeof loadedRecord.loadDurationMs === "number" ? { durationMs: loadedRecord.loadDurationMs } : { durationMs: Date.now() - loadStarted }),
+          details: "DexClassLoader accepted artifact",
+        };
+        artifactDiagnostics = {
+          ...artifactDiagnostics,
+          ...(typeof loadedRecord.sha256 === "string" ? { androidSha256: loadedRecord.sha256 } : {}),
+          ...(typeof loadedRecord.jarId === "string" ? { jarId: loadedRecord.jarId } : {}),
+          ...(typeof loadedRecord.dexCount === "number" ? { dexCount: loadedRecord.dexCount } : { dexCount: artifact.dexCount }),
+          ...(Array.isArray(loadedRecord.candidateSpiderClasses) ? { candidateSpiderClasses: loadedRecord.candidateSpiderClasses.filter((value): value is string => typeof value === "string") } : {}),
+        };
+      } catch (error) {
+        operations.loadJar = {
+          status: "FAIL",
+          durationMs: Date.now() - loadStarted,
+          details: error instanceof Error ? error.message : String(error),
+        };
+        throw error;
+      }
 
       const expectedClass = expectedAndroidSpiderClass(normalized.api);
       try {
@@ -176,8 +189,15 @@ export async function runAndroidSpiderPoc(
 
       const initStarted = Date.now();
       try {
-        await runOperation(attempts, "init", () => client!.init(Object.prototype.hasOwnProperty.call(site, "ext") ? site.ext : ""));
-        initDiagnostics = { status: "PASS", durationMs: Date.now() - initStarted, details: "real Android Application Context supplied" };
+        const initResult = await runOperation(attempts, "init", () => client!.init(Object.prototype.hasOwnProperty.call(site, "ext") ? site.ext : ""));
+        const initRecord = record(initResult);
+        initDiagnostics = {
+          status: "PASS",
+          durationMs: Date.now() - initStarted,
+          ...(typeof initRecord.contextDependent === "boolean" ? { contextDependent: initRecord.contextDependent } : {}),
+          ...(typeof initRecord.runtimeContextInitialized === "boolean" ? { runtimeContextInitialized: initRecord.runtimeContextInitialized } : {}),
+          details: "real Android Application Context supplied",
+        };
       } catch (error) {
         const diagnostics = bridgeDiagnostics(error);
         initDiagnostics = {
@@ -197,15 +217,18 @@ export async function runAndroidSpiderPoc(
         const searchStarted = Date.now();
         const searchResult = await client.searchContent(keyword, false, 1);
         const searchItems = extractAndroidVodItems(searchResult);
+        const searchVodId = firstString(searchItems[0]?.vod_id, searchItems[0]?.id);
+        const searchDetails = searchItems.length > 0 ? "SEARCH_PASS" : "search list was empty";
         operations.searchContent = {
           status: searchItems.length > 0 ? "PASS" : "FAIL",
           durationMs: Date.now() - searchStarted,
           keyword,
           rawResponseLength: rawResponseLength(searchResult),
           resultCount: searchItems.length,
-          details: searchItems.length > 0 ? "SEARCH_PASS" : "search list was empty",
+          ...(searchVodId === undefined ? {} : { vodId: searchVodId }),
+          details: searchDetails,
         };
-        markAttempt(attempts, "searchContent", searchItems.length > 0 ? "passed" : "failed", operations.searchContent.details);
+        markAttempt(attempts, "searchContent", searchItems.length > 0 ? "passed" : "failed", searchDetails);
         if (searchItems.length === 0) throw new Error("SEARCH_FAIL: searchContent returned no results");
 
         const firstId = firstAndroidVodId(searchResult);
@@ -213,19 +236,25 @@ export async function runAndroidSpiderPoc(
         const detailStarted = Date.now();
         const detailResult = await client.detailContent([firstId]);
         const detailItems = extractAndroidVodItems(detailResult);
+        const detailItem = detailItems[0];
         const detailValidation = validateAndroidDetail(detailResult);
         const playbackStats = androidPlaybackLineStats(detailResult);
         const detailPlayable = playbackStats.hasPlayFrom && playbackStats.hasPlayUrl;
+        const detailVodId = firstString(detailItem?.vod_id, detailItem?.id);
+        const detailDetails = detailValidation.valid
+          ? detailPlayable ? "DETAIL_PLAYABLE_PASS" : "detail fields present; no playback lines"
+          : `missing ${detailValidation.missing.join(", ")}`;
         operations.detailContent = {
           status: detailValidation.valid ? "PASS" : "FAIL",
           durationMs: Date.now() - detailStarted,
+          ...(detailVodId === undefined ? {} : { vodId: detailVodId }),
+          ...(typeof detailItem?.vod_play_from === "string" ? { vodPlayFrom: detailItem.vod_play_from } : {}),
+          ...(typeof detailItem?.vod_play_url === "string" ? { vodPlayUrl: detailItem.vod_play_url } : {}),
           vodYearPresent: detailValidation.missing.includes("vod_year") === false,
           ...playbackStats,
-          details: detailValidation.valid
-            ? detailPlayable ? "DETAIL_PLAYABLE_PASS" : "detail fields present; no playback lines"
-            : `missing ${detailValidation.missing.join(", ")}`,
+          details: detailDetails,
         };
-        markAttempt(attempts, "detailContent", detailValidation.valid ? "passed" : "failed", operations.detailContent.details);
+        markAttempt(attempts, "detailContent", detailValidation.valid ? "passed" : "failed", detailDetails);
         if (!detailValidation.valid || detailItems.length === 0) throw new Error(`DETAIL_FAIL: ${detailValidation.missing.join(", ")}`);
 
         const playback = firstAndroidPlaybackRequest(detailResult);
@@ -234,22 +263,46 @@ export async function runAndroidSpiderPoc(
           markAttempt(attempts, "playerContent", "blocked", operations.playerContent.details);
         } else {
           const playerStarted = Date.now();
-          const playerResult = await client.playerContent(playback.flag, playback.id);
-          const playerPayload = parseAndroidSpiderResult(playerResult);
-          const playerUrl = firstString(playerPayload.url, playerPayload.link, playerPayload.playUrl);
-          const headerPresent = playerPayload.header !== undefined || playerPayload.headers !== undefined;
-          operations.playerContent = {
-            status: playerUrl ? "PASS" : "FAIL",
-            durationMs: Date.now() - playerStarted,
-            urlPresent: Boolean(playerUrl),
-            parse: typeof playerPayload.parse === "boolean" ? String(playerPayload.parse) : typeof playerPayload.parse === "string" ? playerPayload.parse : "unknown",
-            jx: playerPayload.jx === true || playerPayload.jx === 1,
-            headerPresent,
-            format: typeof playerPayload.format === "string" ? playerPayload.format : "unknown",
-            details: playerUrl ? "PLAYER_CONTENT_PASS" : "player response did not contain url",
-          };
-          markAttempt(attempts, "playerContent", playerUrl ? "passed" : "failed", operations.playerContent.details);
-          if (!playerUrl) throw new Error("PLAYER_FAIL: playerContent returned no playable URL");
+          try {
+            const playerResult = await runOperation(attempts, "playerContent", () => client!.playerContent(playback.flag, playback.id));
+            const playerPayload = parseAndroidSpiderResult(playerResult);
+            const playerUrl = firstString(playerPayload.url, playerPayload.link, playerPayload.playUrl);
+            const playerMessage = firstString(playerPayload.msg, playerPayload.errMsg);
+            const headerPresent = playerPayload.header !== undefined || playerPayload.headers !== undefined;
+            operations.playerContent = {
+              status: playerUrl ? "PASS" : "FAIL",
+              durationMs: Date.now() - playerStarted,
+              url: playerUrl ?? (typeof playerPayload.url === "string" ? playerPayload.url : ""),
+              urlPresent: Boolean(playerUrl),
+              parse: typeof playerPayload.parse === "boolean" || typeof playerPayload.parse === "number" || typeof playerPayload.parse === "string" ? String(playerPayload.parse) : "unknown",
+              jx: playerPayload.jx === undefined ? "unknown" : String(playerPayload.jx),
+              headerPresent,
+              format: typeof playerPayload.format === "string" ? playerPayload.format : "unknown",
+              ...(playerMessage ? { message: playerMessage } : {}),
+              details: playerUrl ? "PLAYER_CONTENT_PASS" : playerMessage ? `PLAYER_CONTENT_FAIL: ${playerMessage}` : "player response did not contain url",
+            };
+            if (!playerUrl) {
+              markAttempt(attempts, "playerContent", "failed", operations.playerContent.details);
+              const failure = new Error(`PLAYER_FAIL: ${playerMessage ?? "playerContent returned no playable URL"}`);
+              if (playerMessage && /(登录|token|access_token|配置)/iu.test(playerMessage)) Object.assign(failure, { code: "SPIDER_SOURCE_AUTH_REQUIRED" });
+              throw failure;
+            }
+          } catch (error) {
+            const existingPlayer = operations.playerContent;
+            operations.playerContent = existingPlayer?.status === "FAIL"
+              ? { ...existingPlayer, durationMs: Date.now() - playerStarted }
+              : {
+                status: "FAIL",
+                durationMs: Date.now() - playerStarted,
+                url: "",
+                urlPresent: false,
+                parse: "unknown",
+                jx: "unknown",
+                format: "unknown",
+                details: error instanceof Error ? error.message : String(error),
+              };
+            throw error;
+          }
         }
       }
     } catch (error) {
@@ -365,7 +418,7 @@ export async function runAndroidSpiderPoc(
     blockers: [...new Set(blockers)],
     notes: [
       "Host availability is based on ADB device reachability, package installation, and RPC health; no android-spider-host.exe check is used.",
-      "Cleartext HTTP is disabled by default; a source that requires it is reported as CLEARTEXT_NOT_PERMITTED.",
+      "Cleartext HTTP is enabled for this PoC Host because the selected real source declares HTTP site URLs.",
     ],
   };
   await writeFile(join(outputRoot, "ANDROID-BRIDGE-FEASIBILITY.md"), renderAndroidBridgeFeasibility(report), "utf8");

@@ -1,6 +1,6 @@
 # Android Spider Host Report
 
-Status: **BLOCKED**
+Status: **FAIL**
 
 ## Architecture
 
@@ -17,9 +17,9 @@ The Host binds only to Android loopback, receives artifacts through ADB, stores 
 
 ## Runtime evidence
 
-- SDK / ADB / device: found / found / missing
-- APK / installed / RPC: found / no / BLOCKED
+- SDK / ADB / device: found / found / found
+- APK / installed / RPC: found / yes / PASS
 - Android Host available: false
-- Artifact hash: not verified
-- Class resolution: NOT_RUN
-- Search / detail / player: NOT_RUN / NOT_RUN / NOT_RUN
+- Artifact hash: PASS
+- Class resolution: PASS
+- Search / detail / player: PASS / PASS / FAIL

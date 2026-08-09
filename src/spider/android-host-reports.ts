@@ -49,18 +49,24 @@ export interface AndroidHostOperationDiagnostics {
   durationMs?: number;
   initException?: string;
   contextDependent?: boolean;
+  runtimeContextInitialized?: boolean;
   keyword?: string;
   rawResponseLength?: number;
   resultCount?: number;
+  vodId?: string;
+  vodPlayFrom?: string;
+  vodPlayUrl?: string;
   vodYearPresent?: boolean;
   hasPlayFrom?: boolean;
   hasPlayUrl?: boolean;
   playLineCount?: number;
   urlPresent?: boolean;
+  url?: string;
   parse?: string;
-  jx?: boolean;
+  jx?: string;
   headerPresent?: boolean;
   format?: string;
+  message?: string;
   details?: string;
 }
 
@@ -243,8 +249,11 @@ export function renderAndroidSpiderRealRun(report: AndroidHostDiagnosticsReport)
     "## Search / detail / player summary",
     "",
     `- Search: ${search?.status ?? "NOT_RUN"}, rawResponseLength=${search?.rawResponseLength ?? "unknown"}, resultCount=${search?.resultCount ?? "unknown"}`,
-    `- Detail: ${detail?.status ?? "NOT_RUN"}, vodYearPresent=${detail?.vodYearPresent ?? "unknown"}, hasPlayFrom=${detail?.hasPlayFrom ?? "unknown"}, hasPlayUrl=${detail?.hasPlayUrl ?? "unknown"}, playLineCount=${detail?.playLineCount ?? "unknown"}`,
-    `- Player: ${player?.status ?? "NOT_RUN"}, urlPresent=${player?.urlPresent ?? "unknown"}, parse=${player?.parse ?? "unknown"}, jx=${player?.jx ?? "unknown"}, format=${player?.format ?? "unknown"}, headerPresent=${player?.headerPresent ?? "unknown"}`,
+    `- Search: first vod_id=${code(search?.vodId ?? "unknown")}`,
+    `- Detail: ${detail?.status ?? "NOT_RUN"}, vod_id=${code(detail?.vodId ?? "unknown")}, vod_year_present=${detail?.vodYearPresent ?? "unknown"}, hasPlayFrom=${detail?.hasPlayFrom ?? "unknown"}, hasPlayUrl=${detail?.hasPlayUrl ?? "unknown"}, playLineCount=${detail?.playLineCount ?? "unknown"}`,
+    `- Detail vod_play_from: ${code(detail?.vodPlayFrom ?? "unknown")}`,
+    `- Detail vod_play_url: ${code(detail?.vodPlayUrl ?? "unknown")}`,
+    `- Player: ${player?.status ?? "NOT_RUN"}, url=${code(player?.url ?? "unknown")}, urlPresent=${player?.urlPresent ?? "unknown"}, parse=${player?.parse ?? "unknown"}, jx=${player?.jx ?? "unknown"}, format=${player?.format ?? "unknown"}, headerPresent=${player?.headerPresent ?? "unknown"}${player?.message ? `, message=${code(player.message)}` : ""}`,
     "",
     "## RuntimeManager gate",
     "",
@@ -295,18 +304,24 @@ function operationDetails(operation: AndroidHostOperationDiagnostics | undefined
     operation.durationMs === undefined ? undefined : `${operation.durationMs}ms`,
     operation.initException ? `initException=${operation.initException}` : undefined,
     operation.contextDependent === undefined ? undefined : `contextDependent=${operation.contextDependent}`,
+    operation.runtimeContextInitialized === undefined ? undefined : `runtimeContextInitialized=${operation.runtimeContextInitialized}`,
     operation.keyword ? `keyword=${operation.keyword}` : undefined,
     operation.rawResponseLength === undefined ? undefined : `rawResponseLength=${operation.rawResponseLength}`,
     operation.resultCount === undefined ? undefined : `resultCount=${operation.resultCount}`,
+    operation.vodId ? `vod_id=${operation.vodId}` : undefined,
+    operation.vodPlayFrom ? `vod_play_from=${operation.vodPlayFrom}` : undefined,
+    operation.vodPlayUrl ? `vod_play_url=${operation.vodPlayUrl}` : undefined,
     operation.vodYearPresent === undefined ? undefined : `vodYearPresent=${operation.vodYearPresent}`,
     operation.hasPlayFrom === undefined ? undefined : `hasPlayFrom=${operation.hasPlayFrom}`,
     operation.hasPlayUrl === undefined ? undefined : `hasPlayUrl=${operation.hasPlayUrl}`,
     operation.playLineCount === undefined ? undefined : `playLineCount=${operation.playLineCount}`,
+    operation.url === undefined ? undefined : `url=${operation.url}`,
     operation.urlPresent === undefined ? undefined : `urlPresent=${operation.urlPresent}`,
     operation.parse ? `parse=${operation.parse}` : undefined,
     operation.jx === undefined ? undefined : `jx=${operation.jx}`,
     operation.headerPresent === undefined ? undefined : `headerPresent=${operation.headerPresent}`,
     operation.format ? `format=${operation.format}` : undefined,
+    operation.message ? `message=${operation.message}` : undefined,
   ].filter((value): value is string => Boolean(value));
   return values.join(", ") || "completed";
 }

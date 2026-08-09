@@ -1,6 +1,6 @@
 # Runtime Diagnostics V3
 
-Generated: 2026-08-08T16:49:07.941Z
+Generated: 2026-08-09T02:50:52.992Z
 
 ## Configuration
 
@@ -15,8 +15,8 @@ Generated: 2026-08-08T16:49:07.941Z
 
 ## Host
 
-- Host: missing
-- adb device: offline
+- Host: online candidate
+- adb device: online
 - Artifact: android-dex, 864852 bytes
 - Selected source initialization: blocked
 
@@ -24,8 +24,8 @@ Generated: 2026-08-08T16:49:07.941Z
 
 - ⚡┃闪电┃优汐 (csp_FeiMaoUC)
 - API: `csp_Duopan`
-- Search: not_run
-- Detail: not_run
-- Player: not_run
+- Search: passed
+- Detail: passed
+- Player: failed
 
 Bridge PoC status: BLOCKED; no unsupported capability is advertised.

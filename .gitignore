@@ -3,6 +3,8 @@ dist/
 release/
 coverage/
 verification/
+src-tauri/target/
+src-tauri/gen/
 /build/android-runtime-manifest.json
 *.log
 .env

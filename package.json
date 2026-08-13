@@ -10,8 +10,16 @@
     "node": ">=22.5.0"
   },
   "scripts": {
+    "dev": "vite --config vite.config.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "test:contracts": "vitest run tests/tauri-contract.test.ts --reporter=dot",
+    "check:frontend": "npm run typecheck && npm run renderer:build",
+    "check:rust": "tsx scripts/check-rust.ts",
+    "check:tauri": "npm run check:frontend && npm run check:rust",
+    "tauri:dev": "tsx scripts/tauri-command.ts dev",
+    "tauri:build": "tsx scripts/tauri-command.ts build",
+    "build:windows:x64": "tsx scripts/tauri-command.ts build --bundles nsis --target x86_64-pc-windows-msvc",
     "build": "tsx scripts/release-build.ts",
     "prepack-check": "tsx scripts/prepack-check.ts",
     "preview:build": "npm run android-host:build && npm run build && npm run prepack-check",
@@ -89,6 +97,8 @@
   },
   "devDependencies": {
     "@electron/packager": "^20.1.1",
+    "@tauri-apps/api": "2.11.1",
+    "@tauri-apps/cli": "2.11.4",
     "@types/node": "^22.15.0",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/test-utils": "^2.4.11",

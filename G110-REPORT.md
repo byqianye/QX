@@ -11,6 +11,7 @@ Dependency: G109 `1a8f291`
 - Loopback, localhost, private, link-local, unspecified, and multicast literal targets are rejected before proxy startup; session tokens include a random UUID component.
 - GET/HEAD, Range request forwarding, bounded response size, content type, and media type classification for HLS/DASH/progressive sources.
 - Playback proxy contract does not echo Cookie, Authorization, or other sensitive request headers.
+- Rust component manager verifies Ed25519 detached manifests and SHA-256 artifacts, rejects wrong targets, stages before activation, retains one previous version, and supports atomic rollback/uninstall with a running-component switch guard.
 
 ## Verification
 
@@ -21,4 +22,4 @@ Dependency: G109 `1a8f291`
 
 ## Not complete
 
-HLS playlist/segment URI rewriting, AES-128, ClearKey, subtitles, quality switching, bounded multi-candidate failover, Shaka integration, WebView2 sniffing, mpv activation, and signed component download/staging/rollback/uninstall are not yet migrated to Tauri. The proxy currently buffers bounded upstream responses and does not claim full streaming-player compatibility.
+HLS playlist/segment URI rewriting, AES-128, ClearKey, subtitles, quality switching, bounded multi-candidate failover, Shaka integration, WebView2 sniffing, mpv activation, and component download are not yet migrated to Tauri. The proxy currently buffers bounded upstream responses and does not claim full streaming-player compatibility. Component verification and local lifecycle are implemented, but no real signed Releases manifest is configured.

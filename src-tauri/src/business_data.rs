@@ -51,6 +51,13 @@ pub fn read(
     read_connection(&connection, entity, id)
 }
 
+pub fn backup(path: &Path) -> Result<BusinessDataSnapshot, BusinessDataError> {
+    let connection =
+        Connection::open(path).map_err(|error| BusinessDataError::Storage(error.to_string()))?;
+    ensure_schema(&connection)?;
+    backup_connection(&connection)
+}
+
 pub fn upsert_connection(
     connection: &Connection,
     payload: &BusinessDataPayload,
@@ -110,6 +117,42 @@ pub fn read_connection(
     })
 }
 
+pub fn backup_connection(
+    connection: &Connection,
+) -> Result<BusinessDataSnapshot, BusinessDataError> {
+    ensure_schema(connection)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT entity, record_id, value_json
+             FROM business_records ORDER BY entity, record_id",
+        )
+        .map_err(|error| BusinessDataError::Storage(error.to_string()))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|error| BusinessDataError::Storage(error.to_string()))?;
+    let mut backup = serde_json::Map::new();
+    for row in rows {
+        let (entity, id, serialized) =
+            row.map_err(|error| BusinessDataError::Storage(error.to_string()))?;
+        let value: Value = serde_json::from_str(&serialized)
+            .map_err(|error| BusinessDataError::Storage(error.to_string()))?;
+        backup.insert(format!("{entity}/{id}"), value);
+    }
+    Ok(BusinessDataSnapshot {
+        schema_version: "v1".to_string(),
+        entity: "backup".to_string(),
+        id: "v1".to_string(),
+        found: true,
+        value: Some(Value::Object(backup)),
+    })
+}
+
 pub fn ensure_schema(connection: &Connection) -> Result<(), BusinessDataError> {
     connection
         .execute_batch(
@@ -147,6 +190,7 @@ fn sanitize_value(value: Value) -> Value {
                         || lower.contains("cookie")
                         || lower == "authorization"
                         || lower.contains("tempurl")
+                        || lower.contains("temporaryurl")
                         || lower.contains("temporary_url")
                     {
                         None
@@ -163,7 +207,7 @@ fn sanitize_value(value: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_connection, upsert_connection, BusinessDataPayload};
+    use super::{backup_connection, read_connection, upsert_connection, BusinessDataPayload};
     use rusqlite::Connection;
     use serde_json::json;
 
@@ -206,5 +250,10 @@ mod tests {
                 .and_then(|value| value.get("position")),
             Some(&json!(12))
         );
+        let backup = backup_connection(&connection).expect("backup");
+        let serialized = serde_json::to_string(&backup.value).expect("backup JSON");
+        assert!(serialized.contains("Movie"));
+        assert!(!serialized.contains("secret"));
+        assert!(!serialized.contains("temporary.invalid"));
     }
 }

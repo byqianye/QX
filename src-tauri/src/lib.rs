@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 mod business_data;
+mod component_manager;
 mod config_catalog;
 mod native_sources;
 mod playback_proxy;
@@ -451,10 +452,13 @@ fn backend_business_data(
             )
         })?;
     let (_, database_path) = app_data_paths(&app).map_err(|error| failure(&request, error))?;
-    let snapshot = if payload.action == "read" {
-        business_data::read(&database_path, &payload.entity, &payload.id)
-    } else {
-        business_data::upsert(&database_path, &payload)
+    let snapshot = match payload.action.as_str() {
+        "read" => business_data::read(&database_path, &payload.entity, &payload.id),
+        "upsert" => business_data::upsert(&database_path, &payload),
+        "backup" => business_data::backup(&database_path),
+        _ => Err(business_data::BusinessDataError::Invalid(
+            "business data action must be read, upsert, or backup".to_string(),
+        )),
     }
     .map_err(|error| {
         let (reason_code, message, retryable) = match error {
@@ -473,6 +477,75 @@ fn backend_business_data(
                 retryable,
                 diagnostic_id: "business-data-error".to_string(),
                 safe_details: [("message".to_string(), message)].into_iter().collect(),
+            },
+        )
+    })?;
+    Ok(BackendResponse {
+        version: BACKEND_RPC_VERSION.to_string(),
+        request_id: request.request_id,
+        session_id: request.session_id,
+        sequence: request.sequence,
+        ok: true,
+        payload: snapshot,
+    })
+}
+
+#[tauri::command]
+fn backend_component_manager(
+    app: AppHandle,
+    request: BackendRequest,
+) -> Result<BackendResponse<component_manager::ComponentManagerSnapshot>, BackendFailure> {
+    if request.version != BACKEND_RPC_VERSION {
+        return Err(failure(
+            &request,
+            BackendError {
+                category: BackendErrorCategory::InvalidConfig,
+                reason_code: "RPC_VERSION_UNSUPPORTED".to_string(),
+                retryable: false,
+                diagnostic_id: "rpc-invalid-version".to_string(),
+                safe_details: std::collections::BTreeMap::new(),
+            },
+        ));
+    }
+    let payload: component_manager::ComponentManagerPayload =
+        serde_json::from_value(request.payload.clone()).map_err(|error| {
+            failure(
+                &request,
+                BackendError {
+                    category: BackendErrorCategory::InvalidConfig,
+                    reason_code: "COMPONENT_PAYLOAD_INVALID".to_string(),
+                    retryable: false,
+                    diagnostic_id: "component-payload-invalid".to_string(),
+                    safe_details: [("error".to_string(), error.to_string())]
+                        .into_iter()
+                        .collect(),
+                },
+            )
+        })?;
+    let (data_directory, _) = app_data_paths(&app).map_err(|error| failure(&request, error))?;
+    let root = data_directory.join("component-manager-v1");
+    let snapshot = component_manager::handle(&root, &payload).map_err(|error| {
+        let category = match &error {
+            component_manager::ComponentManagerError::Invalid(_) => {
+                BackendErrorCategory::InvalidConfig
+            }
+            component_manager::ComponentManagerError::Untrusted(_) => {
+                BackendErrorCategory::ComponentUntrusted
+            }
+            component_manager::ComponentManagerError::Storage(_) => {
+                BackendErrorCategory::ComponentMissing
+            }
+        };
+        failure(
+            &request,
+            BackendError {
+                category,
+                reason_code: error.reason_code().to_string(),
+                retryable: matches!(&error, component_manager::ComponentManagerError::Storage(_)),
+                diagnostic_id: "component-manager-error".to_string(),
+                safe_details: [("message".to_string(), error.message())]
+                    .into_iter()
+                    .collect(),
             },
         )
     })?;
@@ -553,7 +626,8 @@ pub fn run() {
             backend_source_session,
             backend_runtime_capability,
             backend_playback_proxy,
-            backend_business_data
+            backend_business_data,
+            backend_component_manager
         ])
         .manage(source_session::SourceSessionState::default())
         .manage(playback_proxy::PlaybackProxyState::default())

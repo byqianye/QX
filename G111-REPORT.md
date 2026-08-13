@@ -9,6 +9,7 @@ Dependency: G110 `a2f0dd3`
 - Versioned `backend_business_data` RPC for `read` and `upsert` records.
 - Restart-restorable records keep source id, history/favorite/live-style entity keys, and user business fields.
 - Recursive sanitization removes token, Cookie, Authorization, temporary URL, and similarly named credential fields before persistence.
+- Rust backup reads the sanitized business table only; the backup snapshot contains no credential or temporary-media fields.
 - Existing Electron/TypeScript data repositories remain untouched and independent.
 
 ## Verification
@@ -19,4 +20,4 @@ Dependency: G110 `a2f0dd3`
 
 ## Not complete
 
-Full migration of live/EPG/smart channels/history/progress/favorites/follow/cache/local media/download/backup/player flows is still open. Backup archive exclusion and clean Win11 restart E2E have not yet been re-run against the Tauri backend. Disabled legacy features must remain disabled rather than deleted until G112.
+Full migration of live/EPG/smart channels/history/progress/favorites/follow/cache/local media/download/player flows is still open. The Rust backup snapshot is available, but archive restore, feature-specific repositories, and clean Win11 restart E2E have not yet been re-run against the Tauri backend. Disabled legacy features must remain disabled rather than deleted until G112.

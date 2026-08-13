@@ -150,7 +150,7 @@ export interface PlaybackProxySnapshot {
 }
 
 export interface BusinessDataPayload {
-  action: "read" | "upsert";
+  action: "read" | "upsert" | "backup";
   entity: string;
   id: string;
   sourceId?: string;
@@ -163,6 +163,26 @@ export interface BusinessDataSnapshot {
   id: string;
   found: boolean;
   value?: Record<string, unknown>;
+}
+
+export type ComponentManagerAction = "verify" | "install" | "rollback" | "uninstall";
+
+export interface ComponentManagerPayload {
+  action: ComponentManagerAction;
+  componentId?: string;
+  manifestJson?: string;
+  signatureBase64?: string;
+  publicKeyBase64?: string;
+  artifactBase64?: string;
+  running?: boolean;
+}
+
+export interface ComponentManagerSnapshot {
+  state: "verified" | "active" | "rolled_back" | "uninstalled";
+  componentId?: string;
+  version?: string;
+  verified: boolean;
+  reasonCode?: string;
 }
 
 const BACKEND_ERROR_CATEGORIES = new Set<BackendErrorCategory>([

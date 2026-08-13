@@ -14,6 +14,8 @@ import {
   type PlaybackProxySnapshot,
   type BusinessDataPayload,
   type BusinessDataSnapshot,
+  type ComponentManagerPayload,
+  type ComponentManagerSnapshot,
 } from "./contracts.js";
 
 let sequence = 0;
@@ -126,6 +128,20 @@ export async function requestBusinessData(payload: BusinessDataPayload): Promise
     throw new Error(`${response.error.category}: ${response.error.reasonCode}`);
   }
   if (!isBackendResponse<BusinessDataSnapshot>(response)) {
+    throw new Error(`Invalid Tauri response for ${BACKEND_RPC_VERSION}`);
+  }
+  return response.payload;
+}
+
+export async function requestComponentManager(payload: ComponentManagerPayload): Promise<ComponentManagerSnapshot> {
+  if (!isTauriRuntime()) throw new Error("Tauri RPC is unavailable outside the Tauri runtime");
+  const { invoke } = await import("@tauri-apps/api/core");
+  const request = createBackendRequest(payload, crypto.randomUUID(), sessionId, ++sequence);
+  const response = await invoke("backend_component_manager", { request });
+  if (isBackendFailure(response)) {
+    throw new Error(`${response.error.category}: ${response.error.reasonCode}`);
+  }
+  if (!isBackendResponse<ComponentManagerSnapshot>(response)) {
     throw new Error(`Invalid Tauri response for ${BACKEND_RPC_VERSION}`);
   }
   return response.payload;

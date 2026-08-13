@@ -22,9 +22,9 @@ describe("unified app diagnostics", () => {
     ["UI_SERVER_START_ERROR", "electron", false],
     ["STATE_PERSISTENCE_WRITE_FAILED", "persistence", false],
     ["CLEANUP_ERROR", "cleanup", false],
-  ])("maps %s to a stable source and retry policy", (code, source, retryable) => {
+  ])("maps %s to a stable source and retry policy", (code, source, retryable, publicCode = code) => {
     const error = toAppError({ code, message: "操作失败" });
-    expect(error).toMatchObject({ code, source, retryable });
+    expect(error).toMatchObject({ code: publicCode, source, retryable });
     expect(error?.title).toBeTruthy();
     expect(error?.diagnosticId).toMatch(/^diag-/);
     expect(error?.timestamp).toBeTruthy();
@@ -47,5 +47,20 @@ describe("unified app diagnostics", () => {
     expect(diagnostic).not.toContain("private.example");
     expect(diagnostic).not.toContain("Bearer abc");
     expect(diagnostic).not.toContain("C:\\Users\\qiany");
+  });
+
+  it("exposes the stable source error codes while retaining the raw cause code", () => {
+    expect(toAppError({ code: "MEDIA_AUTH_REQUIRED", message: "需要授权" })).toMatchObject({
+      code: "AUTH_REQUIRED",
+      causeCode: "MEDIA_AUTH_REQUIRED",
+    });
+    expect(toAppError({ code: "MEDIA_PARSE_REQUIRED", message: "需要解析" })).toMatchObject({
+      code: "PARSE_FAILED",
+      causeCode: "MEDIA_PARSE_REQUIRED",
+    });
+    expect(toAppError({ code: "ANDROID_RUNTIME_NOT_READY", message: "运行环境未就绪" })).toMatchObject({
+      code: "RUNTIME_REQUIRED",
+      causeCode: "ANDROID_RUNTIME_NOT_READY",
+    });
   });
 });

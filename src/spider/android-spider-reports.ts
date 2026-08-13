@@ -171,8 +171,8 @@ export function renderEnoentAudit(
     "",
     `- Configured sites: ${audit.summary.totalSites}`,
     `- Searchable sites: ${audit.summary.searchableSites}`,
-    `- Android DEX sites not executable by the current desktop runtime: ${audit.summary.runtimeCounts["android-dex"]}`,
-    "- Other Android DEX sites were not collapsed into ENOENT; they remain `android_dex_runtime_not_available` until a Host exists.",
+    `- Android DEX sites requiring the Android Host: ${audit.summary.runtimeCounts["android-dex"]}`,
+    "- An Android DEX source is only marked incompatible after an observed artifact, class, initialization, or operation failure.",
     "",
   ].join("\n");
 }

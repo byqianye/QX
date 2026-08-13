@@ -1,10 +1,18 @@
 import type { PlaybackState } from "./playback.js";
 
-export function renderEmbeddedPlayer(state: PlaybackState): string {
+export interface EmbeddedPlayerRenderOptions {
+  sessionId?: string;
+}
+
+export function renderEmbeddedPlayer(
+  state: PlaybackState,
+  options: EmbeddedPlayerRenderOptions = {},
+): string {
   const source = state.source;
   const hasSource = source !== null;
-  const hls = hasSource && isHlsUrl(source.url);
+  const hls = hasSource && (source.mediaType === "hls" || isHlsUrl(source.url));
   const sourceUrl = JSON.stringify(source?.url ?? "");
+  const sessionId = JSON.stringify(options.sessionId ?? "");
   const status = escapeHtml(state.status);
   const error = state.error
     ? `<p class="player-error" data-testid="player-error">${escapeHtml(state.error.message)}</p>`
@@ -52,15 +60,30 @@ export function renderEmbeddedPlayer(state: PlaybackState): string {
     <script>
       (() => {
         const sourceUrl = ${sourceUrl};
+        const sessionId = ${sessionId};
         const video = document.querySelector('[data-testid="embedded-player"]');
         const panel = document.querySelector('[data-testid="embedded-player-panel"]');
         const status = document.querySelector('[data-testid="player-status"]');
         const seek = document.querySelector('[data-action="player-seek"]');
         const time = document.querySelector('[data-testid="player-time"]');
+        const hlsReady = new Promise((resolve) => {
+          const started = Date.now();
+          const wait = () => {
+            if (window.Hls) { resolve(window.Hls); return; }
+            if (Date.now() - started >= 10_000) { resolve(null); return; }
+            window.setTimeout(wait, 25);
+          };
+          wait();
+        });
         let hlsInstance = null;
         const listeners = [];
+        let syncQueue = Promise.resolve();
 
         if (!video) return;
+        // The LocalProxy is intentionally served from a dynamic localhost
+        // port, so the embedded media element must opt into CORS before HLS.js
+        // attaches its MediaSource buffer.
+        video.crossOrigin = 'anonymous';
 
         const on = (target, event, handler) => {
           target.addEventListener(event, handler);
@@ -70,6 +93,28 @@ export function renderEmbeddedPlayer(state: PlaybackState): string {
         const setStatus = (value) => {
           if (panel) panel.dataset.playerStatus = value;
           if (status) status.textContent = value;
+        };
+        const mediaState = () => ({
+          currentTime: Number.isFinite(video.currentTime) ? video.currentTime : 0,
+          duration: Number.isFinite(video.duration) ? video.duration : 0,
+          volume: Number.isFinite(video.volume) ? video.volume : 1,
+          muted: Boolean(video.muted),
+        });
+        const sync = (payload) => {
+          if (!sessionId) return Promise.resolve();
+          syncQueue = syncQueue.then(() => fetch('/api/player/sync', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sessionId, ...payload }),
+          })).catch(() => undefined);
+          return syncQueue;
+        };
+        const syncEvent = (statusValue, event, stage, error) => {
+          const payload = { ...mediaState(), status: statusValue };
+          if (event) payload.event = event;
+          if (stage) payload.stage = stage;
+          if (error) payload.error = error;
+          void sync(payload);
         };
         const request = async (path) => {
           await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
@@ -89,17 +134,45 @@ export function renderEmbeddedPlayer(state: PlaybackState): string {
             hlsInstance = null;
           }
         };
-        const load = () => {
+        const load = async () => {
           destroyHls();
           video.pause();
           video.removeAttribute('src');
           video.load();
           setStatus('loading');
-          if (/\\.m3u8(?:$|[?#])/i.test(sourceUrl) && video.canPlayType('application/vnd.apple.mpegurl') === '' && window.Hls) {
-            hlsInstance = new window.Hls({ enableWorker: false });
+          syncEvent('loading', undefined, 'PROXY_START');
+          const Hls = await hlsReady;
+          if (/\\.m3u8(?:$|[?#])/i.test(sourceUrl) && Hls) {
+            if (panel) panel.dataset.playerMode = 'hls-js';
+            hlsInstance = new Hls({ enableWorker: false });
+            if (panel) panel.__qxHlsInstance = hlsInstance;
+            const events = Hls.Events || {};
+            ['MEDIA_ATTACHED', 'MANIFEST_LOADING', 'MANIFEST_LOADED', 'LEVEL_LOADED', 'FRAG_LOADED', 'FRAG_BUFFERED'].forEach((name) => {
+              if (events[name]) hlsInstance.on(events[name], () => { if (panel) panel.dataset.hlsStage = name; });
+            });
+            if (events.MANIFEST_PARSED) hlsInstance.on(events.MANIFEST_PARSED, () => void sync({ stage: 'MANIFEST' }));
+            if (events.LEVEL_SWITCHED) hlsInstance.on(events.LEVEL_SWITCHED, () => void sync({ stage: 'VARIANT' }));
+            if (events.FRAG_LOADED) hlsInstance.on(events.FRAG_LOADED, () => void sync({ stage: 'SEGMENT' }));
+            if (events.ERROR) hlsInstance.on(events.ERROR, (_event, data) => {
+              const details = data && typeof data.details === 'string' ? data.details : 'HLS_ERROR';
+              if (panel && data) {
+                panel.dataset.hlsError = JSON.stringify({
+                  details,
+                  fatal: data.fatal === true,
+                  responseCode: typeof data.response?.code === 'number' ? data.response.code : null,
+                  reason: typeof data.reason === 'string' ? data.reason : null,
+                });
+              }
+              if (data && data.fatal) {
+                syncEvent('error', { type: 'fatal-error', code: details, stage: 'DECODER' }, 'DECODER', { code: details, message: details });
+              } else {
+                void sync({ event: { type: 'segment-failure', reason: details, stage: 'SEGMENT' }, stage: 'SEGMENT' });
+              }
+            });
             hlsInstance.loadSource(sourceUrl);
             hlsInstance.attachMedia(video);
           } else {
+            if (panel) panel.dataset.playerMode = 'native';
             video.src = sourceUrl;
             video.load();
           }
@@ -128,16 +201,32 @@ export function renderEmbeddedPlayer(state: PlaybackState): string {
         document.querySelectorAll('[data-action="player-mute"]').forEach((button) => on(button, 'click', () => { video.muted = !video.muted; button.textContent = video.muted ? '取消静音' : '静音'; }));
         document.querySelectorAll('[data-action="player-fullscreen"]').forEach((button) => on(button, 'click', () => { void video.requestFullscreen?.(); }));
         document.querySelectorAll('[data-action="player-detach"]').forEach((button) => on(button, 'click', () => { void detach(); }));
-        on(video, 'loadstart', () => setStatus('loading'));
-        on(video, 'playing', () => setStatus('playing'));
-        on(video, 'pause', () => { if (!video.ended) setStatus('paused'); });
-        on(video, 'ended', () => setStatus('ended'));
-        on(video, 'error', () => setStatus('error'));
-        on(video, 'durationchange', () => { if (seek) seek.max = String(Number.isFinite(video.duration) ? video.duration : 0); });
+        on(video, 'loadstart', () => { setStatus('loading'); syncEvent('loading'); });
+        on(video, 'loadedmetadata', () => void sync({ ...mediaState(), stage: 'DECODER' }));
+        on(video, 'playing', () => {
+          setStatus('playing');
+          syncEvent('playing', { type: 'first-frame', stage: 'PLAYING' }, 'PLAYING');
+        });
+        on(video, 'waiting', () => syncEvent('loading', { type: 'buffer-start' }));
+        on(video, 'canplay', () => void sync({ ...mediaState(), event: { type: 'buffer-end' } }));
+        on(video, 'pause', () => { if (!video.ended) { setStatus('paused'); syncEvent('paused', { type: 'user-pause' }); } });
+        on(video, 'ended', () => { setStatus('ended'); syncEvent('ended', { type: 'completion' }); });
+        on(video, 'error', () => {
+          const error = { code: 'HTML_VIDEO_ERROR', message: 'The media element reported an error.' };
+          setStatus('error');
+          syncEvent('error', { type: 'fatal-error', code: error.code, stage: 'DECODER' }, 'DECODER', error);
+        });
+        on(video, 'durationchange', () => {
+          if (seek) seek.max = String(Number.isFinite(video.duration) ? video.duration : 0);
+          void sync(mediaState());
+        });
         on(video, 'timeupdate', () => {
           if (seek) seek.value = String(video.currentTime);
           if (time) time.textContent = formatTime(video.currentTime) + ' / ' + formatTime(video.duration);
+          void sync(mediaState());
         });
+        on(video, 'seeking', () => void sync({ ...mediaState(), event: { type: 'seek' } }));
+        on(video, 'volumechange', () => void sync(mediaState()));
         const cleanup = () => {
           destroyHls();
           video.pause();

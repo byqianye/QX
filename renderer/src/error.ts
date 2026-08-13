@@ -42,6 +42,12 @@ const TITLES: Record<string, string> = {
   DATABASE_WRITE_FAILED: "数据库未能保存",
   LEGACY_MIGRATION_FAILED: "旧数据迁移失败",
   RENDERER_REQUEST_ERROR: "界面请求失败",
+  RUNTIME_REQUIRED: "需要 Android 兼容运行环境",
+  AUTH_REQUIRED: "需要登录或授权",
+  SOURCE_TIMEOUT: "来源请求超时",
+  SOURCE_OFFLINE: "来源暂时不可用",
+  PARSE_FAILED: "解析失败",
+  MEDIA_FAILED: "媒体不可用",
 };
 
 export function toAppError(
@@ -49,8 +55,9 @@ export function toAppError(
   fallbackSource?: AppErrorSource,
 ): AppError | null {
   if (!input || typeof input.code !== "string" || typeof input.message !== "string") return null;
-  const code = normalizeCode(input.code);
-  const source = isAppErrorSource(input.source) ? input.source : fallbackSource ?? sourceForCode(code);
+  const rawCode = normalizeCode(input.code);
+  const code = publicSourceErrorCode(rawCode);
+  const source = isAppErrorSource(input.source) ? input.source : fallbackSource ?? sourceForCode(rawCode);
   const safeDetails = sanitizeDetails(input.safeDetails);
   return {
     code,
@@ -63,6 +70,8 @@ export function toAppError(
     safeDetails,
     ...(typeof input.causeCode === "string" && input.causeCode.trim()
       ? { causeCode: normalizeCode(input.causeCode) }
+      : code !== rawCode
+        ? { causeCode: rawCode }
       : {}),
   };
 }
@@ -139,6 +148,8 @@ function defaultRetryable(code: string): boolean {
     || code.includes("FORBIDDEN")
     || code.includes("BLOCKED")) return false;
   return code === "RENDERER_REQUEST_ERROR"
+    || code === "SOURCE_TIMEOUT"
+    || code === "SOURCE_OFFLINE"
     || code.startsWith("IMPORT_FETCH")
     || code.startsWith("SPIDER_")
     || code.startsWith("PLAYBACK_PROXY_TIMEOUT")
@@ -179,6 +190,16 @@ function sanitizeText(value: string): string {
 function normalizeCode(code: string): string {
   const normalized = code.trim().replace(/[^A-Za-z0-9_.-]/g, "_").toUpperCase();
   return normalized || "UNKNOWN_ERROR";
+}
+
+function publicSourceErrorCode(code: string): string {
+  if (code === "SPIDER_AUTH_REQUIRED" || code === "MEDIA_AUTH_REQUIRED") return "AUTH_REQUIRED";
+  if (code.startsWith("ANDROID_RUNTIME_") || code === "WHPX_NOT_READY") return "RUNTIME_REQUIRED";
+  if (code === "MEDIA_PARSE_REQUIRED" || code.startsWith("PARSE_")) return "PARSE_FAILED";
+  if (code.startsWith("MEDIA_")) return "MEDIA_FAILED";
+  if (code === "SOURCE_TIMEOUT" || code.startsWith("LIVE_SOURCE_TIMEOUT")) return "SOURCE_TIMEOUT";
+  if (code === "SOURCE_OFFLINE" || code.startsWith("LIVE_SOURCE_OFFLINE")) return "SOURCE_OFFLINE";
+  return code;
 }
 
 function createDiagnosticId(): string {

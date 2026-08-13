@@ -1,0 +1,38 @@
+appId: com.qx.yingshi.preview
+productName: QX影视
+directories:
+  output: release/preview
+  buildResources: build
+asar: true
+files:
+  - dist/electron/**/*
+  - dist/renderer/**/*
+  - package.json
+extraResources:
+  - from: dist/electron-runtime
+    to: electron-runtime
+  - from: build/assets/qx-yingshi.ico
+    to: brand/qx-yingshi.ico
+  - from: android-spider-host/app/build/outputs/apk/debug/app-debug.apk
+    to: android-host/android-spider-host.apk
+  - from: build/android-runtime-manifest.json
+    to: android-host/android-runtime-manifest.json
+win:
+  icon: build/assets/qx-yingshi.ico
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+nsis:
+  artifactName: QX影视-Preview-Setup-${version}-${arch}.${ext}
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  menuCategory: QX影视 Preview
+  deleteAppDataOnUninstall: false
+  include: build/installer.nsh
+portable:
+  artifactName: QX影视-Preview-Portable-${version}-${arch}.${ext}

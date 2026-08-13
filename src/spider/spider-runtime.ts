@@ -27,6 +27,7 @@ import {
   type RuntimeSupport,
   type SpiderRuntime,
   type SpiderRuntimeKind,
+  type SpiderRuntimeCompatibilityProbe,
 } from "./runtime-types.js";
 import { NativeSpiderRegistry } from "./native-spider-registry.js";
 import { SpiderRuntimeDetector, type SpiderRuntimeDetectorOptions } from "./spider-runtime-detector.js";
@@ -34,7 +35,12 @@ import { quickJsScriptReference, pythonScriptReference } from "../desktop/source
 import { PythonDesktopClient } from "./python-client.js";
 import { AndroidSpiderBridge, AndroidSpiderBridgeError, type AndroidSpiderBridgeResponse } from "./android-spider-bridge.js";
 import { AndroidSpiderBridgeClient } from "./android-spider-bridge-client.js";
-import { isValidatedAndroidDexSite } from "./android-dex-runtime.js";
+import { expectedAndroidSpiderClass } from "./android-dex-runtime.js";
+import { isCredentialSite, type SpiderCredentialProvider, ucCredentialPayload } from "./spider-credential-provider.js";
+
+const ANDROID_INIT_ATTEMPTS = 3;
+const ANDROID_INIT_RETRY_DELAY_MS = 2_000;
+const DEFAULT_ANDROID_RUNTIME_READY_TIMEOUT_MS = 90_000;
 
 export interface SpiderRuntimeManagerOptions extends SpiderRuntimeDetectorOptions {
   config?: TvBoxConfig;
@@ -43,6 +49,10 @@ export interface SpiderRuntimeManagerOptions extends SpiderRuntimeDetectorOption
   /** @deprecated RuntimeManager wiring remains opt-in until the real Android PoC passes on a device. */
   androidBridgeFactory?: (site: TvBoxSite, support: RuntimeSupport) => AndroidSpiderBridge | undefined | Promise<AndroidSpiderBridge | undefined>;
   androidBridgeClientFactory?: (site: TvBoxSite, support: RuntimeSupport) => AndroidSpiderBridgeClient | undefined | Promise<AndroidSpiderBridgeClient | undefined>;
+  spiderCredentialProvider?: SpiderCredentialProvider;
+  /** Called once before a search that contains supported Android DEX sources. */
+  androidRuntimePreparer?: (sites: readonly TvBoxSite[]) => void | Promise<void>;
+  androidRuntimeReadyTimeoutMs?: number;
   pythonExecutable?: string;
   pythonEnvironment?: NodeJS.ProcessEnv;
   jsWorker?: Omit<JsSpiderWorkerOptions, "script">;
@@ -53,6 +63,8 @@ export class SpiderRuntimeManager {
   public readonly detector: SpiderRuntimeDetector;
   private readonly options: SpiderRuntimeManagerOptions;
   private readonly runtimeCache = new Map<string, Promise<SpiderRuntime>>();
+  private readonly supportCache = new Map<string, Promise<RuntimeSupport>>();
+  private prepareOperation: Promise<void> | undefined;
 
   public constructor(options: SpiderRuntimeManagerOptions = {}) {
     this.options = options;
@@ -62,10 +74,33 @@ export class SpiderRuntimeManager {
   }
 
   public supports(site: TvBoxSite): Promise<RuntimeSupport> {
-    return this.detector.detect(site, {
+    const key = runtimeKey(site);
+    const cached = this.supportCache.get(key);
+    if (cached) return cached;
+    const promise = this.detector.detect(site, {
       ...(this.options.config ? { config: this.options.config } : {}),
       ...(this.options.sourceUrl ? { sourceUrl: this.options.sourceUrl } : {}),
+    }).catch((error) => {
+      this.supportCache.delete(key);
+      throw error;
     });
+    this.supportCache.set(key, promise);
+    return promise;
+  }
+
+  public async prepareForSources(sites: readonly TvBoxSite[]): Promise<void> {
+    if (!this.options.androidRuntimePreparer || sites.length === 0) return;
+    const supports = await Promise.all(sites.map((site) => this.supports(site)));
+    if (!supports.some((support) => support.runtime === "android-dex" && support.supported)) return;
+    if (this.prepareOperation) return this.prepareOperation;
+    this.prepareOperation = withTimeout(
+      Promise.resolve(this.options.androidRuntimePreparer(sites)),
+      this.options.androidRuntimeReadyTimeoutMs ?? DEFAULT_ANDROID_RUNTIME_READY_TIMEOUT_MS,
+      "Android Runtime ready timeout",
+    ).finally(() => {
+      this.prepareOperation = undefined;
+    });
+    return this.prepareOperation;
   }
 
   public async getRuntime(site: TvBoxSite): Promise<SpiderRuntime> {
@@ -84,17 +119,29 @@ export class SpiderRuntimeManager {
     const runtimes = await Promise.allSettled([...this.runtimeCache.values()]);
     await Promise.all(runtimes.flatMap((result) => result.status === "fulfilled" ? [result.value.destroy()] : []));
     this.runtimeCache.clear();
+    this.supportCache.clear();
+  }
+
+  public async destroyRuntime(site: TvBoxSite): Promise<void> {
+    const key = runtimeKey(site);
+    const promise = this.runtimeCache.get(key);
+    this.runtimeCache.delete(key);
+    if (!promise) return;
+    const runtime = await promise.catch(() => undefined);
+    if (runtime) await runtime.destroy();
   }
 
   private async createRuntime(site: TvBoxSite): Promise<SpiderRuntime> {
     const support = await this.supports(site);
     if (support.runtime === "android-dex") {
-      if (support.supported && isValidatedAndroidDexSite(site)) {
+      if (support.supported) {
         const client = await this.options.androidBridgeClientFactory?.(site, support);
-        if (client) return new AndroidDexRuntime(site, support, client);
+        if (client) return new AndroidDexRuntime(site, support, client, this.options.spiderCredentialProvider);
       }
       const bridge = await this.options.androidBridgeFactory?.(site, support);
-      return bridge ? new AndroidSpiderRuntime(site, support, bridge) : new AndroidJarRuntime(support);
+      return bridge
+        ? new AndroidSpiderRuntime(site, support, bridge)
+        : new UnsupportedSpiderRuntime({ ...support, supported: false, reason: "android_host_offline" });
     }
     if (!support.supported) {
       return new UnsupportedSpiderRuntime(support);
@@ -245,7 +292,7 @@ export class JsSpiderRuntime implements SpiderRuntime {
 
 export class AndroidJarRuntime implements SpiderRuntime {
   public readonly kind: SpiderRuntimeKind = "android-dex";
-  public readonly capabilities = runtimeCapabilities("jvm");
+  public readonly capabilities = runtimeCapabilities("android-dex");
 
   public constructor(private readonly support: RuntimeSupport) {}
   public supports(_site: TvBoxSite): Promise<RuntimeSupport> { return Promise.resolve(this.support); }
@@ -261,17 +308,19 @@ export class AndroidJarRuntime implements SpiderRuntime {
 
 export class AndroidDexRuntime implements SpiderRuntime {
   public readonly kind: SpiderRuntimeKind = "android-dex";
-  public readonly capabilities = runtimeCapabilities("jvm", {
+  public readonly capabilities = runtimeCapabilities("android-dex", {
     search: true,
     detail: true,
     player: true,
   });
   private initialized = false;
+  private classProbeValue: Record<string, unknown> | undefined;
 
   public constructor(
     private readonly site: TvBoxSite,
     private readonly support: RuntimeSupport,
     private readonly client: AndroidSpiderBridgeClient,
+    private readonly credentialProvider?: SpiderCredentialProvider,
   ) {}
 
   public supports(_site: TvBoxSite): Promise<RuntimeSupport> {
@@ -287,16 +336,40 @@ export class AndroidDexRuntime implements SpiderRuntime {
     if (this.initialized) return;
     const artifactPath = this.support.artifactPath;
     if (!artifactPath) throw new Error("Android Spider artifact path is unavailable");
-    await this.client.connect();
-    await this.client.health();
-    await this.client.loadJar(artifactPath, this.support.artifactUrl);
-    await this.client.createSpider(
-      site.api ?? "",
-      expectedAndroidSpiderClass(site.api),
-      site.key ?? site.api ?? "site",
-    );
-    await this.client.init(context.ext ?? serializeFongMiExt(site.ext));
-    this.initialized = true;
+    const expectedClass = expectedAndroidSpiderClass(site.api);
+    const initExt = context.ext ?? serializeFongMiExt(site.ext);
+    for (let attempt = 0; attempt < ANDROID_INIT_ATTEMPTS; attempt += 1) {
+      try {
+        // A failed Spider.init can leave the Host's current Spider instance
+        // unusable. Rebuild the complete DEX session before retrying instead
+        // of invoking init again on the same failed instance.
+        await this.client.connect();
+        await this.client.health();
+        await this.client.loadJar(artifactPath, this.support.artifactUrl);
+        await this.applyCredential(site);
+        const classProbe = typeof this.client.resolveClass === "function"
+          ? await this.client.resolveClass(site.api ?? "")
+          : undefined;
+        this.classProbeValue = classProbe;
+        if (classProbe && classProbe.classExists === false) {
+          throw new Error(`SPIDER_CLASS_NOT_FOUND: ${expectedClass}`);
+        }
+        await this.client.createSpider(
+          site.api ?? "",
+          typeof classProbe?.resolvedClass === "string" ? classProbe.resolvedClass : expectedClass,
+          site.key ?? site.api ?? "site",
+        );
+        await this.client.init(initExt);
+        this.initialized = true;
+        return;
+      } catch (error) {
+        if (!isTransientAndroidInitError(error) || attempt === ANDROID_INIT_ATTEMPTS - 1) throw error;
+        if (typeof this.client.destroySpider === "function") {
+          await this.client.destroySpider().catch(() => undefined);
+        }
+        await delay(ANDROID_INIT_RETRY_DELAY_MS);
+      }
+    }
   }
 
   public async home(filter = false): Promise<HomeResult> {
@@ -327,6 +400,7 @@ export class AndroidDexRuntime implements SpiderRuntime {
   }
 
   public async player(request: PlayerRequest): Promise<PlayerResult> {
+    await this.applyCredential(this.site);
     return normalizePlayerResult(await this.client.playerContent(
       request.flag,
       request.id,
@@ -334,15 +408,36 @@ export class AndroidDexRuntime implements SpiderRuntime {
     ));
   }
 
+  public async probeCompatibility(): Promise<SpiderRuntimeCompatibilityProbe> {
+    const classProbe = this.classProbeValue
+      ?? (this.initialized ? await this.client.resolveClass(this.site.api ?? "") : undefined);
+    return {
+      classLoad: classProbe?.classExists === false ? "FAIL" : classProbe ? "PASS" : "UNKNOWN",
+      ...(typeof classProbe?.resolvedClass === "string" ? { resolvedClass: classProbe.resolvedClass } : {}),
+      ...(this.support.artifact?.sha256 ? { artifactSha256: this.support.artifact.sha256 } : {}),
+      ...(this.support.artifact?.size === undefined ? {} : { artifactSize: this.support.artifact.size }),
+      ...(this.support.artifactUrl ? { artifactUrl: this.support.artifactUrl } : {}),
+      ...(typeof this.classProbeValue?.jarId === "string" ? { jarId: this.classProbeValue.jarId } : {}),
+    };
+  }
+
   public async destroy(): Promise<void> {
     this.initialized = false;
+    this.classProbeValue = undefined;
     await this.client.destroy();
   }
+
+  private async applyCredential(site: TvBoxSite): Promise<void> {
+    if (!isCredentialSite(site) || !this.credentialProvider) return;
+    const credential = await this.credentialProvider.get(site);
+    if (credential) await this.client.setSpiderCredential("uc", ucCredentialPayload(credential));
+  }
+
 }
 
 export class AndroidSpiderRuntime implements SpiderRuntime {
   public readonly kind: SpiderRuntimeKind = "android-dex";
-  public readonly capabilities = runtimeCapabilities("jvm", {
+  public readonly capabilities = runtimeCapabilities("android-dex", {
     home: true,
     category: true,
     search: true,
@@ -472,9 +567,30 @@ function unsupportedOperation<T>(): Promise<T> {
   return Promise.reject(new Error("Spider runtime capability is unavailable"));
 }
 
-function expectedAndroidSpiderClass(api: string | undefined): string {
-  const name = api?.replace(/^csp_/i, "").trim();
-  return name ? `com.github.catvod.spider.${name}` : "";
+function isTransientAndroidInitError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  if ((error as { code?: unknown }).code === "SPIDER_METHOD_FAILED") return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Attempt to invoke virtual method")
+    && message.includes("on a null object reference");
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 async function requireBridgeResult(response: Promise<AndroidSpiderBridgeResponse>, operation: string): Promise<unknown> {

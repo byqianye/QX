@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src", "renderer", "tests", "vitest.config.ts"]
+  "include": ["src", "renderer", "tests", "scripts", "vitest.config.ts"]
 }

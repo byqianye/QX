@@ -40,7 +40,7 @@ describe("RuntimeAuditService", () => {
         expect.objectContaining({ siteKey: "native", runtime: "native", supported: true }),
         expect.objectContaining({ siteKey: "js", runtime: "javascript", supported: true }),
         expect.objectContaining({ siteKey: "py", runtime: "python", supported: false, reason: "python_runtime_missing" }),
-        expect.objectContaining({ siteKey: "dex", runtime: "android-dex", supported: false, reason: "android_dex_runtime_not_available" }),
+        expect.objectContaining({ siteKey: "dex", runtime: "android-dex", supported: true, reason: "android_dex_artifact_ready" }),
         expect.objectContaining({ siteKey: "jvm", runtime: "jvm-jar", supported: true }),
         expect.objectContaining({ siteKey: "broken", runtime: "unknown", supported: false, reason: "invalid_jar" }),
       ]));
@@ -65,7 +65,7 @@ describe("RuntimeAuditService", () => {
       expect(report.summary).toMatchObject({
         totalSites: 8,
         searchableSites: 8,
-        searchableSupportedSites: 5,
+        searchableSupportedSites: 6,
         runtimeCounts: {
           "cms-xml": 1,
           "cms-json": 1,

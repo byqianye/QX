@@ -38,6 +38,7 @@ describe("unified media source contract", () => {
       parse: 0,
       url: "https://media.example.invalid/fixture.mp4",
       headers: {},
+      status: "DIRECT",
     });
     await playable.destroy();
   });

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   createMediaFixtureServer,
+  mediaFixtureBytes,
   type MediaFixtureServer,
 } from "../src/electron/media-fixture.js";
 
@@ -11,6 +12,14 @@ describe("local media fixture server", () => {
   beforeAll(async () => {
     fixture = createMediaFixtureServer();
     await fixture.start();
+  });
+
+  it("provides the same real MP4 bytes for local-file acceptance", () => {
+    const bytes = mediaFixtureBytes();
+    expect(bytes.length).toBeGreaterThan(1_000);
+    expect(bytes.subarray(4, 8).toString("ascii")).toBe("ftyp");
+    expect(bytes.includes(Buffer.from("moov"))).toBe(true);
+    expect(bytes.includes(Buffer.from("mdat"))).toBe(true);
   });
 
   afterAll(async () => {

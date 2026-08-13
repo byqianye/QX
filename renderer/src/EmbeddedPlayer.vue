@@ -22,7 +22,9 @@ import type { DanmakuUiState } from "../../src/danmaku/danmaku-types.js";
 
 const PLAYBACK_STARTUP_TIMEOUT_MS = 10_000;
 
-const windowWithHls = window as Window & { Hls?: typeof Hls };
+const windowWithHls = window as Window & {
+  Hls?: typeof Hls;
+};
 windowWithHls.Hls ??= Hls;
 
 const props = defineProps<{ state: PlayerState; sessionId?: string | null; detachable?: boolean; danmaku?: DanmakuUiState }>();
@@ -62,8 +64,8 @@ let startupTimer: ReturnType<typeof setTimeout> | undefined;
 let firstFrameReported = false;
 
 watch(() => props.state.source?.url, () => {
-  loadSource();
-});
+  void nextTick(loadSource);
+}, { flush: "post" });
 
 watch(
   () => {
@@ -134,6 +136,9 @@ function loadSource(): void {
   }
   element.volume = props.state.volume;
   element.muted = props.state.muted;
+  // LocalProxy uses a dynamic localhost port, so opt the media element into
+  // CORS before HLS.js attaches its MediaSource buffer.
+  element.crossOrigin = "anonymous";
   localStatus.value = "loading";
   firstFrameReported = false;
   startupTimer = setTimeout(() => {
@@ -143,9 +148,7 @@ function loadSource(): void {
     localError.value = "起播超时";
     emitSync("error", { type: "startup-timeout", reason: "起播超时" });
   }, PLAYBACK_STARTUP_TIMEOUT_MS);
-  if (isHls(source.url)
-    && element.canPlayType("application/vnd.apple.mpegurl") === ""
-    && Hls.isSupported()) {
+  if ((source.mediaType === "hls" || isHls(source.url)) && Hls.isSupported()) {
     hls = new Hls({ enableWorker: false });
     hls.on(Hls.Events.ERROR, (_event, data) => {
       const status = typeof data.response?.code === "number" ? data.response.code : undefined;

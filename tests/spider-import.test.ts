@@ -339,7 +339,7 @@ describe("real configuration import", () => {
         localProxy: false,
         filters: false,
         pagination: true,
-        engine: "jvm",
+        engine: "android-dex",
       },
       init: async () => undefined,
       search: async () => ({
@@ -357,7 +357,12 @@ describe("real configuration import", () => {
       }],
       destroy: async () => undefined,
     };
+    const events: string[] = [];
     const runtimeManager = {
+      prepareForSources: async () => {
+        events.push("prepare");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      },
       supports: async (site: { api?: string }) => site.api === "csp_Duopan"
         ? {
             runtime: "android-dex",
@@ -369,9 +374,12 @@ describe("real configuration import", () => {
             runtime: "native",
             supported: true,
             reason: "native_supported",
-            capabilities: { ...androidRuntime.capabilities, engine: "jvm" },
+      capabilities: { ...androidRuntime.capabilities, engine: "android-dex" },
           },
-      getRuntime: async () => androidRuntime,
+      getRuntime: async () => ({
+        ...androidRuntime,
+        init: async () => { events.push("init"); },
+      }),
     } as unknown as SpiderRuntimeManagerPort;
     const importer = createImporter({ runtimeManagerFactory: () => runtimeManager });
     await importer.import(JSON.stringify({
@@ -391,6 +399,8 @@ describe("real configuration import", () => {
     });
 
     expect(result.searchedSites).toContain("csp_FeiMaoUC");
+    expect(events[0]).toBe("prepare");
+    expect(events).toContain("init");
     expect(result.diagnostics.sites).toContainEqual(expect.objectContaining({
       siteKey: "csp_FeiMaoUC",
       runtime: "android-dex",
@@ -457,6 +467,9 @@ describe("real configuration import", () => {
     expect(opened.state?.status).toBe("ready");
     const home = await post(server.url, "/api/home");
     expect(home.state?.items).toHaveLength(1);
+    const directSearch = await post(server.url, "/api/search", { key: "QX", aggregate: false });
+    const directItems = directSearch.state?.items as Array<{ vod_id?: string }> | undefined;
+    expect(directItems?.[0]?.vod_id).toBe("msearch:fixture");
 
     const cancelled = await post(server.url, "/api/import/cancel");
     expect(cancelled.import.status).toBe("cancelled");
@@ -476,7 +489,7 @@ describe("real configuration import", () => {
 
       const initial = await fetch(new URL("/api/state", server.url));
       const initialValue = await initial.json() as { persistence: Record<string, unknown> };
-      expect(initialValue.persistence).toMatchObject({ theme: "light", siteKey: null });
+      expect(initialValue.persistence).toMatchObject({ theme: "dark", siteKey: null });
 
       await post(server.url, "/api/import/load", { input: configJson() });
       await post(server.url, "/api/import/confirm");
@@ -616,6 +629,11 @@ class SessionFixture implements DesktopSpiderSessionPort {
 class PlaybackResolverSession extends SessionFixture {
   public constructor(api: string) {
     super(api);
+  }
+
+  public override async open(): Promise<SpiderResponse> {
+    if (this.view.status === "ready") throw new Error("session already open");
+    return super.open();
   }
 
   public override async homeContent(): Promise<SpiderResponse> {

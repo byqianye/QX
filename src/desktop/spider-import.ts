@@ -25,7 +25,7 @@ import {
   type AggregateSearchOptions,
   type AggregateSearchSnapshot,
 } from "../search/aggregate-search.js";
-import { SourceHealthRegistry, type SourceHealthSnapshot } from "../health/source-health.js";
+import { SourceHealthRegistry, SourceHealthService, type SourceHealthSnapshot } from "../health/source-health.js";
 import {
   ImportTrustStore,
   inspectImportAsync,
@@ -46,7 +46,32 @@ import {
 import type { Vod } from "../source/media-source.js";
 import { normalizeFongMiSite, serializeFongMiExt } from "../config/fongmi.js";
 import { SpiderRuntimeManager } from "../spider/spider-runtime.js";
-import type { SpiderRuntimeManagerPort } from "../spider/runtime-types.js";
+import type { SpiderRuntime, SpiderRuntimeManagerPort } from "../spider/runtime-types.js";
+
+const ANDROID_INIT_RETRY_DELAY_MS = 2_000;
+
+function isTransientAndroidInitError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  if ((error as { code?: unknown }).code === "SPIDER_METHOD_FAILED") return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Attempt to invoke virtual method")
+    && message.includes("on a null object reference");
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function recordSourceConfigFingerprints(health: SourceHealthService, sites: readonly TvBoxSite[]): void {
+  for (const site of sites) {
+    const key = siteKeyOf(site);
+    if (!key) continue;
+    const fingerprint = createHash("sha256")
+      .update(JSON.stringify({ api: site.api, type: site.type, ext: site.ext ?? null }))
+      .digest("hex");
+    health.setConfigFingerprint(key, fingerprint);
+  }
+}
 
 export type DesktopSpiderImportInputKind = "url" | "file" | "json";
 export type DesktopSpiderImportStatus =
@@ -131,6 +156,7 @@ export interface DesktopSpiderImportOptions {
   requestTimeoutMs?: number;
   runtimeManager?: SpiderRuntimeManagerPort;
   runtimeManagerFactory?: (config: TvBoxConfig, sourceUrl?: string) => SpiderRuntimeManagerPort;
+  sourceHealth?: SourceHealthService;
 }
 
 export class DesktopSpiderImportController {
@@ -157,6 +183,7 @@ export class DesktopSpiderImportController {
   private aggregateCoordinator: AggregateSearchCoordinator | undefined;
   private readonly playbackSourceResolver = new PlaybackSourceResolver();
   private readonly health = new SourceHealthRegistry();
+  private readonly sourceHealth: SourceHealthService;
   private readonly openingSessions = new Map<string, Promise<void>>();
   private readonly initializationFailures = new Set<string>();
   private currentSessionKey: string | undefined;
@@ -176,6 +203,7 @@ export class DesktopSpiderImportController {
     this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
     this.runtimeManager = options.runtimeManager;
     this.runtimeManagerFactory = options.runtimeManagerFactory;
+    this.sourceHealth = options.sourceHealth ?? new SourceHealthService();
     this.refreshManager = this.history
       ? new ConfigRefreshManager(this.history, {
           ...(options.refreshIntervalMs === undefined ? {} : { intervalMs: options.refreshIntervalMs }),
@@ -228,8 +256,28 @@ export class DesktopSpiderImportController {
     return typeof this.selectedSite?.ext === "string" ? this.selectedSite.ext : "";
   }
 
+  public get sourceHealthService(): SourceHealthService {
+    return this.sourceHealth;
+  }
+
   public siteManagement(): readonly DesktopSpiderImportSite[] {
     return this.state.sites;
+  }
+
+  public async getRuntimeForSite(site: TvBoxSite): Promise<SpiderRuntime> {
+    if (!this.config) {
+      throw new Error("Configuration is not ready for Spider Runtime");
+    }
+    const runtimeManager = this.runtimeManager
+      ?? this.activeRuntimeManager
+      ?? this.runtimeManagerFactory?.(this.config, this.stateValue.source ?? undefined)
+      ?? new SpiderRuntimeManager({
+        config: this.config,
+        ...(this.stateValue.source ? { sourceUrl: this.stateValue.source } : {}),
+      });
+    this.activeRuntimeManager = runtimeManager;
+    this.runtimeExecutionEnabled = this.runtimeManager !== undefined || this.runtimeManagerFactory !== undefined;
+    return runtimeManager.getRuntime(site);
   }
 
   public aggregateSearch(
@@ -241,7 +289,7 @@ export class DesktopSpiderImportController {
     }
     this.aggregateCoordinator?.cancel();
     const sources = this.siteManager.list()
-      .filter((site) => site.enabled && site.searchEnabled && site.engine !== "unsupported")
+      .filter((site) => site.enabled && site.searchEnabled && (site.engine !== "unsupported" || this.runtimeExecutionEnabled))
       .map((site) => ({
         id: site.key,
         label: site.alias,
@@ -298,10 +346,18 @@ export class DesktopSpiderImportController {
       const runtimeSupported = support.supported && resolverCapabilities.search && resolverCapabilities.detail;
       const runtimeBindingAvailable = binding !== undefined || support.runtime === "android-dex";
       const metadataOnly = knownMetadataOnlySite(siteKey, configured.api);
+      const normalized = normalizeFongMiSite(configured, this.stateValue.source ?? undefined, index);
+      const previousHealth = this.sourceHealth.getHealth(siteKey);
+      // Static names such as FeiMaoUC are not proof that a source requires
+      // credentials. Only an observed/runtime-persisted auth result gates the
+      // automatic resolver.
+      const requiresAuth = previousHealth.requiresAuth;
+      this.sourceHealth.setAuthentication(siteKey, requiresAuth, previousHealth.authenticated);
+      const v2Health = this.sourceHealth.getHealth(siteKey);
       const enabled = managed?.enabled !== false
         && managed?.trusted !== false
-        && this.health.canRun(siteKey);
-      const normalized = normalizeFongMiSite(configured, this.stateValue.source ?? undefined, index);
+        && this.health.canRun(siteKey)
+        && this.sourceHealth.canRun(siteKey);
       const skipReason = !runtimeSupported
         ? support.reason
         : !runtimeBindingAvailable
@@ -325,18 +381,37 @@ export class DesktopSpiderImportController {
         engine: binding?.engine ?? null,
         ...(skipReason ? { skipReason } : {}),
         metadataOnly,
+        requiresAuth,
+        authenticated: v2Health.authenticated,
+        healthScore: v2Health.score,
+        averageLatencyMs: averageLatencyFromHealth(v2Health),
         ...(managed?.capabilities.playback === undefined ? {} : { playback: managed.capabilities.playback }),
       } satisfies PlaybackSourceSite];
     }))).flat();
+    const runtimeWaitStartedAt = Date.now();
+    let runtimePreparation: "not_required" | "ready" = "not_required";
+    if (runtimeManager.prepareForSources) {
+      await runtimeManager.prepareForSources(configuredSites);
+      runtimePreparation = "ready";
+    }
     const engineFactory: SourceEngineFactory = {
       create: (site) => this.createPlaybackSourceEngine(site),
     };
-    return this.playbackSourceResolver.resolve(currentVod, sites, {
+    const resolution = await this.playbackSourceResolver.resolve(currentVod, sites, {
       ...options,
       configSiteCount: configuredSites.length,
       engineFactory,
+      health: options.health ?? this.sourceHealth,
       ...(currentSiteKey === null ? {} : { currentSiteKey }),
     });
+    return {
+      ...resolution,
+      diagnostics: {
+        ...resolution.diagnostics,
+        runtimePreparation,
+        runtimeWaitDurationMs: runtimePreparation === "ready" ? Date.now() - runtimeWaitStartedAt : 0,
+      },
+    };
   }
 
   public async refreshConfiguration(): Promise<DesktopSpiderImportState> {
@@ -565,6 +640,7 @@ export class DesktopSpiderImportController {
       trusted: !assessment.requiresConfirmation,
     });
     const sites = sitesForUi(config, this.siteManager, this.health);
+    recordSourceConfigFingerprints(this.sourceHealth, configuredSites);
 
     this.config = config;
     this.assessment = assessment;
@@ -629,6 +705,7 @@ export class DesktopSpiderImportController {
       trusted: !assessment.requiresConfirmation,
       ...(preferences ? { preferences } : {}),
     });
+    recordSourceConfigFingerprints(this.sourceHealth, configuredSites);
     this.stateValue = {
       ...this.stateValue,
       summary: summarizeConfig(config),
@@ -837,19 +914,58 @@ export class DesktopSpiderImportController {
         return runtime;
       };
       let initialized = false;
+      const resetRuntime = async (): Promise<void> => {
+        if (!runtimeManager.destroyRuntime && !runtimeManager.destroy) return;
+        initialized = false;
+        runtimePromise = undefined;
+        if (runtimeManager.destroyRuntime) {
+          await runtimeManager.destroyRuntime(configured);
+        } else {
+          await runtimeManager.destroy!();
+        }
+        await delay(ANDROID_INIT_RETRY_DELAY_MS);
+      };
+      const initializeRuntime = async (): Promise<void> => {
+        if (initialized) return;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          try {
+            const runtime = await getRuntime();
+            await runtime.init(configured, {
+              sourceId: this.stateValue.source ?? `runtime:${site.siteKey}`,
+              siteKey: site.siteKey,
+              ...(site.ext === undefined ? {} : { ext: site.ext }),
+            });
+            initialized = true;
+            return;
+          } catch (error) {
+            if (!isTransientAndroidInitError(error)
+              || attempt === 1
+              || (!runtimeManager.destroyRuntime && !runtimeManager.destroy)) throw error;
+            await resetRuntime();
+          }
+        }
+      };
+      const retryTransient = async <T>(operation: () => Promise<T>): Promise<T> => {
+        try {
+          return await operation();
+        } catch (error) {
+          if (!isTransientAndroidInitError(error)
+            || (!runtimeManager.destroyRuntime && !runtimeManager.destroy)) throw error;
+          await resetRuntime();
+          await initializeRuntime();
+          return operation();
+        }
+      };
       return {
-        init: async () => {
-          if (initialized) return;
-          const runtime = await getRuntime();
-          await runtime.init(configured, {
-            sourceId: this.stateValue.source ?? `runtime:${site.siteKey}`,
-            siteKey: site.siteKey,
-            ...(site.ext === undefined ? {} : { ext: site.ext }),
-          });
-          initialized = true;
+        init: initializeRuntime,
+        search: async (query, quick, page) => {
+          await initializeRuntime();
+          return (await retryTransient(() => getRuntime().then((runtime) => runtime.search({ key: query, quick, page })))).items;
         },
-        search: async (query, quick, page) => (await (await getRuntime()).search({ key: query, quick, page })).items,
-        detail: async (vodId) => (await (await getRuntime()).detail([vodId]))[0] ?? null,
+        detail: async (vodId) => {
+          await initializeRuntime();
+          return (await retryTransient(() => getRuntime().then((runtime) => runtime.detail([vodId]))))[0] ?? null;
+        },
       };
     }
     let session: DesktopSpiderSessionPort | undefined;
@@ -1270,6 +1386,12 @@ function capabilityLabels(capabilities: SourceCapabilities): string {
     .join(", ") || "无";
 }
 
+function averageLatencyFromHealth(health: ReturnType<SourceHealthService["getHealth"]>): number | null {
+  const operations = Object.values(health.operations);
+  const attempts = operations.reduce((total, operation) => total + operation.attempts, 0);
+  return attempts === 0 ? null : operations.reduce((total, operation) => total + operation.totalMs, 0) / attempts;
+}
+
 function findSite(config: TvBoxConfig, siteKey: string): TvBoxSite | undefined {
   const sites = Array.isArray(config.sites) ? config.sites : [];
   return sites.find((site) => site.key === siteKey)
@@ -1281,7 +1403,16 @@ function isSupportedDesktopSite(
   site: TvBoxSite | undefined,
   sourceUrl?: string,
 ): site is TvBoxSite & { api: string } {
-  return site !== undefined && resolveDesktopSourceBinding(config, site, sourceUrl) !== undefined;
+  return site !== undefined
+    && (resolveDesktopSourceBinding(config, site, sourceUrl) !== undefined || hasAndroidDexDeclaration(config, site));
+}
+
+function hasAndroidDexDeclaration(config: TvBoxConfig, site: TvBoxSite): boolean {
+  if (site.type !== 3 || typeof site.api !== "string" || !/^csp_/iu.test(site.api)) return false;
+  const siteDeclaration = [site.jar, site.spider].some((value) => typeof value === "string" && value.trim().length > 0);
+  const configDeclaration = typeof config.spider === "string"
+    && /^(?:https?|file):\/\//iu.test(config.spider.trim());
+  return siteDeclaration || configDeclaration;
 }
 
 function siteKeyOf(site: TvBoxSite): string {
@@ -1326,7 +1457,7 @@ function knownMetadataOnlySite(siteKey: string, api: string): boolean {
 
 function unsupportedRuntimeReason(type: number, api: string): string {
   if (type !== 3) return "unsupported_site_type";
-  if (/^csp_/i.test(api) || /\.jar(?:$|[?#])/i.test(api)) return "android_dex_runtime_not_available";
+  if (/^csp_/i.test(api) || /\.jar(?:$|[?#])/i.test(api)) return "android_dex_artifact_missing";
   if (/\.m?js(?:$|[?#])/i.test(api) || /^js:/i.test(api)) return "js_runtime_missing";
   if (/\.py(?:$|[?#])/i.test(api) || /^py:/i.test(api)) return "python_runtime_missing";
   return "unsupported_site_type";

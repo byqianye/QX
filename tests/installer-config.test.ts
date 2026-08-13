@@ -5,23 +5,25 @@ import { describe, expect, it } from "vitest";
 describe("G72 Windows installer configuration", () => {
   it("defines a per-user NSIS installer without file associations", () => {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
-      build?: {
-        productName?: string;
-        win?: { target?: Array<{ target?: string; arch?: string[] }> };
-        nsis?: Record<string, unknown>;
-        fileAssociations?: unknown;
-      };
+      build?: unknown;
     };
-    expect(packageJson.build?.productName).toBe("QX影视");
-    expect(packageJson.build?.win?.target).toEqual([{ target: "nsis", arch: ["x64"] }]);
-    expect(packageJson.build?.nsis).toMatchObject({
-      oneClick: false,
-      perMachine: false,
-      createDesktopShortcut: true,
-      createStartMenuShortcut: true,
-      deleteAppDataOnUninstall: false,
-    });
-    expect(packageJson.build?.fileAssociations).toBeUndefined();
+    const builderConfig = readFileSync(new URL("../electron-builder.yml", import.meta.url), "utf8");
+    expect(packageJson.build).toBeUndefined();
+    expect(builderConfig).toContain("appId: com.qx.yingshi");
+    expect(builderConfig).toContain("productName: QX影视");
+    expect(builderConfig).toContain("output: release");
+    expect(builderConfig).toContain("asar: true");
+    expect(builderConfig).toContain("target: nsis");
+    expect(builderConfig).toContain("target: portable");
+    expect(builderConfig).toContain("artifactName: QX影视-Setup-${version}-${arch}.${ext}");
+    expect(builderConfig).toContain("artifactName: QX影视-Portable-${version}-${arch}.${ext}");
+    expect(builderConfig).toContain("oneClick: false");
+    expect(builderConfig).toContain("perMachine: false");
+    expect(builderConfig).toContain("createDesktopShortcut: true");
+    expect(builderConfig).toContain("createStartMenuShortcut: true");
+    expect(builderConfig).toContain("deleteAppDataOnUninstall: false");
+    expect(builderConfig).toContain("android-spider-host/app/build/outputs/apk/debug/app-debug.apk");
+    expect(builderConfig).toContain("build/android-runtime-manifest.json");
   });
 
   it("keeps user data by default and exposes an explicit uninstall component", () => {

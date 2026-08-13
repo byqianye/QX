@@ -2,6 +2,7 @@ package com.qx.yingshi.androidhost;
 
 import android.content.Context;
 import android.os.Build;
+import android.os.SystemClock;
 
 import dalvik.system.DexClassLoader;
 import dalvik.system.DexFile;
@@ -21,22 +22,24 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 final class SpiderRuntime implements Closeable {
+    private static final int INIT_ATTEMPTS = 4;
+    private static final long INIT_RETRY_DELAY_MS = 5000L;
     private final Context context;
-    private final Map<String, JarHandle> jars = new LinkedHashMap<>();
-    private final Map<String, SpiderHandle> spiders = new LinkedHashMap<>();
+    private final Map<String, JarHandle> jars = new ConcurrentHashMap<>();
+    private final Map<String, SpiderHandle> spiders = new ConcurrentHashMap<>();
 
     SpiderRuntime(Context context) {
         this.context = context.getApplicationContext();
     }
 
-    synchronized JSONObject dispatch(String method, JSONObject params) throws RpcException {
+    JSONObject dispatch(String method, JSONObject params) throws RpcException {
         switch (method) {
             case "health":
                 return health();
@@ -44,6 +47,14 @@ final class SpiderRuntime implements Closeable {
                 return runtimeInfo();
             case "loadJar":
                 return loadJar(params);
+            case "resolveClass":
+                return resolveClass(params);
+            case "setSpiderCredential":
+                return setSpiderCredential(params);
+            case "clearSpiderCredential":
+                return clearSpiderCredential(params);
+            case "credentialStatus":
+                return credentialStatus(params);
             case "unloadJar":
                 return unloadJar(params);
             case "createSpider":
@@ -102,7 +113,7 @@ final class SpiderRuntime implements Closeable {
         );
     }
 
-    private JSONObject loadJar(JSONObject params) throws RpcException {
+    private synchronized JSONObject loadJar(JSONObject params) throws RpcException {
         long started = System.nanoTime();
         String sourcePath = firstString(params, "sourcePath", "jarPath");
         if (sourcePath.isEmpty()) {
@@ -141,6 +152,21 @@ final class SpiderRuntime implements Closeable {
         }
         makeReadOnly(destination);
         String jarId = actualSha.substring(0, Math.min(16, actualSha.length()));
+        JarHandle existing = jars.get(jarId);
+        if (existing != null && existing.sha256.equals(actualSha)) {
+            return object(
+                    "jarId", existing.jarId,
+                    "path", existing.path.getAbsolutePath(),
+                    "sha256", existing.sha256,
+                    "size", existing.path.length(),
+                    "dexCount", countDexFiles(existing.path),
+                    "loadDurationMs", (System.nanoTime() - started) / 1_000_000L,
+                    "candidateSpiderClasses", existing.candidateClasses,
+                    "cacheHit", true,
+                    "reused", true,
+                    "refCount", existing.refCount
+            );
+        }
         String optimizedDir = new File(context.getCodeCacheDir(), "spider-dex").getAbsolutePath();
         File optimized = new File(optimizedDir);
         if (!optimized.exists()) {
@@ -163,29 +189,94 @@ final class SpiderRuntime implements Closeable {
                 "dexCount", countDexFiles(destination),
                 "loadDurationMs", (System.nanoTime() - started) / 1_000_000L,
                 "candidateSpiderClasses", handle.candidateClasses,
-                "cacheHit", cacheHit
+                "cacheHit", cacheHit,
+                "reused", false,
+                "refCount", handle.refCount
         );
     }
 
-    private JSONObject unloadJar(JSONObject params) {
+    private synchronized JSONObject unloadJar(JSONObject params) {
         String jarId = params.optString("jarId", "");
-        ArrayList<String> destroyed = new ArrayList<>();
-        for (Map.Entry<String, SpiderHandle> entry : new ArrayList<>(spiders.entrySet())) {
-            if (entry.getValue().jarId.equals(jarId)) {
-                destroySpiderById(entry.getKey());
-                destroyed.add(entry.getKey());
-            }
-        }
-        boolean removed = jars.remove(jarId) != null;
-        return object("jarId", jarId, "unloaded", removed, "destroyedSpiders", new JSONArray(destroyed));
+        JarHandle handle = jars.get(jarId);
+        boolean removed = handle != null && handle.refCount == 0 && jars.remove(jarId) != null;
+        return object("jarId", jarId, "unloaded", removed, "destroyedSpiders", new JSONArray(), "refCount", handle == null ? 0 : handle.refCount);
     }
 
-    private JSONObject createSpider(JSONObject params) throws RpcException {
-        String jarId = params.optString("jarId", "");
-        JarHandle jar = jars.get(jarId);
-        if (jar == null) {
-            throw new RpcException("JAR_NOT_LOADED", "Spider JAR is not loaded: " + jarId, "createSpider");
+    private JSONObject resolveClass(JSONObject params) throws RpcException {
+        JarHandle jar = requireJar(params, "resolveClass");
+        String api = params.optString("api", "").trim();
+        String expectedClass = SpiderClassResolver.expectedClass(api);
+        if (expectedClass.isEmpty()) {
+            throw new RpcException("SPIDER_CLASS_NAME_INVALID", "Unable to resolve Spider class from api: " + api, "resolveClass", object("api", api));
         }
+        try {
+            Class<?> resolved = jar.loader.loadClass(expectedClass);
+            return object("api", api, "expectedClass", expectedClass, "resolvedClass", resolved.getName(), "classExists", true, "resolutionMethod", "api-derived", "candidateSpiderClasses", jar.candidateClasses);
+        } catch (ClassNotFoundException ignored) {
+            return object("api", api, "expectedClass", expectedClass, "classExists", false, "resolutionMethod", "jar-scan", "candidateSpiderClasses", jar.candidateClasses);
+        }
+    }
+
+    private JSONObject setSpiderCredential(JSONObject params) throws RpcException {
+        String provider = params.optString("provider", "").trim().toLowerCase();
+        if (!"uc".equals(provider)) {
+            throw new RpcException("CREDENTIAL_PROVIDER_UNSUPPORTED", "Only the audited UC provider is supported", "setSpiderCredential", object("provider", provider));
+        }
+        String payload = params.optString("payload", "").trim();
+        try {
+            JSONObject value = new JSONObject(payload);
+            if (value.optString("access_token", "").trim().isEmpty()) {
+                throw new RpcException("CREDENTIAL_ACCESS_TOKEN_MISSING", "UC credential payload must contain access_token", "setSpiderCredential");
+            }
+            File target = new File(context.getFilesDir(), ".uc");
+            File temporary = new File(context.getFilesDir(), ".uc.tmp");
+            try (FileOutputStream output = new FileOutputStream(temporary)) {
+                output.write(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                output.getFD().sync();
+            }
+            if (!temporary.renameTo(target)) {
+                //noinspection ResultOfMethodCallIgnored
+                temporary.delete();
+                throw new IOException("Unable to install UC credential");
+            }
+            return object("configured", true, "provider", "uc", "field", "access_token");
+        } catch (RpcException error) {
+            throw error;
+        } catch (Exception error) {
+            throw new RpcException("CREDENTIAL_INVALID", "UC credential payload is not valid JSON", "setSpiderCredential");
+        }
+    }
+
+    private JSONObject clearSpiderCredential(JSONObject params) {
+        File target = new File(context.getFilesDir(), ".uc");
+        boolean removed = !target.exists() || target.delete();
+        return object("configured", false, "removed", removed, "provider", "uc");
+    }
+
+    private JSONObject credentialStatus(JSONObject params) {
+        File target = new File(context.getFilesDir(), ".uc");
+        boolean configured = false;
+        if (target.isFile()) {
+            try {
+                configured = !new JSONObject(readText(target)).optString("access_token", "").trim().isEmpty();
+            } catch (Exception ignored) {
+                configured = false;
+            }
+        }
+        return object("configured", configured, "provider", "uc", "field", "access_token");
+    }
+
+    private static String readText(File file) throws IOException {
+        try (FileInputStream input = new FileInputStream(file)) {
+            byte[] bytes = new byte[(int) Math.min(file.length(), 1024 * 1024)];
+            int read = input.read(bytes);
+            return new String(bytes, 0, Math.max(read, 0), java.nio.charset.StandardCharsets.UTF_8);
+        }
+    }
+
+    private synchronized JSONObject createSpider(JSONObject params) throws RpcException {
+        String jarId = params.optString("jarId", "");
+        JarHandle jar = requireJar(params, "createSpider");
         String api = params.optString("api", "").trim();
         String expectedClass = SpiderClassResolver.expectedClass(api);
         String requestedClass = params.optString("expectedClass", "").trim();
@@ -225,6 +316,7 @@ final class SpiderRuntime implements Closeable {
             );
         }
         String spiderId = UUID.randomUUID().toString();
+        jar.refCount += 1;
         spiders.put(spiderId, new SpiderHandle(spiderId, jarId, api, expectedClass, instance));
         return object(
                 "spiderId", spiderId,
@@ -232,8 +324,17 @@ final class SpiderRuntime implements Closeable {
                 "api", api,
                 "resolvedClass", spiderClass.getName(),
                 "expectedClass", expectedClass,
-                "classExists", true
+                "classExists", true,
+                "resolutionMethod", "api-derived",
+                "refCount", jar.refCount
         );
+    }
+
+    private JarHandle requireJar(JSONObject params, String stage) throws RpcException {
+        String jarId = params.optString("jarId", "");
+        JarHandle jar = jars.get(jarId);
+        if (jar == null) throw new RpcException("JAR_NOT_LOADED", "Spider JAR is not loaded: " + jarId, stage);
+        return jar;
     }
 
     private JSONObject init(JSONObject params) throws RpcException {
@@ -245,21 +346,37 @@ final class SpiderRuntime implements Closeable {
         Object[][] candidates = new Object[][]{{context, ext}, {ext}, {context}};
         Method initMethod = findMethod(spider.instance.getClass(), "init", candidates);
         boolean contextDependent = initMethod != null && usesAndroidContext(initMethod);
-        InvocationResult invocation;
-        try {
-            invocation = invokeRequiredDetailed(spider, "init", candidates, params);
-        } catch (RpcException error) {
+        InvocationResult invocation = null;
+        int initAttempt = 0;
+        RpcException lastError = null;
+        for (int attempt = 1; attempt <= INIT_ATTEMPTS; attempt++) {
+            initAttempt = attempt;
+            try {
+                invocation = invokeRequiredDetailed(spider, "init", candidates, params);
+                break;
+            } catch (RpcException error) {
+                lastError = error;
+                if (!isTransientInitFailure(error) || attempt == INIT_ATTEMPTS) break;
+                SystemClock.sleep(INIT_RETRY_DELAY_MS);
+            }
+        }
+        if (lastError != null) {
+            RpcException error = lastError;
             JSONObject diagnostics = error.diagnostics == null ? new JSONObject() : error.diagnostics;
             put(diagnostics, "initDurationMs", (System.nanoTime() - started) / 1_000_000L);
             put(diagnostics, "initException", error.getMessage());
             put(diagnostics, "contextDependent", contextDependent);
+            put(diagnostics, "initAttempt", initAttempt);
+            put(diagnostics, "initAttempts", INIT_ATTEMPTS);
+            put(diagnostics, "initRetryDelayMs", INIT_RETRY_DELAY_MS);
             throw new RpcException(error.code, error.getMessage(), "init", diagnostics, error.debugStack);
         }
-        Object result = invocation.value;
+        Object result = invocation == null ? null : invocation.value;
         spider.initialized = true;
         return object(
                 "initialized", true,
                 "initDurationMs", (System.nanoTime() - started) / 1_000_000L,
+                "initAttempt", initAttempt,
                 "contextDependent", invocation.contextDependent,
                 "runtimeContextInitialized", runtimeContextInitialized,
                 "methodResult", result == null ? JSONObject.NULL : result
@@ -495,7 +612,7 @@ final class SpiderRuntime implements Closeable {
         }
     }
 
-    private void destroyAll() {
+    private synchronized void destroyAll() {
         for (String spiderId : new ArrayList<>(spiders.keySet())) {
             destroySpiderById(spiderId);
         }
@@ -503,7 +620,7 @@ final class SpiderRuntime implements Closeable {
         jars.clear();
     }
 
-    private JSONObject destroySpider(JSONObject params) {
+    private synchronized JSONObject destroySpider(JSONObject params) {
         String spiderId = params.optString("spiderId", "");
         return object("spiderId", spiderId, "destroyed", destroySpiderById(spiderId));
     }
@@ -519,6 +636,8 @@ final class SpiderRuntime implements Closeable {
                 // Destruction must not bring down the Host.
             }
         }
+        JarHandle jar = jars.get(spider.jarId);
+        if (jar != null && jar.refCount > 0) jar.refCount -= 1;
         return true;
     }
 
@@ -543,6 +662,13 @@ final class SpiderRuntime implements Closeable {
             if (Context.class.isAssignableFrom(parameter)) return true;
         }
         return false;
+    }
+
+    private static boolean isTransientInitFailure(RpcException error) {
+        if (!"SPIDER_METHOD_FAILED".equals(error.code)) return false;
+        String message = error.getMessage() == null ? "" : error.getMessage();
+        return message.contains("Attempt to invoke virtual method")
+                && message.contains("on a null object reference");
     }
 
     private static RpcException artifactError(String code, String message, String path) {
@@ -685,7 +811,11 @@ final class SpiderRuntime implements Closeable {
 
     @Override
     public synchronized void close() {
-        destroyAll();
+        // Process shutdown must not synchronously invoke arbitrary third-party
+        // Spider.destroy() code. A blocked Spider init/destroy must not hold
+        // Android's Activity teardown or the ADB control channel hostage.
+        spiders.clear();
+        jars.clear();
     }
 
     private static final class JarHandle {
@@ -694,6 +824,7 @@ final class SpiderRuntime implements Closeable {
         final String sha256;
         final DexClassLoader loader;
         final JSONArray candidateClasses;
+        int refCount;
 
         JarHandle(String jarId, File path, String sha256, DexClassLoader loader, JSONArray candidateClasses) {
             this.jarId = jarId;

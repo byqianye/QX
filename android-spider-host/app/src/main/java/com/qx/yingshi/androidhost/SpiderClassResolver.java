@@ -25,6 +25,12 @@ final class SpiderClassResolver {
         return !expected.isEmpty() && expected.equals(expectedClass);
     }
 
+    static String simpleName(String api) {
+        String expected = expectedClass(api);
+        int separator = expected.lastIndexOf('.');
+        return separator < 0 ? expected : expected.substring(separator + 1);
+    }
+
     static String normalizedApi(String api) {
         return api == null ? "" : api.trim().toLowerCase(Locale.ROOT);
     }

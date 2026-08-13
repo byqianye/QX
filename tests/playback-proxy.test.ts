@@ -1,3 +1,4 @@
+import { createCipheriv } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -76,6 +77,33 @@ describe("PlaybackProxyServer", () => {
       expect(request.headers.authorization).toBe("Bearer secret");
       expect(request.headers.host).toContain("127.0.0.1");
     }
+  });
+
+  it("decodes decimal-byte HLS playlists before rewriting their resources", async () => {
+    const proxy = createProxy();
+    const session = await proxy.createSession(source(`${origin}/numeric.m3u8`));
+
+    const response = await fetch(session.url);
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toContain("#EXTM3U");
+    expect(body).toContain(`${proxy.url}__qx_playback/`);
+    expect(body).not.toMatch(/^\d{1,3}(?:\s+\d{1,3})+$/u);
+  });
+
+  it("does not ask hls.js to decrypt TS segments already decrypted by LocalProxy", async () => {
+    const proxy = createProxy();
+    const session = await proxy.createSession(source(`${origin}/aes-ts.m3u8`));
+
+    const playlist = await (await fetch(session.url)).text();
+    expect(playlist).toContain("#EXT-X-KEY:METHOD=NONE");
+    expect(playlist).not.toContain("METHOD=AES-128");
+    const segmentUrl = playlist.split("\n").find((line) => line.startsWith(`${proxy.url}__qx_playback/`));
+    expect(segmentUrl).toBeTruthy();
+
+    const segment = Buffer.from(await (await fetch(segmentUrl as string)).arrayBuffer());
+    expect(segment).toEqual(clearTsSegment());
   });
 
   it("passes MP4 Range and safe response headers through the proxy", async () => {
@@ -259,6 +287,26 @@ async function handleUpstream(request: IncomingMessage, response: ServerResponse
     ].join("\n"));
     return;
   }
+  if (url.pathname === "/numeric.m3u8") {
+    const playlist = "#EXTM3U\n#EXTINF:1,\n/segments/segment.ts\n#EXT-X-ENDLIST\n";
+    const encoded = [...Buffer.from(playlist, "utf8")].join(" ");
+    response.writeHead(200, { "content-type": "application/vnd.apple.mpegurl" });
+    response.end(encoded);
+    return;
+  }
+  if (url.pathname === "/aes-ts.m3u8") {
+    response.writeHead(200, { "content-type": "application/vnd.apple.mpegurl" });
+    response.end([
+      "#EXTM3U",
+      "#EXT-X-TARGETDURATION:1",
+      '#EXT-X-KEY:METHOD=AES-128,URI="/keys/aes.bin"',
+      "#EXTINF:1,",
+      "/segments/encrypted.ts",
+      "#EXT-X-ENDLIST",
+      "",
+    ].join("\n"));
+    return;
+  }
   if (url.pathname === "/hls/child/child.m3u8") {
     response.writeHead(200, { "content-type": "application/vnd.apple.mpegurl" });
     response.end([
@@ -309,6 +357,11 @@ async function handleUpstream(request: IncomingMessage, response: ServerResponse
     response.end(Buffer.alloc(16, 1));
     return;
   }
+  if (url.pathname === "/keys/aes.bin") {
+    response.writeHead(200, { "content-type": "application/octet-stream" });
+    response.end(aesKey());
+    return;
+  }
   if (url.pathname === "/segments/init.mp4") {
     response.writeHead(200, { "content-type": "video/mp4" });
     response.end("init");
@@ -319,8 +372,24 @@ async function handleUpstream(request: IncomingMessage, response: ServerResponse
     response.end("segment");
     return;
   }
+  if (url.pathname === "/segments/encrypted.ts") {
+    const cipher = createCipheriv("aes-128-cbc", aesKey(), Buffer.alloc(16));
+    response.writeHead(200, { "content-type": "video/mp2t" });
+    response.end(Buffer.concat([cipher.update(clearTsSegment()), cipher.final()]));
+    return;
+  }
   response.writeHead(404, { "content-type": "text/plain" });
   response.end("not found");
+}
+
+function aesKey(): Buffer {
+  return Buffer.alloc(16, 2);
+}
+
+function clearTsSegment(): Buffer {
+  const segment = Buffer.alloc(188 * 4, 0xff);
+  for (let offset = 0; offset < segment.length; offset += 188) segment[offset] = 0x47;
+  return segment;
 }
 
 function authorized(request: IncomingMessage): boolean {

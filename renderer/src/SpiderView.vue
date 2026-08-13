@@ -8,7 +8,6 @@ import DetailDrawer from "./DetailDrawer.vue";
 import DiagnosticPanel from "./DiagnosticPanel.vue";
 import EmbeddedPlayer from "./EmbeddedPlayer.vue";
 import ErrorState from "./ErrorState.vue";
-import FilterPanel from "./FilterPanel.vue";
 import FavoritesView from "./FavoritesView.vue";
 import FollowView from "./FollowView.vue";
 import HistoryView from "./HistoryView.vue";
@@ -24,6 +23,7 @@ import TopSearchBar from "./TopSearchBar.vue";
 import PlaybackDebugPanel from "./PlaybackDebugPanel.vue";
 import DanmakuSettingsPanel from "./DanmakuSettingsPanel.vue";
 import PushSettingsPanel from "./PushSettingsPanel.vue";
+import AndroidRuntimeStatusPanel from "./AndroidRuntimeStatusPanel.vue";
 import CastPanel from "./CastPanel.vue";
 import { PlaybackDebugTimeline } from "./playback-debug.js";
 import { displaySource } from "./safe-display.js";
@@ -58,6 +58,7 @@ const emit = defineEmits<{
   category: [];
   search: [key: string];
   detail: [vodId: string];
+  detailClose: [];
   findPlaybackSource: [];
   selectPlaybackSource: [siteKey: string, vodId: string];
   play: [lineIndex: number, episodeIndex: number, resumeMode?: HistoryResumeMode];
@@ -186,7 +187,7 @@ const view = ref<"browse" | "history" | "favorites" | "follow" | "settings" | "l
       : props.initialNavigation === "follow" ? "follow"
         : props.initialNavigation === "local" ? "local"
           : props.initialNavigation === "downloads" ? "downloads" : "browse");
-const theme = ref<"system" | "light" | "dark">(props.initialTheme ?? "light");
+const theme = ref<"system" | "light" | "dark">(props.initialTheme ?? "dark");
 const systemTheme = ref<"light" | "dark">("light");
 const debugOpen = ref(false);
 const debugVersion = ref(0);
@@ -234,6 +235,10 @@ const selectedLine = computed(() => {
 const canStart = computed(() => props.state.spider.status === "idle"
   || (props.state.spider.status === "error" && !props.state.spider.sidecarRunning));
 const activePage = computed(() => view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow" || view.value === "live" || view.value === "local" || view.value === "downloads" ? view.value : props.state.browse.page);
+const currentSourceName = computed(() => {
+  const selected = props.state.import.sites.find((site) => site.key === props.state.import.selectedSiteKey);
+  return selected?.name?.trim() || (props.state.spider.source.startsWith("inline:") ? "当前来源" : displaySource(props.state.spider.source));
+});
 const retryable = computed(() => props.state.error.error?.retryable === true);
 const hasPlayback = computed(() => props.state.detail.playbackCatalog !== null || props.state.playback.player.source !== null);
 const canSearchPlayback = computed(() => {
@@ -346,6 +351,10 @@ function playFirstEpisode(): void {
   if (line && episode) requestPlay(line.index, episode.index);
 }
 
+function selectPlaybackSource(siteKey: string, vodId: string): void {
+  emit("selectPlaybackSource", siteKey, vodId);
+}
+
 function requestPlay(lineIndex: number, episodeIndex: number): void {
   const candidate = props.state.historyResume;
   const candidateMatches = candidate !== null
@@ -418,6 +427,7 @@ function navigationFromPage(page: string): RendererNavigation {
     <AppSidebar
       :active-page="String(activePage)"
       :source="props.state.spider.source"
+      :source-name="currentSourceName"
       :status="props.state.spider.status"
       :can-start="canStart"
       :pending="props.pending !== null"
@@ -433,6 +443,7 @@ function navigationFromPage(page: string): RendererNavigation {
     <section class="workspace">
       <TopSearchBar
         :source="props.state.spider.source"
+        :source-name="currentSourceName"
         :api="props.state.spider.api"
         :pending="props.pending !== null"
         :initial-query="props.initialSearchQuery"
@@ -443,7 +454,7 @@ function navigationFromPage(page: string): RendererNavigation {
         <header class="workspace-header">
           <div>
             <span class="section-kicker">{{ view === "live" ? "直播源管理" : view === "downloads" ? "下载任务" : view === "settings" ? "工作区设置" : view === "history" ? "播放历史" : view === "favorites" ? "收藏管理" : view === "follow" ? "追更状态" : "媒体工作台" }}</span>
-            <h1>{{ view === "live" ? "直播源" : view === "downloads" ? "Downloads" : view === "settings" ? "设置" : view === "history" ? "History" : view === "favorites" ? "Favorites" : view === "follow" ? "追更" : (props.state.spider.api ? displaySource(props.state.spider.api) : "QX 影视") }}</h1>
+            <h1>{{ view === "live" ? "直播源" : view === "downloads" ? "Downloads" : view === "settings" ? "设置" : view === "history" ? "History" : view === "favorites" ? "Favorites" : view === "follow" ? "追更" : currentSourceName }}</h1>
             <p data-testid="status" class="workspace-status" :class="{ loading: props.state.browse.loading || props.pending !== null }">
               {{ statusLabels[props.state.spider.status] }}{{ props.state.browse.loading || props.pending !== null ? " · 加载中" : "" }}
             </p>
@@ -458,6 +469,7 @@ function navigationFromPage(page: string): RendererNavigation {
         <SourceSwitcher
           v-if="view !== 'live' && view !== 'local' && view !== 'downloads'"
           :source="props.state.spider.source"
+          :source-name="currentSourceName"
           :api="props.state.spider.api"
           :status="props.state.spider.status"
           :pending="props.pending !== null"
@@ -535,11 +547,12 @@ function navigationFromPage(page: string): RendererNavigation {
           />
         </template>
         <template v-else-if="view === 'settings'">
+          <AndroidRuntimeStatusPanel />
           <SettingsSection title="来源管理" description="管理已导入的来源和当前连接状态。">
-            <div class="settings-row"><span>当前来源</span><strong>{{ displaySource(props.state.spider.source) }}</strong></div>
+            <div class="settings-row"><span>当前来源</span><strong>{{ currentSourceName }}</strong></div>
             <button type="button" class="button-secondary" data-action="settings-switch" @click="emit('switch')">切换来源</button>
           </SettingsSection>
-          <SettingsSection title="主题" description="默认使用浅色；选择跟随系统时只读取操作系统的明暗偏好，不保存敏感信息。">
+          <SettingsSection title="主题" description="默认使用深色；选择跟随系统时只读取操作系统的明暗偏好，不保存敏感信息。">
             <label class="settings-control">
               <span>外观模式</span>
               <select v-model="theme" data-action="theme-mode" aria-label="外观模式">
@@ -576,6 +589,7 @@ function navigationFromPage(page: string): RendererNavigation {
           <SettingsSection title="诊断与日志" description="只展示主进程返回的脱敏诊断，不在 renderer 读取日志文件或凭据。">
             <DiagnosticPanel
               :source="props.state.spider.source"
+              :source-name="currentSourceName"
               :player-status="props.state.playback.player.status"
               :code="props.state.error.error?.code ?? props.persistenceDiagnostic?.code"
               :message="props.state.error.error?.message ?? props.persistenceDiagnostic?.message"
@@ -664,7 +678,6 @@ function navigationFromPage(page: string): RendererNavigation {
 
         <template v-else>
           <CategoryTabs :active="props.state.browse.page" @select="selectCategory" />
-          <FilterPanel @clear="emit('home')" />
 
           <div v-if="props.state.error.error" data-testid="error">
             <ErrorState
@@ -681,9 +694,11 @@ function navigationFromPage(page: string): RendererNavigation {
           <MediaGrid
             :items="props.state.browse.items"
             :loading="props.state.browse.loading || props.pending !== null"
+            :page="props.state.browse.page"
             :playing-id="props.state.detail.detail?.vod_id ? String(props.state.detail.detail.vod_id) : null"
             @detail="emit('detail', $event)"
             @home="emit('home')"
+            @clear-search="navigate('home')"
           />
 
           <DetailDrawer
@@ -699,10 +714,11 @@ function navigationFromPage(page: string): RendererNavigation {
             :can-search-playback="canSearchPlayback"
             :playback-sources="props.state.playbackSources"
             :playback-source-pending="props.pending === 'playback-source-search' || props.pending === 'playback-source-select'"
-            @close="emit('home')"
+            :source-name="currentSourceName"
+            @close="emit('detailClose')"
             @play="playFirstEpisode"
             @find-playback-source="emit('findPlaybackSource')"
-            @select-playback-source="emit('selectPlaybackSource', $event[0], $event[1])"
+            @select-playback-source="selectPlaybackSource"
             @favorite-toggle="emit('favoriteToggle')"
             @favorite-move="emit('favoriteMoveDetail', $event)"
             @follow-toggle="emit('followToggle')"
@@ -733,7 +749,7 @@ function navigationFromPage(page: string): RendererNavigation {
               :retryable="retryable"
               @line="emit('line', $event)"
               @order="emit('order', $event)"
-              @episode="requestPlay($event[0], $event[1])"
+              @episode="requestPlay"
               @retry="emit('retry')"
             />
             <template v-if="playerDetached">
@@ -767,6 +783,7 @@ function navigationFromPage(page: string): RendererNavigation {
             />
             <DiagnosticPanel
               :source="props.state.spider.source"
+              :source-name="currentSourceName"
               :player-status="props.state.playback.player.status"
               :code="props.state.error.error?.code"
               :error="props.state.error.error ?? undefined"

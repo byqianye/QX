@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import type { ParseUiState } from "./parse-chain.js";
 import type { SubtitleTrack } from "../subtitles.js";
+import type { ResolvedMediaType } from "./media-resolver.js";
 
 export type PlaybackStatus =
   | "idle"
@@ -11,6 +13,31 @@ export type PlaybackStatus =
   | "stopped"
   | "error";
 
+export type PlaybackTraceStage =
+  | "SOURCE"
+  | "DETAIL"
+  | "EPISODE"
+  | "PLAYER_CONTENT"
+  | "MEDIA_RESOLVE"
+  | "PROXY_START"
+  | "MANIFEST"
+  | "VARIANT"
+  | "SEGMENT"
+  | "DECODER"
+  | "PLAYING";
+
+export interface PlaybackTraceEvent {
+  stage: PlaybackTraceStage;
+  at: number;
+  error?: string;
+}
+
+export interface PlaybackTrace {
+  id: string;
+  stages: readonly PlaybackTraceEvent[];
+  errorStage?: PlaybackTraceStage;
+}
+
 export interface PlaybackSource {
   parse: number;
   url: string;
@@ -20,6 +47,7 @@ export interface PlaybackSource {
   format?: string;
   flag?: string;
   jxFrom?: string;
+  mediaType?: ResolvedMediaType;
   subtitles?: readonly SubtitleTrack[];
 }
 
@@ -53,6 +81,7 @@ export interface PlaybackMediaEvent {
   code?: string;
   reason?: string;
   status?: number;
+  stage?: PlaybackTraceStage;
 }
 
 export interface PlaybackState {
@@ -64,6 +93,7 @@ export interface PlaybackState {
   muted: boolean;
   fullscreen: boolean;
   error: PlaybackError | null;
+  trace: PlaybackTrace | null;
   parse?: ParseUiState;
 }
 
@@ -76,6 +106,7 @@ export interface PlaybackMediaSync {
   muted?: boolean;
   error?: PlaybackError;
   event?: PlaybackMediaEvent;
+  stage?: PlaybackTraceStage;
 }
 
 const INITIAL_STATE: PlaybackState = {
@@ -87,6 +118,7 @@ const INITIAL_STATE: PlaybackState = {
   muted: false,
   fullscreen: false,
   error: null,
+  trace: null,
 };
 
 export class EmbeddedPlaybackController {
@@ -103,6 +135,10 @@ export class EmbeddedPlaybackController {
       volume: this.stateValue.volume,
       muted: this.stateValue.muted,
       fullscreen: this.stateValue.fullscreen,
+      trace: {
+        id: randomUUID(),
+        stages: [{ stage: "SOURCE", at: Date.now() }],
+      },
     };
 
     const error = validatePlaybackSource(source);
@@ -143,6 +179,7 @@ export class EmbeddedPlaybackController {
       currentTime: 0,
       duration: 0,
       error: null,
+      trace: null,
     };
     return this.state;
   }
@@ -190,9 +227,12 @@ export class EmbeddedPlaybackController {
     if (patch.currentTime !== undefined) this.seek(patch.currentTime);
     if (patch.volume !== undefined) this.setVolume(patch.volume);
     if (patch.muted !== undefined) this.setMuted(patch.muted);
+    if (patch.stage) this.recordStage(patch.stage);
+    if (patch.event?.stage) this.recordStage(patch.event.stage);
     if (patch.error) {
       this.stateValue.status = "error";
       this.stateValue.error = { ...patch.error };
+      if (patch.event?.stage) this.recordStage(patch.event.stage, patch.error.message);
     }
     if (patch.status !== undefined && patch.status !== "idle" && patch.status !== "resolving") {
       this.stateValue.status = patch.status;
@@ -202,6 +242,22 @@ export class EmbeddedPlaybackController {
 
   public markPlaying(): PlaybackState {
     return this.play();
+  }
+
+  public recordStage(stage: PlaybackTraceStage, error?: string): PlaybackState {
+    const trace = this.stateValue.trace;
+    if (!trace) return this.state;
+    const event: PlaybackTraceEvent = {
+      stage,
+      at: Date.now(),
+      ...(error ? { error: error.slice(0, 160) } : {}),
+    };
+    this.stateValue.trace = {
+      ...trace,
+      stages: [...trace.stages, event],
+      ...(error ? { errorStage: stage } : {}),
+    };
+    return this.state;
   }
 
   public markPaused(): PlaybackState {
@@ -263,6 +319,12 @@ function cloneState(state: PlaybackState): PlaybackState {
     ...state,
     source: state.source ? cloneSource(state.source) : null,
     error: state.error ? { ...state.error } : null,
+    trace: state.trace
+      ? {
+          ...state.trace,
+          stages: state.trace.stages.map((event) => ({ ...event })),
+        }
+      : null,
   };
 }
 

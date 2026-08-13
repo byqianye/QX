@@ -9,6 +9,10 @@ export const androidSpiderHostMethods = [
   "health",
   "runtimeInfo",
   "loadJar",
+  "resolveClass",
+  "setSpiderCredential",
+  "clearSpiderCredential",
+  "credentialStatus",
   "unloadJar",
   "createSpider",
   "destroySpider",
@@ -52,11 +56,67 @@ export interface AndroidSpiderBridgeClientOptions {
   siteKey?: string;
   sourceName?: string;
   artifactUrl?: string;
+  artifactRegistry?: AndroidArtifactRegistry;
+}
+
+export interface AndroidArtifactSession {
+  sha256: string;
+  jarId: string;
+  path: string;
+  artifactUrl?: string;
+  refCount: number;
+}
+
+/** Process-wide artifact registry. The Host remains authoritative after a restart. */
+export class AndroidArtifactRegistry {
+  private readonly entries = new Map<string, AndroidArtifactSession>();
+  private readonly pending = new Map<string, Promise<AndroidArtifactSession>>();
+
+  public get(sha256: string): AndroidArtifactSession | undefined {
+    return this.entries.get(sha256);
+  }
+
+  public set(session: AndroidArtifactSession): void {
+    this.entries.set(session.sha256, session);
+  }
+
+  public delete(sha256: string): void {
+    this.entries.delete(sha256);
+  }
+
+  public async load(
+    sha256: string,
+    loader: () => Promise<AndroidArtifactSession>,
+  ): Promise<{ session: AndroidArtifactSession; reused: boolean }> {
+    const existing = this.entries.get(sha256);
+    if (existing) return { session: existing, reused: true };
+    const pending = this.pending.get(sha256);
+    if (pending) return { session: await pending, reused: true };
+    const promise = loader().then((session) => {
+      this.entries.set(sha256, session);
+      return session;
+    }).finally(() => {
+      if (this.pending.get(sha256) === promise) this.pending.delete(sha256);
+    });
+    this.pending.set(sha256, promise);
+    return { session: await promise, reused: false };
+  }
+
+  public clear(): void {
+    this.entries.clear();
+  }
 }
 
 export interface AndroidSpiderBridgeRequestOptions {
   signal?: AbortSignal;
 }
+
+let nextEmergencyPort = 19_000;
+// A freshly started Android process can accept the forwarded TCP connection
+// before its RPC loop is ready to answer the first health request. Keep this
+// bounded, but cover the cold-boot window observed on the managed AVD.
+const HOST_STARTUP_ATTEMPTS = 20;
+const HOST_STARTUP_RETRY_DELAY_MS = 500;
 
 export class AndroidSpiderBridgeClientError extends Error {
   public constructor(
@@ -146,6 +206,48 @@ export class AndroidSpiderBridgeClient {
     if (!file.isFile()) throw this.error("ARTIFACT_FILE_MISSING", `Spider artifact is not a file: ${localPath}`, "loadJar", { localPath });
     const sha256 = await sha256File(localPath);
     const remotePath = `${this.options.artifactRemoteDirectory.replace(/\/+$/u, "")}/qx-spider-${sha256}.jar`;
+    const load = this.options.artifactRegistry
+      ? await this.options.artifactRegistry.load(sha256, async () => {
+        await this.options.deviceManager.push(localPath, remotePath);
+        try {
+          const result = await this.request("loadJar", {
+            sourcePath: remotePath,
+            sha256,
+            ...(artifactUrl ? { artifactUrl } : {}),
+          }) as Record<string, unknown>;
+          const remoteSha = typeof result.sha256 === "string" ? result.sha256.toLowerCase() : "";
+          if (remoteSha !== sha256) {
+            throw this.error("JAR_TRANSFER_HASH_MISMATCH", "Android Host artifact SHA-256 does not match Windows artifact", "loadJar", {
+              localPath,
+              remotePath,
+              expectedSha256: sha256,
+              actualSha256: remoteSha || "missing",
+            });
+          }
+          const jarId = typeof result.jarId === "string" ? result.jarId : "";
+          if (!jarId) throw this.error("JAR_ID_MISSING", "Android Host did not return a jarId", "loadJar", { sha256 });
+          return {
+            sha256,
+            jarId,
+            path: localPath,
+            ...(artifactUrl ? { artifactUrl } : {}),
+            refCount: 0,
+          };
+        } finally {
+          try {
+            await this.options.deviceManager.shell(["rm", "-f", remotePath]);
+          } catch {
+            // The cached copy is already private to the Host; cleanup is best effort.
+          }
+        }
+      })
+      : undefined;
+    if (load) {
+      this.session.jarParams = { sourcePath: remotePath, sha256, ...(artifactUrl ? { artifactUrl } : {}) };
+      this.session.jarLocalPath = localPath;
+      this.session.jarId = load.session.jarId;
+      return { ...load.session, cacheHit: load.reused, reused: load.reused };
+    }
     await this.options.deviceManager.push(localPath, remotePath);
     try {
       const result = await this.request("loadJar", {
@@ -174,6 +276,22 @@ export class AndroidSpiderBridgeClient {
         // The cached copy is already private to the Host; cleanup is best effort.
       }
     }
+  }
+
+  public resolveClass(api: string): Promise<Record<string, unknown>> {
+    return this.request("resolveClass", { api, ...(this.session.jarId ? { jarId: this.session.jarId } : {}) }) as Promise<Record<string, unknown>>;
+  }
+
+  public setSpiderCredential(provider: "uc", payload: string): Promise<Record<string, unknown>> {
+    return this.request("setSpiderCredential", { provider, payload }) as Promise<Record<string, unknown>>;
+  }
+
+  public clearSpiderCredential(provider: "uc" = "uc"): Promise<Record<string, unknown>> {
+    return this.request("clearSpiderCredential", { provider }) as Promise<Record<string, unknown>>;
+  }
+
+  public credentialStatus(provider: "uc" = "uc"): Promise<Record<string, unknown>> {
+    return this.request("credentialStatus", { provider }) as Promise<Record<string, unknown>>;
   }
 
   public async unloadJar(jarId = this.session.jarId ?? ""): Promise<unknown> {
@@ -273,7 +391,48 @@ export class AndroidSpiderBridgeClient {
   }
 
   public destroy(): Promise<void> {
-    return this.destroyAll();
+    return this.destroySession();
+  }
+
+  private async destroySession(): Promise<void> {
+    const spiderId = this.session.spiderId;
+    const jarId = this.session.jarId;
+    const sha256 = typeof this.session.jarParams?.sha256 === "string" ? this.session.jarParams.sha256 : undefined;
+    if (this.isConnected) {
+      try {
+        if (spiderId) await this.request("destroySpider", { spiderId }, this.options.requestTimeoutMs, false);
+        if (jarId) await this.request("unloadJar", { jarId }, this.options.requestTimeoutMs, false);
+      } catch {
+        await this.forceDestroySession(spiderId, jarId);
+      }
+    }
+    // The Host has unloaded this session's jar. Do not let the process-wide
+    // registry hand a future client a jarId that no longer exists on Host.
+    if (sha256) this.options.artifactRegistry?.delete(sha256);
+    this.session = {};
+    await this.close();
+  }
+
+  private async forceDestroySession(spiderId: string | undefined, jarId: string | undefined): Promise<void> {
+    if (!spiderId && !jarId) return;
+    const rescue = new AndroidSpiderBridgeClient({
+      deviceManager: this.options.deviceManager,
+      localPort: nextEmergencyPort++,
+      remotePort: this.options.remotePort,
+      requestTimeoutMs: this.options.requestTimeoutMs,
+      healthTimeoutMs: this.options.healthTimeoutMs,
+      operationTimeoutMs: this.options.operationTimeoutMs,
+      artifactRemoteDirectory: this.options.artifactRemoteDirectory,
+    });
+    try {
+      await rescue.connect();
+      if (spiderId) await rescue.request("destroySpider", { spiderId }, this.options.requestTimeoutMs, false);
+      if (jarId) await rescue.request("unloadJar", { jarId }, this.options.requestTimeoutMs, false);
+    } catch {
+      // The Host may be unavailable; the next health/recovery cycle owns cleanup.
+    } finally {
+      await rescue.close();
+    }
   }
 
   public search(keyword: string, quick = false, page = 1): Promise<unknown> {
@@ -316,7 +475,12 @@ export class AndroidSpiderBridgeClient {
     try {
       return await this.requestRaw(method, requestParams, timeoutMs, signal);
     } catch (error) {
-      if (!allowRecovery || !isRecoverable(error) || method === "destroyAll" || method === "destroySpider" || this.recoveryUsed) throw error;
+      if (!allowRecovery
+        || !isRecoverable(error)
+        || this.options.artifactRegistry !== undefined
+        || method === "destroyAll"
+        || method === "destroySpider"
+        || this.recoveryUsed) throw error;
       this.recoveryUsed = true;
       await this.recoverOnce(signal);
       return this.requestRaw(method, this.withSessionIds(params), timeoutMs, signal);
@@ -327,14 +491,27 @@ export class AndroidSpiderBridgeClient {
     try {
       await this.options.deviceManager.requireDevice();
       await this.options.deviceManager.forward(this.options.localPort, this.options.remotePort);
-      await this.connectTransport();
-      const health = await this.requestRaw("health", {}, this.options.healthTimeoutMs);
-      if (!isRecord(health) || (health.status !== "ok" && health.status !== "online")) {
-        throw this.error("HOST_OFFLINE", "Android Spider Host health check failed", "health", { health });
+      let lastError: unknown;
+      for (let attempt = 0; attempt < HOST_STARTUP_ATTEMPTS; attempt += 1) {
+        try {
+          await this.connectTransport();
+          const health = await this.requestRaw("health", {}, this.options.healthTimeoutMs);
+          if (!isRecord(health) || (health.status !== "ok" && health.status !== "online")) {
+            throw this.error("HOST_OFFLINE", "Android Spider Host health check failed", "health", { health });
+          }
+          this.hostAvailable = true;
+          this.recoveryUsed = false;
+          return health;
+        } catch (error) {
+          lastError = error;
+          await this.closeTransport();
+          if (!(error instanceof AndroidSpiderBridgeClientError) || error.code !== "HOST_OFFLINE" || attempt === HOST_STARTUP_ATTEMPTS - 1) {
+            throw error;
+          }
+          await delay(HOST_STARTUP_RETRY_DELAY_MS);
+        }
       }
-      this.hostAvailable = true;
-      this.recoveryUsed = false;
-      return health;
+      throw lastError ?? this.error("HOST_OFFLINE", "Android Spider Host is not reachable", "connect");
     } catch (error) {
       this.hostAvailable = false;
       await this.closeTransport();
@@ -381,6 +558,7 @@ export class AndroidSpiderBridgeClient {
     throwIfAborted(signal, "recover");
     await this.closeTransport();
     try {
+      this.options.artifactRegistry?.clear();
       await this.options.deviceManager.stopHost();
     } catch {
       // The process may already be dead.
@@ -590,4 +768,8 @@ function isManagerError(error: unknown): error is Error & { code: string } {
 
 function isRecord(value: unknown): value is Record<string, any> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

@@ -12,7 +12,6 @@ import {
   type RuntimeSupport,
   type SpiderRuntimeKind,
 } from "./runtime-types.js";
-import { isValidatedAndroidDexSite } from "./android-dex-runtime.js";
 
 export interface SpiderRuntimeDetectorOptions {
   nativeRegistry?: NativeSpiderRegistry;
@@ -113,22 +112,20 @@ export class SpiderRuntimeDetector {
           }), artifact.inspection, artifact.path, artifact.artifactUrl ?? resolved.jarUrl);
         }
         if (artifact.inspection?.runtimeRequirement === "android-dex") {
-          return isValidatedAndroidDexSite(site)
-            ? supported("android-dex", "android_dex_runtime_supported", runtimeCapabilities("jvm", {
-                home: false,
-                category: false,
-                search: true,
-                detail: true,
-                player: true,
-              }), artifact.inspection, artifact.path, artifact.artifactUrl ?? resolved.jarUrl)
-            : unsupported("android-dex", "android_dex_runtime_not_available", undefined, artifact.inspection, artifact.path, artifact.artifactUrl ?? resolved.jarUrl);
+          return supported("android-dex", "android_dex_artifact_ready", runtimeCapabilities("android-dex", {
+            home: false,
+            category: false,
+            search: true,
+            detail: true,
+            player: true,
+          }), artifact.inspection, artifact.path, artifact.artifactUrl ?? resolved.jarUrl);
         }
         if (artifact.inspection?.runtimeRequirement === "mixed") {
           return unsupported("android-dex", "mixed_spider_runtime_not_available", undefined, artifact.inspection, artifact.path, artifact.artifactUrl ?? resolved.jarUrl);
         }
         return unsupported("unsupported", "unsupported_site_type", undefined, artifact.inspection, artifact.path, artifact.artifactUrl ?? resolved.jarUrl);
       }
-      return unsupported("android-dex", "android_dex_runtime_not_available");
+      return unsupported("android-dex", "android_dex_artifact_missing");
     }
     return unsupported("unsupported", "unsupported_site_type");
   }

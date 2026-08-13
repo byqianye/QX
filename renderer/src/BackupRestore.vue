@@ -2,6 +2,7 @@
 import { ref } from "vue";
 
 import type { BackupUiState } from "../../src/backup-types.js";
+import ConfirmDialog from "./ConfirmDialog.vue";
 
 const props = defineProps<{
   state: BackupUiState;
@@ -17,6 +18,7 @@ const emit = defineEmits<{
 }>();
 
 const includeCache = ref(false);
+const restoreConfirmOpen = ref(false);
 
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
@@ -26,7 +28,11 @@ function formatBytes(value: number): string {
 }
 
 function confirmRestore(): void {
-  if (typeof window !== "undefined" && !window.confirm("Replace current data with this backup? The app will restart.")) return;
+  restoreConfirmOpen.value = true;
+}
+
+function applyRestore(): void {
+  restoreConfirmOpen.value = false;
   emit("apply");
 }
 
@@ -67,4 +73,13 @@ function labelCompatibility(value: BackupUiState["preview"] extends infer T ? T 
     </div>
     <p v-if="props.state.error" class="error-text">{{ props.state.error.code }}: {{ props.state.error.message }}</p>
   </section>
+  <ConfirmDialog
+    v-if="restoreConfirmOpen"
+    title="Replace current data"
+    message="The app will restart after the selected backup replaces the current data."
+    confirm-label="Replace and restart"
+    danger
+    @cancel="restoreConfirmOpen = false"
+    @confirm="applyRestore"
+  />
 </template>

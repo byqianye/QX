@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-08T14:18:47.609Z",
+  "generatedAt": "2026-08-12T11:10:48.724Z",
   "sourceUrl": "http://xn--z7x900a.net/",
   "sites": [
     {
@@ -30,14 +30,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": false,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -49,14 +49,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -79,14 +79,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -112,14 +112,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -145,14 +145,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -165,14 +165,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -185,14 +185,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -205,14 +205,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -225,14 +225,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -245,14 +245,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -265,14 +265,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -285,14 +285,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -305,14 +305,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -325,14 +325,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -344,14 +344,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -364,14 +364,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -384,14 +384,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -404,14 +404,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -423,14 +423,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -443,14 +443,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -462,14 +462,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -485,14 +485,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -505,14 +505,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -525,14 +525,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -545,14 +545,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -564,14 +564,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": false,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -591,14 +591,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -614,14 +614,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -633,14 +633,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -652,14 +652,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": false,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -672,14 +672,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -692,14 +692,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -735,14 +735,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -758,14 +758,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -781,14 +781,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -804,14 +804,14 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": true,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     },
     {
@@ -824,22 +824,22 @@
       "jarUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
       "runtime": "android-dex",
       "searchable": false,
-      "supported": false,
-      "reason": "android_dex_runtime_not_available",
+      "supported": true,
+      "reason": "android_dex_artifact_ready",
       "capabilities": {
         "home": false,
         "category": false,
-        "search": false,
-        "detail": false,
-        "player": false
+        "search": true,
+        "detail": true,
+        "player": true
       }
     }
   ],
   "summary": {
     "totalSites": 39,
     "searchableSites": 33,
-    "supportedSites": 2,
-    "searchableSupportedSites": 0,
+    "supportedSites": 39,
+    "searchableSupportedSites": 33,
     "runtimeCounts": {
       "cms-json": 0,
       "cms-xml": 0,
@@ -850,9 +850,7 @@
       "python": 0,
       "unknown": 0
     },
-    "unsupportedReasons": {
-      "android_dex_runtime_not_available": 37
-    }
+    "unsupportedReasons": {}
   },
   "artifacts": [
     {

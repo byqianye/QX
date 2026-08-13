@@ -10,6 +10,42 @@ function vod(values: Record<string, unknown>): Vod {
 }
 
 describe("PlaybackSourceResolver", () => {
+  it("retries a transient Android Spider failure before marking the site failed", async () => {
+    let attempts = 0;
+    const resolver = new PlaybackSourceResolver();
+    const result = await resolver.resolve(vod({ vod_name: "庆余年", vod_year: "2019" }), [{
+      siteKey: "jianpian",
+      siteName: "Jianpian",
+      runtime: "android-dex",
+      capabilities: { search: true, detail: true },
+    }], {
+      engineFactory: {
+        create: () => ({
+          init: async () => undefined,
+          search: async () => {
+            attempts += 1;
+            if (attempts === 1) {
+              throw new Error("Attempt to invoke virtual method 'com.google.gson.JsonObject com.google.gson.JsonObject.getAsJsonObject(java.lang.String)' on a null object reference");
+            }
+            return [vod({ vod_id: "54437", vod_name: "庆余年", vod_year: "2019" })];
+          },
+          detail: async () => vod({
+            vod_id: "54437",
+            vod_name: "庆余年",
+            vod_year: "2019",
+            vod_play_from: "线路",
+            vod_play_url: "第01集$https://media.example.invalid/episode.m3u8",
+          }),
+        }),
+      },
+    });
+
+    expect(attempts).toBe(2);
+    expect(result.successfulSites).toEqual(["jianpian"]);
+    expect(result.failedSites).toEqual([]);
+    expect(result.candidates).toHaveLength(1);
+  });
+
   it("filters the current and non-searchable sites and confirms playback via detail", async () => {
     const calls: string[] = [];
     const candidate = vod({
@@ -63,6 +99,52 @@ describe("PlaybackSourceResolver", () => {
     );
 
     expect(result.candidates).toEqual([]);
+  });
+
+  it("allows a real source to omit a season suffix from the title", async () => {
+    const result = await new PlaybackSourceResolver().resolve(
+      vod({ vod_id: "meta-1", vod_name: "庆余年 第一季" }),
+      [site(
+        "playable",
+        false,
+        true,
+        async () => [vod({ vod_id: "play-1", vod_name: "庆余年" })],
+        async () => vod({
+          vod_id: "play-1",
+          vod_name: "庆余年",
+          vod_play_from: "荐片",
+          vod_play_url: "第一集$https://media.example.invalid/episode-1.m3u8",
+        }),
+      )],
+    );
+
+    expect(result.candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ siteKey: "playable", playable: true }),
+    ]));
+  });
+
+  it("allows exact-title search results to be verified by detail metadata", async () => {
+    const result = await new PlaybackSourceResolver().resolve(
+      vod({ vod_id: "meta-1", vod_name: "仅详情补充元数据" }),
+      [site(
+        "playable",
+        false,
+        true,
+        async () => [vod({ vod_id: "play-1", vod_name: "仅详情补充元数据" })],
+        async () => vod({
+          vod_id: "play-1",
+          vod_name: "仅详情补充元数据",
+          vod_year: "2024",
+          type_name: "剧情",
+          vod_play_from: "主线",
+          vod_play_url: "第一集$episode-1",
+        }),
+      )],
+    );
+
+    expect(result.candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ siteKey: "playable", playable: true }),
+    ]));
   });
 
   it("keeps one failing site from aborting other sites and caps workers at five", async () => {
@@ -223,6 +305,78 @@ describe("PlaybackSourceResolver", () => {
     expect(calls).toEqual(["init:lazy-ext", "search", "detail"]);
   });
 
+  it("limits initialization separately from search workers", async () => {
+    let activeInit = 0;
+    let maximumInit = 0;
+    const candidate = vod({
+      vod_id: "init-1",
+      vod_name: "初始化并发",
+      vod_year: "2026",
+      type_name: "剧情",
+    });
+    const result = await new PlaybackSourceResolver().resolve(
+      vod({
+        vod_id: "meta-1",
+        vod_name: "初始化并发",
+        vod_year: "2026",
+        type_name: "剧情",
+      }),
+      Array.from({ length: 6 }, (_, index) => ({
+        siteKey: `init-${index}`,
+        siteName: `Init ${index}`,
+        supported: true,
+      })),
+      {
+        concurrency: 4,
+        initConcurrency: 2,
+        globalTimeoutMs: 500,
+        engineFactory: {
+          create: () => ({
+            init: async () => {
+              activeInit += 1;
+              maximumInit = Math.max(maximumInit, activeInit);
+              await new Promise((resolve) => setTimeout(resolve, 10));
+              activeInit -= 1;
+            },
+            search: async () => [candidate],
+            detail: async () => candidate,
+          }),
+        },
+      },
+    );
+
+    expect(maximumInit).toBeLessThanOrEqual(2);
+    expect(result.diagnostics.searchSuccessSites).toHaveLength(6);
+  });
+
+  it("preserves candidates from workers that finish after the global stop signal", async () => {
+    const candidate = vod({
+      vod_id: "late-1",
+      vod_name: "全局超时保留",
+      vod_year: "2026",
+      type_name: "剧情",
+      vod_play_from: "线路",
+      vod_play_url: "正片$https://media.example.invalid/late.m3u8",
+    });
+    const result = await new PlaybackSourceResolver().resolve(
+      vod({
+        vod_id: "meta-1",
+        vod_name: "全局超时保留",
+        vod_year: "2026",
+        type_name: "剧情",
+      }),
+      [site("late", false, true, async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return [candidate];
+      }, async () => candidate)],
+      { perSiteTimeoutMs: 100, globalTimeoutMs: 5 },
+    );
+
+    expect(result.candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ siteKey: "late", playable: true }),
+    ]));
+  });
+
   it("records unsupported type 3 runtime without stopping supported sites", async () => {
     const candidate = vod({ vod_id: "supported-1", vod_name: "跨运行时", vod_year: "2026", type_name: "剧情" });
     const result = await new PlaybackSourceResolver().resolve(
@@ -293,6 +447,30 @@ describe("PlaybackSourceResolver", () => {
     expect(normalizeVodTitle(" 蜘蛛侠：崭新之日 ")).toBe(normalizeVodTitle("蜘蛛侠:崭新之日"));
     expect(normalizeVodTitle("Tom &amp; Jerry")).toBe("tom&jerry");
     expect(normalizeVodTitle("蜘蛛侠：崭新之日")).not.toBe(normalizeVodTitle("蜘蛛侠崭新之日特别篇"));
+  });
+  it("publishes Tier A before ranked Tier B sources complete", async () => {
+    const candidate = vod({ vod_id: "progressive-1", vod_name: "Progressive", vod_year: "2026" });
+    const tiers: Array<{ tier: string; searched: number }> = [];
+    const sites = Array.from({ length: 8 }, (_, index) => ({
+      ...site(`progressive-${index}`, false, true, async () => [candidate]),
+      compatibilityStatus: index === 0 ? "FULLY_PLAYABLE" as const : "SEARCH_ONLY" as const,
+      healthScore: 100 - index,
+    }));
+
+    const result = await new PlaybackSourceResolver().resolve(
+      candidate,
+      sites,
+      {
+        globalTimeoutMs: 2_000,
+        progressive: {
+          tierASize: 6,
+          onTier: (resolution, tier) => { tiers.push({ tier, searched: resolution.searchedSites.length }); },
+        },
+      },
+    );
+
+    expect(tiers).toEqual([{ tier: "A", searched: 6 }, { tier: "B", searched: 8 }]);
+    expect(result.searchedSites).toHaveLength(8);
   });
 });
 

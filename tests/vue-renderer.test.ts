@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { h, nextTick, ref } from "vue";
+import Hls from "hls.js";
 
 import type { DesktopSpiderSessionPort, DesktopSpiderView } from "../src/desktop/spider-ui.js";
 import {
@@ -16,6 +18,7 @@ import {
   applyRendererEnvelope,
   createRendererState,
   type RendererEnvelope,
+  type PlayerState,
 } from "../renderer/src/state.js";
 import App from "../renderer/src/App.vue";
 import CategoryTabs from "../renderer/src/CategoryTabs.vue";
@@ -23,9 +26,12 @@ import EmbeddedPlayer from "../renderer/src/EmbeddedPlayer.vue";
 import CastPanel from "../renderer/src/CastPanel.vue";
 import MediaCard from "../renderer/src/MediaCard.vue";
 import DetailDrawer from "../renderer/src/DetailDrawer.vue";
+import ConfirmDialog from "../renderer/src/ConfirmDialog.vue";
 import PlaybackSelector from "../renderer/src/PlaybackSelector.vue";
 import PlayerWindow from "../renderer/src/PlayerWindow.vue";
 import SpiderView from "../renderer/src/SpiderView.vue";
+import SourceSwitcher from "../renderer/src/SourceSwitcher.vue";
+import TopSearchBar from "../renderer/src/TopSearchBar.vue";
 import { displaySource } from "../renderer/src/safe-display.js";
 import LiveSourcesView from "../renderer/src/LiveSourcesView.vue";
 import { EMPTY_LIVE_UI_STATE, type LiveUiState } from "../src/live/live-types.js";
@@ -303,6 +309,73 @@ describe("Vue renderer", () => {
     expect(displaySource("inline:fixture")).toBe("inline:fixture");
   });
 
+  it("keeps search empty state actionable and renders the configured site name", async () => {
+    const state = createRendererState();
+    state.ready = true;
+    state.import.status = "ready";
+    state.import.sessionReady = true;
+    state.import.selectedSiteKey = "douban";
+    state.import.sites = [{ key: "douban", name: "豆瓣影视", api: "csp_Douban" }];
+    state.spider.source = "inline:fixture";
+    state.spider.api = "csp_Douban";
+    state.spider.status = "ready";
+    state.browse.page = "search";
+    state.browse.items = [];
+
+    const wrapper = mount(SpiderView, {
+      props: { state, pending: null, lineIndex: 0, order: "forward" },
+    });
+
+    expect(wrapper.get('[data-testid="source-switcher"]').text()).toContain("豆瓣影视");
+    expect(wrapper.get('[data-testid="app-sidebar"]').text()).toContain("豆瓣影视");
+    expect(wrapper.get(".workspace-header h1").text()).toBe("豆瓣影视");
+    expect(wrapper.text()).not.toContain("csp_Douban");
+    expect(wrapper.get('[data-testid="empty-state"]').text()).toContain("没有找到匹配内容");
+    expect(wrapper.get('[data-testid="empty-state"] .button-secondary').text()).toBe("清除搜索");
+    await wrapper.get('[data-testid="empty-state"] .button-secondary').trigger("click");
+    expect(wrapper.emitted("home")).toHaveLength(1);
+    wrapper.unmount();
+  });
+
+  it("keeps internal source API keys out of user-facing source context", () => {
+    const topSearch = mount(TopSearchBar, {
+      props: { source: "inline:fixture", sourceName: "豆瓣影视", api: "csp_Douban", pending: false },
+    });
+    const switcher = mount(SourceSwitcher, {
+      props: { source: "inline:fixture", sourceName: "豆瓣影视", api: "csp_Douban", status: "ready", pending: false },
+    });
+
+    expect(topSearch.get('[data-testid="source-context"]').text()).toBe("来源豆瓣影视");
+    expect(switcher.get('[data-testid="source-switcher"]').text()).not.toContain("csp_Douban");
+
+    topSearch.unmount();
+    switcher.unmount();
+  });
+
+  it("traps focus in ConfirmDialog and restores the triggering focus", async () => {
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    trigger.focus();
+    const dialog = mount(ConfirmDialog, {
+      attachTo: document.body,
+      props: { title: "删除来源", message: "确认删除吗？", danger: true },
+    });
+    await nextTick();
+    const buttons = dialog.findAll("button");
+    expect(document.activeElement).toBe(buttons[0]!.element);
+
+    buttons[1]!.element.focus();
+    await buttons[1]!.trigger("keydown", { key: "Tab" });
+    expect(document.activeElement).toBe(buttons[0]!.element);
+    buttons[0]!.element.focus();
+    await buttons[0]!.trigger("keydown", { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(buttons[1]!.element);
+
+    dialog.unmount();
+    expect(document.activeElement).toBe(trigger);
+    trigger.remove();
+  });
+
   it("mounts the import/trust flow and switches to the Spider renderer", async () => {
     const ready = readyEnvelope();
     const responses: RendererEnvelope[] = [
@@ -377,7 +450,7 @@ describe("Vue renderer", () => {
     expect(wrapper.get('[data-testid="vue-renderer"]').attributes("data-theme")).toBe("dark");
     expect(wrapper.get('[data-testid="desktop-spider-ui"]').attributes("data-theme")).toBe("dark");
     await vi.waitFor(() => expect(wrapper.find('[data-testid="epg-sources"]').exists()).toBe(true));
-    expect(wrapper.findAll('[data-testid="settings-section"]')).toHaveLength(7);
+    expect(wrapper.findAll('[data-testid="settings-section"]')).toHaveLength(8);
     expect(wrapper.get('[data-testid="about-panel"]')).toBeTruthy();
     expect(wrapper.get('[data-testid="cache-management"]')).toBeTruthy();
     expect(wrapper.get('[data-testid="storage-management"]')).toBeTruthy();
@@ -391,10 +464,11 @@ describe("Vue renderer", () => {
     await flushPromises();
     await wrapper.get('[data-action="cache-clear-all"]').trigger("click");
     await flushPromises();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     await wrapper.get('[data-action="storage-open"]').trigger("click");
     await flushPromises();
     await wrapper.get('[data-action="storage-switch-portable"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[role="dialog"] .button-primary').trigger("click");
     await flushPromises();
     expect(fetchMock).toHaveBeenCalledWith("/api/cache/refresh", expect.objectContaining({ method: "POST" }));
     expect(fetchMock).toHaveBeenCalledWith("/api/cache/clear", expect.objectContaining({
@@ -568,6 +642,75 @@ describe("Vue renderer", () => {
     expect(player.get('[data-action="player-mute"]').text()).toContain("取消静音");
     player.unmount();
     selector.unmount();
+  });
+
+  it("loads a playback source when the player was mounted before source resolution", async () => {
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "canPlayType").mockReturnValue("");
+    const state = ref<PlayerState>({
+      status: "idle",
+      source: null,
+      currentTime: 0,
+      duration: 0,
+      volume: 1,
+      muted: false,
+      fullscreen: false,
+      error: null,
+    });
+    const player = mount({
+      setup: () => () => h(EmbeddedPlayer, { state: state.value }),
+    });
+
+    expect(player.find('[data-testid="embedded-player"]').exists()).toBe(false);
+    state.value = {
+      status: "loading",
+      source: { parse: 0, url: "http://127.0.0.1/video.mp4", headers: {} },
+      currentTime: 0,
+      duration: 0,
+      volume: 1,
+      muted: false,
+      fullscreen: false,
+      error: null,
+    };
+    await nextTick();
+    await flushPromises();
+
+    const video = player.get<HTMLVideoElement>('[data-testid="embedded-player"]');
+    expect(video.element.getAttribute("src")).toBe("http://127.0.0.1/video.mp4");
+    player.unmount();
+  });
+
+  it("uses Hls.js for HLS sources when native canPlayType reports maybe", async () => {
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "canPlayType").mockReturnValue("maybe");
+    vi.spyOn(Hls, "isSupported").mockReturnValue(true);
+    const loadSource = vi.spyOn(Hls.prototype, "loadSource").mockImplementation(() => undefined);
+    const attachMedia = vi.spyOn(Hls.prototype, "attachMedia").mockImplementation(() => undefined);
+    const player = mount(EmbeddedPlayer, {
+      props: {
+        state: {
+          status: "loading",
+          source: { parse: 0, url: "http://127.0.0.1:43123/video.m3u8", headers: {}, mediaType: "hls" },
+          currentTime: 0,
+          duration: 0,
+          volume: 1,
+          muted: false,
+          fullscreen: false,
+          error: null,
+        },
+      },
+    });
+    await nextTick();
+    await flushPromises();
+
+    const video = player.get<HTMLVideoElement>("[data-testid=embedded-player]");
+    expect(loadSource).toHaveBeenCalledWith("http://127.0.0.1:43123/video.m3u8");
+    expect(attachMedia).toHaveBeenCalledWith(video.element);
+    expect(video.element.crossOrigin).toBe("anonymous");
+    expect(video.element.getAttribute("src")).toBeNull();
+    player.unmount();
   });
 
   it("moves the single player host without leaving an embedded video behind", async () => {
@@ -831,7 +974,7 @@ describe("Vue renderer", () => {
     expect(wrapper.findAll('[data-od-id]').length).toBeGreaterThan(10);
     expect(wrapper.find('[data-play-url]').exists()).toBe(false);
     expect(wrapper.findAll('[data-diagnostic-step]').length).toBeGreaterThan(0);
-    expect(wrapper.findAll('[data-action$="-placeholder"]')).toHaveLength(1);
+    expect(wrapper.findAll('[data-action$="-placeholder"]')).toHaveLength(0);
     expect(wrapper.get('[data-action="live-sources"]')).toBeTruthy();
     expect(wrapper.get('[data-action="history"]')).toBeTruthy();
     expect(wrapper.get('[data-action="favorites"]')).toBeTruthy();

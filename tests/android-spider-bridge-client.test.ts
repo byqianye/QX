@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 
 import { AndroidDeviceManagerError, type AndroidDeviceManagerPort } from "../src/spider/android-device-manager.js";
-import { AndroidSpiderBridgeClient, type AndroidSpiderHostMethod } from "../src/spider/android-spider-bridge-client.js";
+import { AndroidArtifactRegistry, AndroidSpiderBridgeClient, type AndroidSpiderHostMethod } from "../src/spider/android-spider-bridge-client.js";
 
 class FakeDeviceManager implements AndroidDeviceManagerPort {
   public readonly pushed: string[] = [];
@@ -15,14 +15,14 @@ class FakeDeviceManager implements AndroidDeviceManagerPort {
   public stopped = 0;
   public removedForwards = 0;
 
-  public constructor(private readonly available = true) {}
+  public constructor(private readonly available = true, private readonly afterForward?: () => void) {}
 
   public async requireDevice() {
     if (!this.available) throw new AndroidDeviceManagerError("ANDROID_DEVICE_NOT_FOUND", "No device");
     return { serial: "emulator-5554", state: "device" } as const;
   }
 
-  public async forward() {}
+  public async forward() { this.afterForward?.(); }
   public async removeForward() { this.removedForwards += 1; }
   public async install() {}
   public async startHost() { this.started += 1; }
@@ -59,6 +59,44 @@ describe("AndroidSpiderBridgeClient", () => {
     const manager = new FakeDeviceManager();
     const client = new AndroidSpiderBridgeClient({ deviceManager: manager, localPort: unusedPort(), remotePort: unusedPort() });
     await expect(client.connect()).rejects.toMatchObject({ code: "HOST_OFFLINE" });
+  }, 15_000);
+
+  it("waits briefly for a Host socket that is still starting", async () => {
+    const server = await createDelayedServer((request, socket) => {
+      if (request.method === "health") respond(socket, request.id, { status: "ok" });
+    }, 40);
+    const manager = new FakeDeviceManager(true, () => server.start());
+    const client = new AndroidSpiderBridgeClient({
+      deviceManager: manager,
+      localPort: server.port,
+      remotePort: server.port,
+      healthTimeoutMs: 100,
+    });
+    try {
+      await expect(client.connect()).resolves.toMatchObject({ status: "ok" });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("waits through a cold Host response window after the socket is forwarded", async () => {
+    const server = await createDelayedServer((request, socket) => {
+      if (request.method === "health") respond(socket, request.id, { status: "ok" });
+    }, 2_500);
+    const manager = new FakeDeviceManager(true, () => server.start());
+    const client = new AndroidSpiderBridgeClient({
+      deviceManager: manager,
+      localPort: server.port,
+      remotePort: server.port,
+      healthTimeoutMs: 100,
+    });
+    try {
+      await expect(client.connect()).resolves.toMatchObject({ status: "ok" });
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 
   it("times out and allows only one bounded recovery attempt", async () => {
@@ -137,6 +175,80 @@ describe("AndroidSpiderBridgeClient", () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  it("reuses a verified artifact session without pushing the JAR again", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "qx-android-client-registry-"));
+    const artifact = join(directory, "spider.jar");
+    writeFileSync(artifact, Buffer.from("shared-artifact"));
+    const registry = new AndroidArtifactRegistry();
+    const server = await createServer((request, socket) => {
+      if (request.method === "health") respond(socket, request.id, { status: "ok" });
+      if (request.method === "loadJar") respond(socket, request.id, {
+        jarId: "shared-jar",
+        sha256: request.params.sha256,
+        refCount: 0,
+      });
+    });
+    const firstManager = new FakeDeviceManager();
+    const secondManager = new FakeDeviceManager();
+    const first = new AndroidSpiderBridgeClient({
+      deviceManager: firstManager,
+      localPort: server.port,
+      remotePort: server.port,
+      artifactRegistry: registry,
+    });
+    const second = new AndroidSpiderBridgeClient({
+      deviceManager: secondManager,
+      localPort: server.port,
+      remotePort: server.port,
+      artifactRegistry: registry,
+    });
+    try {
+      await first.connect();
+      await first.loadJar(artifact);
+      await second.connect();
+      const secondLoad = await second.loadJar(artifact);
+      expect(secondLoad).toMatchObject({ reused: true, cacheHit: true, jarId: "shared-jar" });
+      expect(firstManager.pushed).toHaveLength(1);
+      expect(secondManager.pushed).toHaveLength(0);
+    } finally {
+      await first.close();
+      await second.close();
+      await server.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not reuse a Host jarId after the owning client is destroyed", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "qx-android-client-registry-reset-"));
+    const artifact = join(directory, "spider.jar");
+    writeFileSync(artifact, Buffer.from("reset-artifact"));
+    const registry = new AndroidArtifactRegistry();
+    let loadCount = 0;
+    const server = await createServer((request, socket) => {
+      if (request.method === "health") respond(socket, request.id, { status: "ok" });
+      if (request.method === "loadJar") {
+        loadCount += 1;
+        respond(socket, request.id, { jarId: `jar-${loadCount}`, sha256: request.params.sha256, refCount: 0 });
+      }
+      if (request.method === "unloadJar") respond(socket, request.id, { unloaded: true });
+    });
+    const first = new AndroidSpiderBridgeClient({ deviceManager: new FakeDeviceManager(), localPort: server.port, remotePort: server.port, artifactRegistry: registry });
+    const second = new AndroidSpiderBridgeClient({ deviceManager: new FakeDeviceManager(), localPort: server.port, remotePort: server.port, artifactRegistry: registry });
+    try {
+      await first.connect();
+      await first.loadJar(artifact);
+      await first.destroy();
+      await second.connect();
+      await second.loadJar(artifact);
+      expect(loadCount).toBe(2);
+    } finally {
+      await first.close();
+      await second.close();
+      await server.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });
 
 interface TestServer {
@@ -145,7 +257,47 @@ interface TestServer {
 }
 
 async function createServer(handler: (request: { id: string; method: AndroidSpiderHostMethod; protocolVersion: number; params: Record<string, unknown> }, socket: net.Socket) => void): Promise<TestServer> {
-  const server = net.createServer((socket) => {
+  const server = createNetServer(handler);
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  return {
+    port: (server.address() as net.AddressInfo).port,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+async function createDelayedServer(
+  handler: (request: { id: string; method: AndroidSpiderHostMethod; protocolVersion: number; params: Record<string, unknown> }, socket: net.Socket) => void,
+  delayMs: number,
+): Promise<TestServer & { start(): void }> {
+  const server = createNetServer(handler);
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  const port = (server.address() as net.AddressInfo).port;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  let timer: NodeJS.Timeout | undefined;
+  return {
+    port,
+    start() {
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        server.listen(port, "127.0.0.1");
+      }, delayMs);
+    },
+    close: async () => {
+      if (timer) clearTimeout(timer);
+      if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+function createNetServer(handler: (request: { id: string; method: AndroidSpiderHostMethod; protocolVersion: number; params: Record<string, unknown> }, socket: net.Socket) => void): net.Server {
+  return net.createServer((socket) => {
     let buffer = "";
     socket.on("data", (chunk) => {
       buffer += String(chunk);
@@ -158,14 +310,6 @@ async function createServer(handler: (request: { id: string; method: AndroidSpid
       }
     });
   });
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve());
-  });
-  return {
-    port: (server.address() as net.AddressInfo).port,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
-  };
 }
 
 function respond(socket: net.Socket, id: string, result: unknown): void {

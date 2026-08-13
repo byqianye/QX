@@ -28,6 +28,22 @@ describe("embedded playback controller", () => {
       status: "loading",
       source: mp4,
     });
+    expect(player.state.trace).toMatchObject({
+      id: expect.any(String),
+      stages: [expect.objectContaining({ stage: "SOURCE" })],
+    });
+    player.recordStage("PLAYER_CONTENT");
+    player.syncMedia({
+      status: "playing",
+      stage: "DECODER",
+      event: { type: "first-frame", stage: "PLAYING" },
+    });
+    expect(player.state.trace?.stages.map((event) => event.stage)).toEqual([
+      "SOURCE",
+      "PLAYER_CONTENT",
+      "DECODER",
+      "PLAYING",
+    ]);
     expect(player.play().status).toBe("playing");
     expect(player.pause().status).toBe("paused");
     expect(player.resume().status).toBe("playing");
@@ -40,7 +56,7 @@ describe("embedded playback controller", () => {
     expect(player.setFullscreen(true).fullscreen).toBe(true);
     expect(player.markEnded().status).toBe("ended");
     expect(player.reload().status).toBe("loading");
-    expect(player.stop()).toMatchObject({ status: "stopped", source: null, currentTime: 0 });
+    expect(player.stop()).toMatchObject({ status: "stopped", source: null, currentTime: 0, trace: null });
   });
 
   it("rejects custom headers instead of silently dropping them", () => {

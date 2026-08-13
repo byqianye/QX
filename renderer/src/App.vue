@@ -28,7 +28,7 @@ const persistence = ref<RendererPersistenceState | null>(null);
 const restoreCandidate = ref<RendererPersistenceState | null>(null);
 const restored = ref(false);
 const isPlayerWindow = new URL(window.location.href).searchParams.get("player-window") === "1";
-const rendererTheme = computed<"light" | "dark">(() => persistence.value?.theme === "dark" ? "dark" : "light");
+const rendererTheme = computed<"light" | "dark">(() => persistence.value?.theme === "light" ? "light" : "dark");
 let scrollTimer: ReturnType<typeof setTimeout> | undefined;
 let playerSyncTimer: ReturnType<typeof setTimeout> | undefined;
 let liveSyncTimer: ReturnType<typeof setTimeout> | undefined;
@@ -288,6 +288,10 @@ function play(line: number, episode: number, resumeMode?: HistoryResumeMode): vo
   });
 }
 
+function selectPlaybackSource(siteKey: string, vodId: string): void {
+  post("playback-source-select", "/api/playback-sources/select", { siteKey, vodId });
+}
+
 function playLocal(itemId: string, resumeMode?: HistoryResumeMode): void {
   post("local-play", "/api/local-media/play", {
     itemId,
@@ -332,8 +336,9 @@ function playLocal(itemId: string, resumeMode?: HistoryResumeMode): void {
       @category="post('category', '/api/category', { typeId: 'hot_gaia', page: 1 })"
       @search="post('search', '/api/search', { key: $event, page: 1, quick: false })"
       @detail="post('detail', '/api/detail', { vodId: $event })"
+      @detail-close="post('detail-close', '/api/detail/close')"
       @find-playback-source="post('playback-source-search', '/api/playback-sources/search')"
-      @select-playback-source="post('playback-source-select', '/api/playback-sources/select', { siteKey: $event[0], vodId: $event[1] })"
+      @select-playback-source="selectPlaybackSource"
       @play="play"
       @retry="retryLast"
       @line="lineIndex = $event"

@@ -1,4 +1,4 @@
-export type SourceEngine = "jvm" | "quickjs" | "python" | "http" | "jellyfin" | "fixture";
+export type SourceEngine = "jvm" | "android-dex" | "quickjs" | "python" | "http" | "jellyfin" | "fixture";
 
 export interface SourceCapabilities {
   home: boolean;
@@ -41,6 +41,8 @@ export interface PlayerRequest {
   id: string;
   vipFlags?: readonly string[];
 }
+
+export type PlayableStatus = "DIRECT" | "PARSE_REQUIRED" | "AUTH_REQUIRED" | "UNSUPPORTED" | "FAILED";
 
 export interface ProxyRequest {
   url: string;
@@ -111,6 +113,8 @@ export interface PlayerResult {
   parse: number;
   url: string;
   headers: Record<string, string>;
+  status?: PlayableStatus;
+  message?: string;
   playUrl?: string;
   jx?: number;
   format?: string;
@@ -118,6 +122,13 @@ export interface PlayerResult {
   jxFrom?: string;
   subtitles?: readonly import("../subtitles.js").SubtitleTrack[];
   danmaku?: unknown;
+}
+
+export interface QxPlayerResult extends PlayerResult {
+  jx: number;
+  sourceKey: string;
+  sourceName: string;
+  episodeId: string;
 }
 
 export class MediaSourceError extends Error {

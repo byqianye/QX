@@ -3,6 +3,8 @@ import {
   MediaSourceError,
   type HomeResult,
   type PlayerResult,
+  type QxPlayerResult,
+  type PlayableStatus,
   type SourceCategory,
   type Vod,
   type VodDetail,
@@ -45,15 +47,25 @@ export function normalizeVodDetails(result: unknown): VodDetail[] {
   return listValue(raw).map(normalizeVod);
 }
 
-export function normalizePlayerResult(result: unknown): PlayerResult {
+export interface QxPlayerResultContext {
+  sourceKey: string;
+  sourceName: string;
+  episodeId: string;
+}
+
+export function normalizePlayerResult(result: unknown): PlayerResult;
+export function normalizePlayerResult(result: unknown, context: QxPlayerResultContext): QxPlayerResult;
+export function normalizePlayerResult(
+  result: unknown,
+  context?: QxPlayerResultContext,
+): PlayerResult | QxPlayerResult {
   const raw = recordResult(result, "player");
   const parse = numberValue(raw.parse);
-  const url = typeof raw.url === "string"
-    ? raw.url
-    : typeof raw.playUrl === "string"
-      ? raw.playUrl
-      : "";
-  if (parse === undefined || !/^https?:\/\//i.test(url)) {
+  const url = [raw.url, raw.playUrl, raw.link]
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+    ?.trim() ?? "";
+  const message = firstMessage(raw);
+  if (parse === undefined || (!/^https?:\/\//i.test(url) && !isAuthRequired(message))) {
     throw new MediaSourceError(
       "PLAYBACK_INVALID_RESPONSE",
       "Player result must contain a numeric parse value and an HTTP URL",
@@ -65,10 +77,17 @@ export function normalizePlayerResult(result: unknown): PlayerResult {
   const format = typeof raw.format === "string" ? raw.format : undefined;
   const flag = typeof raw.flag === "string" ? raw.flag : undefined;
   const jxFrom = typeof raw.jxFrom === "string" ? raw.jxFrom : undefined;
-  return {
-    parse,
+  const status: PlayableStatus = isAuthRequired(message)
+    ? "AUTH_REQUIRED"
+    : parse === 0
+      ? "DIRECT"
+      : "PARSE_REQUIRED";
+  const normalized = {
+    parse: parse ?? 0,
     url,
     headers: headersValue(raw.header ?? raw.headers),
+    status,
+    ...(message ? { message } : {}),
     ...(playUrl ? { playUrl } : {}),
     ...(jx === undefined ? {} : { jx }),
     ...(format ? { format } : {}),
@@ -77,6 +96,21 @@ export function normalizePlayerResult(result: unknown): PlayerResult {
     ...(subtitles.length > 0 ? { subtitles } : {}),
     ...(raw.danmaku !== undefined ? { danmaku: raw.danmaku } : {}),
   };
+  return context
+    ? { ...normalized, jx: jx ?? 0, ...context }
+    : normalized;
+}
+
+function firstMessage(raw: Record<string, unknown>): string {
+  for (const key of ["msg", "message", "errMsg", "error", "reason"]) {
+    const value = raw[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function isAuthRequired(message: string): boolean {
+  return /(\u672a\u767b\u5f55|\u767b\u5f55|token|access[_-]?token|cookie|\u914d\u7f6e\u4e2d\u5fc3|\u6388\u6743)/iu.test(message);
 }
 
 export function normalizeVod(value: unknown): VodDetail {
@@ -132,7 +166,16 @@ function headersValue(value: unknown): Record<string, string> {
     );
   }
   if (typeof value !== "string") return {};
-  return Object.fromEntries(value.split("&").flatMap((part) => {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (isRecord(parsed)) return headersValue(parsed);
+    } catch {
+      // Fall through to the legacy key=value format.
+    }
+  }
+  return Object.fromEntries(trimmed.split("&").flatMap((part) => {
     const separator = part.indexOf("=");
     if (separator <= 0) return [];
     return [[decodeURIComponent(part.slice(0, separator)), decodeURIComponent(part.slice(separator + 1))]];

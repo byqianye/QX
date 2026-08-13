@@ -17,7 +17,10 @@ describe("detachable player session", () => {
 
   it("keeps one playback session while switching hosts and syncing media state", async () => {
     const fixture = new DetachableFixtureSession();
-    const ui = new DesktopSpiderUiController({ session: fixture });
+    const ui = new DesktopSpiderUiController({
+      session: fixture,
+      playbackProxyOrigins: ["http://127.0.0.1:43123"],
+    });
 
     ui.confirmImport();
     await ui.open("playable", "fixture-endpoint");
@@ -71,7 +74,10 @@ describe("detachable player session", () => {
 
   it("exposes detach, attach, sync and stop through one server lifecycle", async () => {
     const fixture = new DetachableFixtureSession();
-    const ui = new DesktopSpiderUiController({ session: fixture });
+    const ui = new DesktopSpiderUiController({
+      session: fixture,
+      playbackProxyOrigins: ["http://127.0.0.1:43123"],
+    });
     let openCalls = 0;
     let attachCalls = 0;
     let stopCalls = 0;
@@ -79,6 +85,7 @@ describe("detachable player session", () => {
       ui,
       siteKey: "playable",
       ext: "fixture-endpoint",
+      playbackProxyOrigins: ["http://127.0.0.1:43123"],
       onPlayerOpen: () => { openCalls += 1; },
       onPlayerAttach: () => { attachCalls += 1; },
       onPlayerStop: () => { stopCalls += 1; },

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseAndroidDeviceProperties, selectAndroidDevice, type AndroidDevice } from "../src/spider/android-device-manager.js";
+import { isAndroidNetworkReachable, isAndroidNetworkValidated, parseAndroidDeviceProperties, selectAndroidDevice, type AndroidDevice } from "../src/spider/android-device-manager.js";
 
 describe("Android device selection and diagnostics", () => {
   const physical = (serial: string): AndroidDevice => ({ serial, state: "device" });
@@ -28,5 +28,13 @@ describe("Android device selection and diagnostics", () => {
       abi: "x86_64",
       bootCompleted: true,
     });
+  });
+
+  it("waits for Android connectivity validation instead of boot completion alone", () => {
+    expect(isAndroidNetworkValidated("Current Networks:\nNetworkAgentInfo{ nc{[ Capabilities: INTERNET&NOT_RESTRICTED&TRUSTED ]}}\nNat464Xlat:")).toBe(false);
+    expect(isAndroidNetworkValidated("Current Networks:\nNetworkAgentInfo{ nc{[ Capabilities: INTERNET&NOT_RESTRICTED&VALIDATED ]}}\nNat464Xlat:")).toBe(true);
+    expect(isAndroidNetworkValidated("Current Networks:\nNetworkAgentInfo{ EVER_VALIDATED ; KeepConnected : 0}\nNat464Xlat:")).toBe(false);
+    expect(isAndroidNetworkReachable("1 packets transmitted, 1 packets received, 0.0% packet loss")).toBe(true);
+    expect(isAndroidNetworkReachable("1 packets transmitted, 0 packets received, 100% packet loss")).toBe(false);
   });
 });

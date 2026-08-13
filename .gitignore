@@ -1,7 +1,9 @@
 node_modules/
 dist/
+release/
 coverage/
 verification/
+/build/android-runtime-manifest.json
 *.log
 .env
 .env.*

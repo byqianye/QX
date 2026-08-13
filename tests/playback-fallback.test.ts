@@ -13,7 +13,12 @@ describe("desktop playback health and fallback integration", () => {
 
   it("keeps a playerContent failure explainable in prompt mode and recovers after approval", async () => {
     const session = new FallbackSession();
-    const ui = new DesktopSpiderUiController({ session, playbackFallbackMode: "prompt", playbackFallbackMaxAttempts: 2 });
+    const ui = new DesktopSpiderUiController({
+      session,
+      playbackProxyOrigins: ["https://media.example.invalid"],
+      playbackFallbackMode: "prompt",
+      playbackFallbackMaxAttempts: 2,
+    });
     controllers.push(ui);
     ui.confirmImport();
     await ui.open("fixture", "fixture");
@@ -34,14 +39,19 @@ describe("desktop playback health and fallback integration", () => {
     expect(session.playerCalls).toEqual(["retryable", "retryable"]);
     expect(recovered).toMatchObject({
       error: null,
-      player: { status: "loading", source: { url: "https://media.example.invalid/recovered.m3u8" } },
+      player: { status: "loading", source: { url: expect.stringContaining("/__qx_playback/") } },
       fallback: { status: "recovered", attempts: 1 },
     });
   });
 
   it("automatically retries the current line after consecutive segment failures", async () => {
     const session = new FallbackSession();
-    const ui = new DesktopSpiderUiController({ session, playbackFallbackMode: "auto", playbackFallbackMaxAttempts: 2 });
+    const ui = new DesktopSpiderUiController({
+      session,
+      playbackProxyOrigins: ["https://media.example.invalid"],
+      playbackFallbackMode: "auto",
+      playbackFallbackMaxAttempts: 2,
+    });
     controllers.push(ui);
     ui.confirmImport();
     await ui.open("fixture", "fixture");
@@ -58,7 +68,11 @@ describe("desktop playback health and fallback integration", () => {
 
   it("does not switch on user pause, seek, or one short buffer", async () => {
     const session = new FallbackSession();
-    const ui = new DesktopSpiderUiController({ session, playbackFallbackMode: "auto" });
+    const ui = new DesktopSpiderUiController({
+      session,
+      playbackProxyOrigins: ["https://media.example.invalid"],
+      playbackFallbackMode: "auto",
+    });
     controllers.push(ui);
     ui.confirmImport();
     await ui.open("fixture", "fixture");

@@ -14,6 +14,7 @@ import {
   DesktopSpiderUiServer,
   renderDesktopSpiderUi,
 } from "../src/desktop/spider-ui.js";
+import type { PlaybackSourceResolution } from "../src/desktop/playback-source-resolver.js";
 import {
   IsolatedSniffer,
   type IsolatedSnifferPlatform,
@@ -65,9 +66,43 @@ describe("desktop Spider UI", () => {
 
     const html = renderDesktopSpiderUi(ui.state);
     expect(html).toContain('data-testid="import-warning"');
+    expect(html).toContain('data-testid="android-credentials"');
     expect(html).toContain("确认并信任");
     expect(html).toContain("Douban：无正片播放源");
     expect(html).toMatch(/data-testid="play-button"[^>]*disabled/);
+  });
+
+  it("marks a ready Android Runtime in playback-source diagnostics", async () => {
+    const fixture = new FixtureSession();
+    const ui = new DesktopSpiderUiController({ session: fixture });
+    ui.confirmImport();
+    await ui.open("douban", "fixture-endpoint");
+    await ui.detail("meta-1");
+    ui.setPlaybackSourceResolution({
+      query: "Fixture Detail",
+      searchedSites: [],
+      successfulSites: [],
+      failedSites: [],
+      diagnostics: {
+        configSiteCount: 2,
+        searchableSites: 1,
+        runtimeSupportedSites: 1,
+        runtimePreparation: "ready",
+        runtimeWaitDurationMs: 100,
+        unsupportedSiteCount: 0,
+        searchedSites: [],
+        searchSuccessSites: [],
+        searchFailedSites: [],
+        searchResultCount: 0,
+        matchedCandidateCount: 0,
+        detailSuccessCount: 0,
+        playableCandidateCount: 0,
+        sites: [],
+      },
+      candidates: [],
+    } satisfies PlaybackSourceResolution);
+
+    expect(renderDesktopSpiderUi(ui.state)).toContain('data-testid="android-runtime-ready"');
   });
 
   it("keeps the list poster when detail metadata omits the poster", async () => {
@@ -100,7 +135,10 @@ describe("desktop Spider UI", () => {
       "csp_PlayableFixture",
       true,
     );
-    const ui = new DesktopSpiderUiController({ session: fixture });
+    const ui = new DesktopSpiderUiController({
+      session: fixture,
+      playbackProxyOrigins: ["https://media.example.invalid"],
+    });
 
     ui.confirmImport();
     await ui.open("playable", "fixture-endpoint");
@@ -122,12 +160,12 @@ describe("desktop Spider UI", () => {
       player: {
         status: "loading",
         source: {
-          url: "https://media.example.invalid/fixture.m3u8",
           parse: 0,
+          mediaType: "hls",
         },
       },
     });
-    expect(renderDesktopSpiderUi(ui.state)).toContain("https://media.example.invalid/fixture.m3u8");
+    expect(ui.state.player.source?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/__qx_playback\//);
     expect(renderDesktopSpiderUi(ui.state)).toContain('data-testid="embedded-player"');
     expect(renderDesktopSpiderUi(ui.state)).not.toContain("window.open");
     expect(renderDesktopSpiderUi(ui.state)).toContain("hlsInstance.destroy");
@@ -153,7 +191,7 @@ describe("desktop Spider UI", () => {
     const fixture = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
     const ui = new DesktopSpiderUiController({
       session: fixture,
-      playbackProxyOrigins: ["http://127.0.0.1:43123"],
+      playbackProxyOrigins: ["http://127.0.0.1:43123", "https://media.example.invalid"],
     });
 
     ui.confirmImport();
@@ -182,6 +220,7 @@ describe("desktop Spider UI", () => {
     const fixture = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
     const ui = new DesktopSpiderUiController({
       session: fixture,
+      playbackProxyOrigins: ["https://media.example.invalid"],
       parserCandidates: [{
         id: "fixture-parser",
         name: "Fixture parser",
@@ -208,11 +247,12 @@ describe("desktop Spider UI", () => {
         status: "loading",
         parse: {
           status: "succeeded",
-          parserId: "fixture-parser",
+        parserId: "fixture-parser",
         },
-        source: { parse: 0, url: "https://media.example.invalid/parsed.m3u8", headers: {} },
+        source: { parse: 0, jx: 0, mediaType: "hls", headers: {} },
       },
     });
+    expect(ui.state.player.source?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/__qx_playback\//);
     expect(renderDesktopSpiderUi(ui.state)).toContain('data-testid="parser-status"');
     expect(renderDesktopSpiderUi(ui.state)).toContain('data-testid="parser-diagnostics"');
     await ui.close();
@@ -243,6 +283,7 @@ describe("desktop Spider UI", () => {
     const sniffer = new IsolatedSniffer(platform);
     const ui = new DesktopSpiderUiController({
       session: fixture,
+      playbackProxyOrigins: ["https://media.example.invalid"],
       sniffer,
       parserCandidates: [{
         id: "unavailable-parser",
@@ -274,10 +315,11 @@ describe("desktop Spider UI", () => {
         },
         source: {
           parse: 0,
-          url: "https://media.example.invalid/sniffed.m3u8",
+          mediaType: "hls",
         },
       },
     });
+    expect(ui.state.player.source?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/__qx_playback\//);
     expect(platform.policy).toMatchObject({
       contextIsolation: true,
       nodeIntegration: false,
@@ -335,7 +377,11 @@ describe("desktop Spider UI", () => {
   it("creates history only after playback sync, shows resume after restart, and seeks only after choice", async () => {
     const history = createHistoryService();
     const first = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
-    const firstUi = new DesktopSpiderUiController({ session: first, history });
+    const firstUi = new DesktopSpiderUiController({
+      session: first,
+      history,
+      playbackProxyOrigins: ["https://media.example.invalid"],
+    });
     first.confirmImport();
     await firstUi.open("playable", "fixture-endpoint");
     await firstUi.detail("fixture:movie-1");
@@ -347,7 +393,11 @@ describe("desktop Spider UI", () => {
     await firstUi.close();
 
     const second = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
-    const secondUi = new DesktopSpiderUiController({ session: second, history });
+    const secondUi = new DesktopSpiderUiController({
+      session: second,
+      history,
+      playbackProxyOrigins: ["https://media.example.invalid"],
+    });
     second.confirmImport();
     await secondUi.open("playable", "fixture-endpoint");
     await secondUi.detail("fixture:movie-1");
@@ -364,7 +414,7 @@ describe("desktop Spider UI", () => {
     const fixture = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
     const ui = new DesktopSpiderUiController({
       session: fixture,
-      playbackProxyOrigins: ["http://127.0.0.1:43123"],
+      playbackProxyOrigins: ["http://127.0.0.1:43123", "https://media.example.invalid"],
     });
 
     ui.confirmImport();
@@ -390,7 +440,10 @@ describe("desktop Spider UI", () => {
 
   it("keeps the active playback context while browsing home", async () => {
     const fixture = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
-    const ui = new DesktopSpiderUiController({ session: fixture });
+    const ui = new DesktopSpiderUiController({
+      session: fixture,
+      playbackProxyOrigins: ["https://media.example.invalid"],
+    });
 
     ui.confirmImport();
     await ui.open("playable", "fixture-endpoint");
@@ -442,6 +495,28 @@ describe("desktop Spider UI", () => {
     expect(ui.state.status).toBe("destroyed");
   });
 
+  it("closes detail back to the exact search context without another Spider request", async () => {
+    const fixture = new FixtureSession();
+    const ui = new DesktopSpiderUiController({ session: fixture });
+
+    ui.confirmImport();
+    await ui.open("douban", "fixture-endpoint");
+    await ui.search("蜘蛛侠", false, 1);
+    ui.setScrollTop(420);
+    await ui.detail("msearch:search-1");
+    expect(ui.state.page).toBe("detail");
+
+    const callsBeforeClose = fixture.calls.length;
+    const closed = ui.closeDetail();
+
+    expect(closed.page).toBe("search");
+    expect(closed.scrollTop).toBe(420);
+    expect(closed.detail).toBeNull();
+    expect(closed.items[0]?.vod_id).toBe("msearch:search-1");
+    expect(fixture.calls).toHaveLength(callsBeforeClose);
+    await ui.close();
+  });
+
   it("shows loading while a call is pending and maps timeout errors to the UI", async () => {
     const fixture = new FixtureSession();
     const ui = new DesktopSpiderUiController({ session: fixture });
@@ -488,9 +563,55 @@ describe("desktop Spider UI", () => {
     const home = await post(server.url, "/api/home");
     expect(home.state).toMatchObject({ page: "home", status: "ready" });
 
+    await post(server.url, "/api/search", { key: "蜘蛛侠", page: 1, quick: false });
+    await post(server.url, "/api/detail", { vodId: "msearch:search-1" });
+    const restored = await post(server.url, "/api/detail/close");
+    expect(restored.state).toMatchObject({ page: "search", detail: null });
+
     const closed = await post(server.url, "/api/close");
     expect(closed.state.status).toBe("destroyed");
     expect(fixture.destroyed).toBe(true);
+  });
+
+  it("exposes Android UC credential status and mutation routes without returning the token", async () => {
+    const fixture = new FixtureSession();
+    const ui = new DesktopSpiderUiController({ session: fixture });
+    let configured = false;
+    let token = "";
+    const server = new DesktopSpiderUiServer({
+      ui,
+      siteKey: "douban",
+      ext: "fixture-endpoint",
+      androidCredentials: {
+        status: async () => ({ provider: "uc", configured }),
+        setAccessToken: (value) => { token = value; configured = true; },
+        clear: () => { token = ""; configured = false; },
+      },
+    });
+    servers.push(server);
+    await server.start();
+
+    const missing = await fetch(new URL("/api/android/credentials/status", server.url));
+    expect(missing.status).toBe(200);
+    expect(await missing.json()).toEqual({ provider: "uc", configured: false });
+
+    const saved = await fetch(new URL("/api/android/credentials/set", server.url), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ accessToken: "test-access-token" }),
+    });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toEqual({ provider: "uc", configured: true });
+    expect(token).toBe("test-access-token");
+
+    const cleared = await fetch(new URL("/api/android/credentials/clear", server.url), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(cleared.status).toBe(200);
+    expect(await cleared.json()).toEqual({ provider: "uc", configured: false });
+    expect(token).toBe("");
   });
 
   it("rewrites source posters to the local image route in API state", async () => {
@@ -939,10 +1060,11 @@ class FixtureSession implements DesktopSpiderSessionPort {
         label: "Parse fixture",
         message: "parse=1 fixture",
         parse: 1,
+        jx: 1,
         url: "https://parser.example.invalid/resolve-input",
         headers: {},
       };
-      return ok({ parse: 1, url: this.view.playback.url, header: {} });
+      return ok({ parse: 1, jx: 1, url: this.view.playback.url, header: {} });
     }
     if (id === "fail") {
       return {

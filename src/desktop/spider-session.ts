@@ -16,7 +16,7 @@ import {
   type HomeResult,
   type MediaSource,
   type PlayerRequest,
-  type PlayerResult,
+  type QxPlayerResult,
   type SearchRequest,
   type SourceCapabilities,
   type SourceInitContext,
@@ -32,7 +32,7 @@ import {
 } from "../source/normalizers.js";
 import { validatePlaybackSource } from "./playback.js";
 import type { SourceHealthRegistry, HealthOperation } from "../health/source-health.js";
-import { normalizeSubtitleTracks, type SubtitleTrack } from "../subtitles.js";
+import { type SubtitleTrack } from "../subtitles.js";
 import { serializeFongMiExt } from "../config/fongmi.js";
 import { normalizeRuntimeError, runtimeErrorMessage } from "../spider/runtime-errors.js";
 
@@ -63,6 +63,9 @@ export type DesktopSpiderPlaybackState =
       format?: string;
       flag?: string;
       jxFrom?: string;
+      sourceKey?: string;
+      sourceName?: string;
+      episodeId?: string;
       subtitles?: SubtitleTrack[];
       danmaku?: unknown;
     };
@@ -189,7 +192,8 @@ export class DesktopSpiderSession implements MediaSource {
 
     const site = this.findSite(siteKey);
     const api = site.api;
-    const binding = resolveDesktopSourceBinding(this.options.config, site, this.options.source);
+    const binding = resolveDesktopSourceBinding(this.options.config, site, this.options.source)
+      ?? (this.options.createRuntime ? androidDexFallbackBinding(site) : undefined);
     if (!binding) {
       throw this.fail(
         `Unsupported desktop Spider source: ${String(api)}`,
@@ -311,8 +315,24 @@ export class DesktopSpiderSession implements MediaSource {
       : await this.invoke("player", (client) => client.playerContent(flag, id, vipFlags, timeoutMs));
     if (!response.ok) return response;
 
+    if (isAuthRequiredPlayerResult(response.result)) {
+      const authError = {
+        code: "SPIDER_AUTH_REQUIRED",
+        message: response.result.message ?? "当前来源需要配置 UC 登录信息",
+      };
+      const authResponse: SpiderResponse = { id: response.id, ok: false, error: authError };
+      this.viewState.playback = playbackUnavailableFor(authError.code, authError.message);
+      this.setRpcError(authResponse);
+      return authResponse;
+    }
+
     try {
-      const playback = playbackFrom(response.result);
+      const sourceKey = this.activeSiteKey ?? this.options.source;
+      const playback = playbackFrom(response.result, {
+        sourceKey,
+        sourceName: this.activeSiteName ?? sourceKey,
+        episodeId: id,
+      });
       const validation = validatePlaybackSource({
         parse: playback.parse,
         url: playback.url,
@@ -403,13 +423,18 @@ export class DesktopSpiderSession implements MediaSource {
     return normalizeVodDetails(unwrapSpiderResponse(await this.detailContent(ids), "detail"));
   }
 
-  public async player(request: PlayerRequest): Promise<PlayerResult> {
+  public async player(request: PlayerRequest): Promise<QxPlayerResult> {
     const response = await this.playerContent(
       request.flag,
       request.id,
       [...(request.vipFlags ?? [])],
     );
-    return normalizePlayerResult(unwrapSpiderResponse(response, "player"));
+    const sourceKey = this.activeSiteKey ?? this.options.source;
+    return normalizePlayerResult(unwrapSpiderResponse(response, "player"), {
+      sourceKey,
+      sourceName: this.activeSiteName ?? sourceKey,
+      episodeId: request.id,
+    });
   }
 
   public async destroy(): Promise<void> {
@@ -554,8 +579,30 @@ function firstSiteKey(config: TvBoxConfig): string | undefined {
   return typeof site.key === "string" && site.key.length > 0 ? site.key : site.api;
 }
 
+function androidDexFallbackBinding(site: TvBoxSite): DesktopSourceBinding | undefined {
+  if (site.type !== 3 || typeof site.api !== "string" || !/^csp_/iu.test(site.api)) return undefined;
+  return {
+    engine: "android-dex",
+    api: site.api,
+    capabilities: {
+      home: false,
+      category: false,
+      search: true,
+      detail: true,
+      playback: true,
+      localProxy: false,
+      filters: false,
+      pagination: false,
+      engine: "android-dex",
+    },
+  };
+}
+
 function playbackUnavailableFor(code: string, message: string): DesktopSpiderPlaybackState {
   if (code === "PLAYBACK_PROXY_REQUIRED") return PLAYBACK_PROXY_REQUIRED;
+  if (code === "SPIDER_AUTH_REQUIRED") {
+    return { available: false, label: "需要 UC 登录", message };
+  }
   return {
     available: false,
     label: "播放不可用",
@@ -563,33 +610,36 @@ function playbackUnavailableFor(code: string, message: string): DesktopSpiderPla
   };
 }
 
-function playbackFrom(value: unknown): Extract<DesktopSpiderPlaybackState, { available: true }> {
-  if (!isRecord(value)) throw new Error("playerContent result must be an object");
-  const parse = typeof value.parse === "number" && Number.isFinite(value.parse) ? value.parse : null;
-  const url = typeof value.url === "string"
-    ? value.url
-    : typeof value.playUrl === "string"
-      ? value.playUrl
-      : "";
-  if (parse === null || !/^https?:\/\//i.test(url)) {
-    throw new Error("playerContent result must contain numeric parse and an HTTP URL");
-  }
+function isAuthRequiredPlayerResult(value: unknown): value is { status: "AUTH_REQUIRED"; message?: string } {
+  return isRecord(value) && value.status === "AUTH_REQUIRED";
+}
+
+function playbackFrom(
+  value: unknown,
+  context?: { sourceKey: string; sourceName: string; episodeId: string },
+): Extract<DesktopSpiderPlaybackState, { available: true }> {
+  const normalized = normalizePlayerResult(value, context ?? {
+    sourceKey: "",
+    sourceName: "",
+    episodeId: "",
+  });
   return {
     available: true,
     label: "Playable source",
     message: "Direct playback URL resolved",
-    parse,
-    url,
-    headers: playbackHeaders(value.header ?? value.headers),
-    ...(typeof value.playUrl === "string" ? { playUrl: value.playUrl } : {}),
-    ...(typeof value.jx === "number" && Number.isFinite(value.jx) ? { jx: value.jx } : {}),
-    ...(typeof value.format === "string" ? { format: value.format } : {}),
-    ...(typeof value.flag === "string" ? { flag: value.flag } : {}),
-    ...(typeof value.jxFrom === "string" ? { jxFrom: value.jxFrom } : {}),
-    ...(normalizeSubtitleTracks(value.subtitles ?? value.subtitleTracks ?? value.subtitle).length > 0
-      ? { subtitles: normalizeSubtitleTracks(value.subtitles ?? value.subtitleTracks ?? value.subtitle) }
+    parse: normalized.parse,
+    url: normalized.url,
+    headers: normalized.headers,
+    ...(normalized.playUrl ? { playUrl: normalized.playUrl } : {}),
+    ...(normalized.jx === undefined ? {} : { jx: normalized.jx }),
+    ...(normalized.format ? { format: normalized.format } : {}),
+    ...(normalized.flag ? { flag: normalized.flag } : {}),
+    ...(normalized.jxFrom ? { jxFrom: normalized.jxFrom } : {}),
+    ...(context ? context : {}),
+    ...(normalized.subtitles && normalized.subtitles.length > 0
+      ? { subtitles: normalized.subtitles.map((subtitle) => ({ ...subtitle })) }
       : {}),
-    ...(value.danmaku !== undefined ? { danmaku: value.danmaku } : {}),
+    ...(normalized.danmaku !== undefined ? { danmaku: normalized.danmaku } : {}),
   };
 }
 
@@ -622,20 +672,6 @@ function cloneSubtitleTrack(track: SubtitleTrack): SubtitleTrack {
     ...track,
     ...(track.headers ? { headers: { ...track.headers } } : {}),
   };
-}
-
-function playbackHeaders(value: unknown): Record<string, string> {
-  if (isRecord(value)) {
-    return Object.fromEntries(
-      Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
-    );
-  }
-  if (typeof value !== "string") return {};
-  return Object.fromEntries(value.split("&").flatMap((part) => {
-    const separator = part.indexOf("=");
-    if (separator <= 0) return [];
-    return [[decodeURIComponent(part.slice(0, separator)), decodeURIComponent(part.slice(separator + 1))]];
-  }));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

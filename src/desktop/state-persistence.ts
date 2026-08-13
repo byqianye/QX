@@ -125,7 +125,7 @@ export const MIN_WINDOW_HEIGHT = 640;
 
 export const DEFAULT_DESKTOP_STATE: DesktopPersistedState = {
   version: 1,
-  theme: "light",
+  theme: "dark",
   window: {
     width: 1280,
     height: 860,
@@ -299,7 +299,7 @@ function normalizeState(value: Record<string, unknown>): DesktopPersistedState {
   const window = isRecord(value.window) ? value.window : {};
   return {
     version: 1,
-    theme: isThemeMode(value.theme) ? value.theme : "light",
+    theme: isThemeMode(value.theme) ? value.theme : "dark",
     window: normalizeWindowState(window),
     page: normalizePageState(page),
   };

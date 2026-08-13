@@ -1,8 +1,10 @@
 import { mergeVodDisplayFields } from "./vod-merge.js";
 import { parseVodPlayback, type PlaybackCatalog } from "./vod-playback.js";
 import { sanitizeHealthMessage } from "../health/source-health.js";
-import type { Vod } from "../source/media-source.js";
+import type { SourceHealthService } from "../health/source-health.js";
+import type { PlayableStatus, Vod } from "../source/media-source.js";
 import type { SourceCapabilities } from "../source/media-source.js";
+import type { SourceCompatibilityStatus } from "../spider/source-compatibility-v2.js";
 import type { SpiderRuntimeKind } from "../spider/runtime-types.js";
 
 export type SiteFlag = boolean | number | string | null | undefined;
@@ -37,12 +39,18 @@ export interface PlaybackSourceSite {
   engine?: string | null;
   skipReason?: string;
   metadataOnly?: boolean;
+  compatibilityStatus?: SourceCompatibilityStatus;
+  requiresAuth?: boolean;
+  authenticated?: boolean;
+  healthScore?: number;
+  averageLatencyMs?: number | null;
   /** Kept as diagnostic metadata only. It must never gate search eligibility. */
   playback?: boolean;
   /** Legacy test seam. Production uses SourceEngineFactory. */
   search?: (query: string, timeoutMs: number) => Promise<readonly Vod[]>;
   /** Legacy test seam. Production uses SourceEngineFactory. */
   detail?: (vodId: string, timeoutMs: number) => Promise<Vod | null>;
+  playableStatus?: PlayableStatus;
 }
 
 export interface PlayableCandidate {
@@ -54,6 +62,10 @@ export interface PlayableCandidate {
   lines?: PlaybackCatalog;
   hasPlayFrom: boolean;
   hasPlayUrl: boolean;
+  playableStatus?: PlayableStatus;
+  compatibilityStatus?: SourceCompatibilityStatus;
+  healthScore?: number;
+  averageLatencyMs?: number | null;
 }
 
 export type PlaybackSiteInitializationStatus = "success" | "failed" | "unsupported" | "skipped";
@@ -84,12 +96,15 @@ export interface PlaybackSiteDiagnostic {
   hasPlayFrom: boolean;
   hasPlayUrl: boolean;
   skipReason: string | null;
+  playableStatus?: PlayableStatus;
 }
 
 export interface PlaybackSourceDiagnostics {
   configSiteCount: number;
   searchableSites: number;
   runtimeSupportedSites: number;
+  runtimePreparation: "not_required" | "ready";
+  runtimeWaitDurationMs: number;
   unsupportedSiteCount: number;
   searchedSites: readonly string[];
   searchSuccessSites: readonly string[];
@@ -115,19 +130,29 @@ export interface PlaybackSourceResolution {
   diagnostics: PlaybackSourceDiagnostics;
 }
 
+export interface ProgressivePlaybackOptions {
+  /** Number of ranked sources searched before the first UI update. */
+  tierASize?: number;
+  onTier?: (resolution: PlaybackSourceResolution, tier: "A" | "B") => void | Promise<void>;
+}
+
 export interface PlaybackSourceResolverOptions {
   currentSiteKey?: string | null;
   configSiteCount?: number;
   engineFactory?: SourceEngineFactory;
   concurrency?: number;
+  /** Limits expensive runtime initialization without reducing search throughput. */
+  initConcurrency?: number;
   perSiteTimeoutMs?: number;
   globalTimeoutMs?: number;
   maxCandidatesPerSite?: number;
+  health?: SourceHealthService;
+  progressive?: ProgressivePlaybackOptions;
 }
 
-const DEFAULT_CONCURRENCY = 5;
-const DEFAULT_PER_SITE_TIMEOUT_MS = 8_000;
-const DEFAULT_GLOBAL_TIMEOUT_MS = 20_000;
+const DEFAULT_CONCURRENCY = 4;
+const DEFAULT_PER_SITE_TIMEOUT_MS = 60_000;
+const DEFAULT_GLOBAL_TIMEOUT_MS = 45_000;
 const DEFAULT_MAX_CANDIDATES_PER_SITE = 3;
 
 interface SiteRunResult {
@@ -143,16 +168,43 @@ export class PlaybackSourceResolver {
     sites: readonly PlaybackSourceSite[],
     options: PlaybackSourceResolverOptions = {},
   ): Promise<PlaybackSourceResolution> {
+    const progressive = options.progressive;
+    if (progressive?.onTier) {
+      const eligible = sites.filter((site) => isSearchEligible(site, options.currentSiteKey ?? null)
+        && site.supported !== false
+        && hasResolverCapabilities(site)
+        && (options.health === undefined || options.health.canRun(site.siteKey)));
+      const tierASize = Math.max(4, Math.min(6, Math.floor(progressive.tierASize ?? 6)));
+      if (eligible.length > tierASize) {
+        const ranked = rankProgressiveSites(eligible, options.health);
+        const tierASites = ranked.slice(0, tierASize);
+        const tierBSites = [...ranked.slice(tierASize), ...sites.filter((site) => !eligible.includes(site))];
+        const { progressive: _progressive, ...nonProgressiveOptions } = options;
+        const startedAt = Date.now();
+        const tierA = await this.resolve(currentVod, tierASites, nonProgressiveOptions);
+        await notifyProgressiveTier(progressive.onTier, tierA, "A");
+        const elapsedMs = Date.now() - startedAt;
+        const remainingGlobalTimeoutMs = Math.max(1, (options.globalTimeoutMs ?? DEFAULT_GLOBAL_TIMEOUT_MS) - elapsedMs);
+        const tierB = await this.resolve(currentVod, tierBSites, {
+          ...nonProgressiveOptions,
+          globalTimeoutMs: remainingGlobalTimeoutMs,
+        });
+        const merged = mergeProgressiveResolutions(tierA, tierB);
+        await notifyProgressiveTier(progressive.onTier, merged, "B");
+        return merged;
+      }
+    }
     const query = vodName(currentVod);
     const currentSiteKey = options.currentSiteKey ?? null;
     const diagnostics = sites.map((site) => initialDiagnostic(site));
     const diagnosticBySite = new Map(diagnostics.map((diagnostic) => [diagnostic.siteKey, diagnostic]));
-    const searchableSites = sites.filter((site) => isSearchEligible(site, currentSiteKey));
+    const searchableSites = sites.filter((site) => isSearchEligible(site, currentSiteKey)
+      && (options.health === undefined || options.health.canRun(site.siteKey)));
     const runtimeSites = searchableSites.filter((site) => site.supported !== false && hasResolverCapabilities(site));
     for (const site of sites) {
       const diagnostic = diagnosticBySite.get(site.siteKey);
       if (!diagnostic) continue;
-      const skipReason = skipReasonFor(site, currentSiteKey);
+      const skipReason = skipReasonFor(site, currentSiteKey, options.health);
       if (skipReason) {
         diagnostic.skipReason = skipReason;
         diagnostic.initialization = site.supported === false ? "unsupported" : "skipped";
@@ -168,14 +220,15 @@ export class PlaybackSourceResolver {
     const globalTimeoutMs = options.globalTimeoutMs ?? DEFAULT_GLOBAL_TIMEOUT_MS;
     const maxCandidatesPerSite = options.maxCandidatesPerSite ?? DEFAULT_MAX_CANDIDATES_PER_SITE;
     const concurrency = Math.max(1, Math.min(options.concurrency ?? DEFAULT_CONCURRENCY, DEFAULT_CONCURRENCY));
+    const initConcurrency = Math.max(1, Math.min(options.initConcurrency ?? 2, concurrency));
     const engineFactory = options.engineFactory;
+    const initLimiter = new AsyncSemaphore(initConcurrency);
     let nextIndex = 0;
     let stopped = false;
     const started = new Set<string>();
     const completed = new Set<string>();
 
     const recordResult = (result: SiteRunResult): void => {
-      if (stopped) return;
       completed.add(result.site.siteKey);
       const diagnostic = diagnosticBySite.get(result.site.siteKey);
       if (diagnostic) Object.assign(diagnostic, result.diagnostic);
@@ -198,6 +251,8 @@ export class PlaybackSourceResolver {
           ...(engineFactory ? { engineFactory } : {}),
           perSiteTimeoutMs,
           maxCandidatesPerSite,
+          initLimiter,
+          ...(options.health ? { health: options.health } : {}),
         });
         recordResult(result);
       }
@@ -220,6 +275,9 @@ export class PlaybackSourceResolver {
     }
     stopped = true;
     if (timedOut) {
+      // Stop scheduling new sites, but let already-started workers finish their
+      // bounded operation so their candidates remain visible to callers.
+      await work.catch(() => undefined);
       for (const siteKey of started) {
         if (completed.has(siteKey)) continue;
         const diagnostic = diagnosticBySite.get(siteKey);
@@ -229,12 +287,16 @@ export class PlaybackSourceResolver {
         }
         failedSites.push({ siteKey, message: `搜索超时：${siteKey}` });
       }
-      void work.catch(() => undefined);
     } else {
       await work.catch(() => undefined);
     }
 
-    candidates.sort((left, right) => right.score - left.score || left.siteKey.localeCompare(right.siteKey));
+    candidates.sort((left, right) => right.score - left.score
+      || compatibilityRank(left.compatibilityStatus) - compatibilityRank(right.compatibilityStatus)
+      || playableStatusRank(left.playableStatus) - playableStatusRank(right.playableStatus)
+      || (right.healthScore ?? 0) - (left.healthScore ?? 0)
+      || latencyRank(left.averageLatencyMs) - latencyRank(right.averageLatencyMs)
+      || left.siteKey.localeCompare(right.siteKey));
     const diagnosticList = sites.map((site) => cloneDiagnostic(diagnosticBySite.get(site.siteKey) ?? initialDiagnostic(site)));
     const searchSuccessSites = diagnosticList
       .filter((diagnostic) => diagnostic.search === "success" || diagnostic.search === "empty")
@@ -246,6 +308,8 @@ export class PlaybackSourceResolver {
       configSiteCount: options.configSiteCount ?? sites.length,
       searchableSites: searchableSites.length,
       runtimeSupportedSites: runtimeSites.length,
+      runtimePreparation: "not_required",
+      runtimeWaitDurationMs: 0,
       unsupportedSiteCount: sites.filter((site) => site.supported === false || !hasResolverCapabilities(site)).length,
       searchedSites: [...searchedSiteKeys],
       searchSuccessSites,
@@ -268,20 +332,98 @@ export class PlaybackSourceResolver {
   }
 }
 
+function rankProgressiveSites(
+  sites: readonly PlaybackSourceSite[],
+  health: SourceHealthService | undefined,
+): PlaybackSourceSite[] {
+  return [...sites].sort((left, right) => compatibilityRank(left.compatibilityStatus) - compatibilityRank(right.compatibilityStatus)
+    || (right.healthScore ?? health?.getHealth(right.siteKey).score ?? 0) - (left.healthScore ?? health?.getHealth(left.siteKey).score ?? 0)
+    || latencyRank(left.averageLatencyMs ?? (health ? averageLatency(health.getHealth(left.siteKey)) : null))
+      - latencyRank(right.averageLatencyMs ?? (health ? averageLatency(health.getHealth(right.siteKey)) : null))
+    || left.siteKey.localeCompare(right.siteKey));
+}
+
+async function notifyProgressiveTier(
+  onTier: NonNullable<ProgressivePlaybackOptions["onTier"]>,
+  resolution: PlaybackSourceResolution,
+  tier: "A" | "B",
+): Promise<void> {
+  try {
+    await onTier(resolution, tier);
+  } catch {
+    // A UI update must not turn a completed source search into a failed search.
+  }
+}
+
+function mergeProgressiveResolutions(
+  first: PlaybackSourceResolution,
+  second: PlaybackSourceResolution,
+): PlaybackSourceResolution {
+  const candidates = new Map<string, PlayableCandidate>();
+  for (const candidate of [...first.candidates, ...second.candidates]) {
+    const key = `${candidate.siteKey}:${String(candidate.vod.id ?? candidate.vod.vod_id ?? "")}`;
+    candidates.set(key, candidate);
+  }
+  const diagnosticsBySite = new Map<string, PlaybackSiteDiagnostic>();
+  for (const diagnostic of [...first.diagnostics.sites, ...second.diagnostics.sites]) {
+    diagnosticsBySite.set(diagnostic.siteKey, diagnostic);
+  }
+  const unique = (values: readonly string[]): string[] => [...new Set(values)];
+  const failedBySite = new Map<string, PlaybackSourceFailure>();
+  for (const failure of [...first.failedSites, ...second.failedSites]) failedBySite.set(failure.siteKey, failure);
+  const firstDiagnostics = first.diagnostics;
+  const secondDiagnostics = second.diagnostics;
+  const mergedCandidates = [...candidates.values()];
+  return {
+    query: second.query || first.query,
+    searchedSites: unique([...first.searchedSites, ...second.searchedSites]),
+    successfulSites: unique([...first.successfulSites, ...second.successfulSites]),
+    failedSites: [...failedBySite.values()],
+    candidates: mergedCandidates.map(cloneCandidate),
+    diagnostics: cloneDiagnostics({
+      configSiteCount: Math.max(firstDiagnostics.configSiteCount, secondDiagnostics.configSiteCount),
+      searchableSites: firstDiagnostics.searchableSites + secondDiagnostics.searchableSites,
+      runtimeSupportedSites: firstDiagnostics.runtimeSupportedSites + secondDiagnostics.runtimeSupportedSites,
+      runtimePreparation: secondDiagnostics.runtimePreparation === "ready" || firstDiagnostics.runtimePreparation === "ready" ? "ready" : "not_required",
+      runtimeWaitDurationMs: firstDiagnostics.runtimeWaitDurationMs + secondDiagnostics.runtimeWaitDurationMs,
+      unsupportedSiteCount: firstDiagnostics.unsupportedSiteCount + secondDiagnostics.unsupportedSiteCount,
+      searchedSites: unique([...firstDiagnostics.searchedSites, ...secondDiagnostics.searchedSites]),
+      searchSuccessSites: unique([...firstDiagnostics.searchSuccessSites, ...secondDiagnostics.searchSuccessSites]),
+      searchFailedSites: unique([...firstDiagnostics.searchFailedSites, ...secondDiagnostics.searchFailedSites]),
+      searchResultCount: firstDiagnostics.searchResultCount + secondDiagnostics.searchResultCount,
+      matchedCandidateCount: firstDiagnostics.matchedCandidateCount + secondDiagnostics.matchedCandidateCount,
+      detailSuccessCount: firstDiagnostics.detailSuccessCount + secondDiagnostics.detailSuccessCount,
+      playableCandidateCount: mergedCandidates.filter((candidate) => candidate.playable).length,
+      sites: [...diagnosticsBySite.values()],
+    }),
+  };
+}
+
 export function scoreVod(current: Vod, candidate: Vod): number {
   const currentTitle = vodName(current);
   const candidateTitle = vodName(candidate);
   const normalizedCurrent = normalizeVodTitle(currentTitle);
   const normalizedCandidate = normalizeVodTitle(candidateTitle);
-  if (!normalizedCurrent || normalizedCurrent !== normalizedCandidate || !hasMinimumMetadata(current, candidate)) return 0;
+  const exactTitle = Boolean(normalizedCurrent && normalizedCurrent === normalizedCandidate);
+  const seasonAlias = !exactTitle
+    && installmentBaseTitle(normalizedCurrent) !== ""
+    && installmentBaseTitle(normalizedCurrent) === installmentBaseTitle(normalizedCandidate);
+  if (!exactTitle && !seasonAlias) return 0;
 
   let score = currentTitle.trim().toLocaleLowerCase() === candidateTitle.trim().toLocaleLowerCase() ? 60 : 0;
-  score += 50;
+  score += exactTitle ? 50 : 35;
+  if (seasonAlias && normalizedCandidate === installmentBaseTitle(normalizedCandidate)) score += 15;
   if (sameField(current, candidate, ["vod_year", "year"])) score += 20;
   if (sameField(current, candidate, ["type_name", "vod_class", "type", "category"])) score += 10;
   if (sameField(current, candidate, ["vod_area", "area"])) score += 5;
   if (sameField(current, candidate, ["vod_director", "director"])) score += 5;
   return score;
+}
+
+function installmentBaseTitle(value: string): string {
+  return value
+    .replace(/(?:\(\d{4}\)|（\d{4}）|20\d{2})$/u, "")
+    .replace(/(?:第[一二三四五六七八九十百千零]+季|season\d+|s\d+)$/iu, "");
 }
 
 export function normalizeVodTitle(value: string): string {
@@ -306,6 +448,9 @@ async function runSite(
     engineFactory?: SourceEngineFactory;
     perSiteTimeoutMs: number;
     maxCandidatesPerSite: number;
+    initLimiter: AsyncSemaphore;
+    health?: SourceHealthService;
+    transientRetry?: boolean;
   },
 ): Promise<SiteRunResult> {
   const diagnostic = initialDiagnostic(site);
@@ -321,12 +466,20 @@ async function runSite(
       getEngine(site, options.engineFactory),
       `初始化超时：${site.siteKey}`,
     );
-    await withRemainingTimeout(engine.init(site.ext), `初始化超时：${site.siteKey}`);
+    await options.initLimiter.run(async () => {
+      if (Date.now() >= deadline) throw new Error(`初始化超时：${site.siteKey}`);
+      await withRemainingTimeout(engine.init(site.ext), `初始化超时：${site.siteKey}`);
+    });
     diagnostic.initialization = "success";
-    const results = await withRemainingTimeout(
-      engine.search(query, false, 1),
-      `搜索超时：${site.siteKey}`,
-    );
+    const searchStartedAt = Date.now();
+    let results: readonly Vod[];
+    try {
+      results = await withRemainingTimeout(engine.search(query, false, 1), `搜索超时：${site.siteKey}`);
+      options.health?.recordSearchSuccess(site.siteKey, Date.now() - searchStartedAt);
+    } catch (error) {
+      options.health?.recordSearchFailure(site.siteKey, error, Date.now() - searchStartedAt);
+      throw error;
+    }
     diagnostic.resultCount = results.length;
     diagnostic.search = results.length > 0 ? "success" : "empty";
     const matches = results
@@ -341,10 +494,14 @@ async function runSite(
     for (const match of matches) {
       let detail: Vod | null = null;
       try {
-        detail = await withRemainingTimeout(
-          engine.detail(vodId(match.vod)),
-          `详情超时：${site.siteKey}`,
-        );
+        const detailStartedAt = Date.now();
+        try {
+          detail = await withRemainingTimeout(engine.detail(vodId(match.vod)), `详情超时：${site.siteKey}`);
+          options.health?.recordDetailSuccess(site.siteKey, Date.now() - detailStartedAt);
+        } catch (error) {
+          options.health?.recordDetailFailure(site.siteKey, error, Date.now() - detailStartedAt);
+          throw error;
+        }
         if (detail) {
           diagnostic.detail = "success";
           diagnostic.detailSuccessCount += 1;
@@ -375,11 +532,18 @@ async function runSite(
         score: match.score,
         playable: hasPlayFrom && hasPlayUrl,
         ...(lines ? { lines } : {}),
-        hasPlayFrom,
-        hasPlayUrl,
-      });
+      hasPlayFrom,
+      hasPlayUrl,
+      ...(site.playableStatus ? { playableStatus: site.playableStatus } : {}),
+      ...(site.compatibilityStatus ? { compatibilityStatus: site.compatibilityStatus } : {}),
+      ...(site.healthScore === undefined && options.health === undefined ? {} : { healthScore: site.healthScore ?? options.health?.getHealth(site.siteKey).score ?? 0 }),
+      ...(site.averageLatencyMs === undefined && options.health === undefined ? {} : { averageLatencyMs: site.averageLatencyMs ?? averageLatency(options.health?.getHealth(site.siteKey)) }),
+    });
     }
   } catch (error) {
+    if (site.runtime === "android-dex" && options.transientRetry !== true && isTransientAndroidError(error)) {
+      return runSite(site, currentVod, query, { ...options, transientRetry: true });
+    }
     const message = safeErrorMessage(error);
     const timeout = /超时|timeout/i.test(message);
     diagnostic.initialization = "failed";
@@ -394,6 +558,14 @@ async function runSite(
   }
 
   return { site, diagnostic, candidates };
+}
+
+function isTransientAndroidError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  if ((error as { code?: unknown }).code === "SPIDER_METHOD_FAILED") return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Attempt to invoke virtual method")
+    && message.includes("on a null object reference");
 }
 
 async function getEngine(
@@ -435,6 +607,7 @@ function initialDiagnostic(site: PlaybackSourceSite): PlaybackSiteDiagnostic {
     hasPlayFrom: false,
     hasPlayUrl: false,
     skipReason: null,
+    ...(site.playableStatus ? { playableStatus: site.playableStatus } : {}),
   };
 }
 
@@ -442,14 +615,17 @@ function isSearchEligible(site: PlaybackSourceSite, currentSiteKey: string | nul
   return site.siteKey !== currentSiteKey
     && site.enabled !== false
     && site.metadataOnly !== true
+    && !(site.requiresAuth === true && site.authenticated !== true)
     && isSearchable(site.searchable);
 }
 
-function skipReasonFor(site: PlaybackSourceSite, currentSiteKey: string | null): string | null {
+function skipReasonFor(site: PlaybackSourceSite, currentSiteKey: string | null, health?: SourceHealthService): string | null {
   if (site.siteKey === currentSiteKey) return "current_site";
   if (site.metadataOnly) return "metadata_only";
   if (site.enabled === false) return site.skipReason ?? "site_disabled";
   if (!isSearchable(site.searchable)) return site.skipReason ?? "searchable_0";
+  if (site.requiresAuth && site.authenticated !== true) return "AUTH_REQUIRED";
+  if (health && !health.canRun(site.siteKey)) return "source_health_cooldown";
   if (site.supported === false) return site.skipReason ?? "unsupported_runtime";
   if (!hasResolverCapabilities(site)) return site.skipReason ?? "runtime_capability_missing";
   return null;
@@ -463,15 +639,6 @@ function isSearchable(value: SiteFlag): boolean {
   if (value === false || value === 0) return false;
   if (typeof value === "string" && value.trim() === "0") return false;
   return true;
-}
-
-function hasMinimumMetadata(current: Vod, candidate: Vod): boolean {
-  return Boolean(
-    stringField(current, ["vod_year", "year"])
-      && stringField(candidate, ["vod_year", "year"])
-      && stringField(current, ["type_name", "vod_class", "type", "category"])
-      && stringField(candidate, ["type_name", "vod_class", "type", "category"]),
-  );
 }
 
 function vodName(vod: Vod): string {
@@ -525,6 +692,38 @@ function cloneCandidate(candidate: PlayableCandidate): PlayableCandidate {
       },
     } : {}),
   };
+}
+
+function playableStatusRank(status: PlayableStatus | undefined): number {
+  switch (status) {
+    case "DIRECT": return 0;
+    case "PARSE_REQUIRED": return 1;
+    case "AUTH_REQUIRED": return 2;
+    case "FAILED": return 3;
+    case "UNSUPPORTED": return 4;
+    default: return 1;
+  }
+}
+
+function compatibilityRank(status: SourceCompatibilityStatus | undefined): number {
+  switch (status) {
+    case "FULLY_PLAYABLE": return 0;
+    case "SEARCH_DETAIL_ONLY": return 1;
+    case "SEARCH_ONLY": return 2;
+    case "AUTH_REQUIRED": return 3;
+    default: return 4;
+  }
+}
+
+function latencyRank(value: number | null | undefined): number {
+  return value === null || value === undefined ? Number.MAX_SAFE_INTEGER : value;
+}
+
+function averageLatency(value: ReturnType<SourceHealthService["getHealth"]> | undefined): number | null {
+  if (!value) return null;
+  const operations = Object.values(value.operations);
+  const attempts = operations.reduce((total, operation) => total + operation.attempts, 0);
+  return attempts === 0 ? null : operations.reduce((total, operation) => total + operation.totalMs, 0) / attempts;
 }
 
 function cloneDiagnostic(diagnostic: PlaybackSiteDiagnostic): PlaybackSiteDiagnostic {
@@ -581,6 +780,38 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
     ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+class AsyncSemaphore {
+  private active = 0;
+  private readonly waiters: Array<() => void> = [];
+
+  public constructor(private readonly limit: number) {}
+
+  public async run<T>(task: () => Promise<T>): Promise<T> {
+    await this.acquire();
+    try {
+      return await task();
+    } finally {
+      this.release();
+    }
+  }
+
+  private acquire(): Promise<void> {
+    if (this.active < this.limit) {
+      this.active += 1;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      this.waiters.push(resolve);
+    });
+  }
+
+  private release(): void {
+    const next = this.waiters.shift();
+    if (next) next();
+    else this.active -= 1;
   }
 }
 

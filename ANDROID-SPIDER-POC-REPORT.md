@@ -1,7 +1,7 @@
 # Android Spider PoC Report
 
 Status: **PASS**
-Generated: 2026-08-09T03:06:03.567Z
+Generated: 2026-08-09T03:32:14.961Z
 Config: `http://xn--z7x900a.net/`
 Source: `csp_FeiMaoUC` / ⚡┃闪电┃优汐
 API: `csp_Duopan`
@@ -18,9 +18,9 @@ API: `csp_Duopan`
 | Operation | Status | Details |
 | --- | --- | --- |
 | health | passed |  |
-| loadJar | passed | 166ms |
-| createSpider | passed | 5ms |
-| init | passed | 748ms |
+| loadJar | passed | 208ms |
+| createSpider | passed | 7ms |
+| init | passed | 844ms |
 | searchContent | passed | SEARCH_PASS |
 | detailContent | passed | DETAIL_PLAYABLE_PASS |
 | playerContent | failed | PLAYER_CONTENT_FAIL: 未登录UC, 请去配置中心设置 |

@@ -23,6 +23,71 @@ export interface FallbackCandidate {
   label: string;
   kind: FallbackCandidateKind;
   healthScore?: number | null;
+  sourceId?: string;
+  lineKey?: string;
+  parseAttempt?: number;
+  errorCode?: string;
+}
+
+export interface AutoFallbackV2Policy {
+  maxSources?: number;
+  maxLinesPerSource?: number;
+  maxParsesPerSource?: number;
+  totalTimeoutMs?: number;
+}
+
+export const DEFAULT_AUTO_FALLBACK_V2_POLICY: Required<AutoFallbackV2Policy> = {
+  maxSources: 5,
+  maxLinesPerSource: 3,
+  maxParsesPerSource: 3,
+  totalTimeoutMs: 45_000,
+};
+
+const AUTO_FALLBACK_RETRYABLE_CODES = new Set([
+  "SOURCE_TIMEOUT",
+  "PLAYER_FAILED",
+  "PLAYBACK_UPSTREAM_ERROR",
+  "JVM_SPIDER_ERROR",
+  "MEDIA_HTTP_403",
+  "MEDIA_HTTP_404",
+  "HLS_MANIFEST_FAILED",
+  "HLS_SEGMENT_FAILED",
+  "PLAYER_FATAL_ERROR",
+]);
+
+export function isAutoFallbackRetryable(code: string | undefined): boolean {
+  if (!code) return false;
+  const normalized = code.trim().toUpperCase();
+  return normalized.startsWith("PARSE_")
+    || [...AUTO_FALLBACK_RETRYABLE_CODES].some((allowed) => normalized === allowed || normalized.includes(allowed));
+}
+
+export function limitAutoFallbackCandidates(
+  candidates: readonly FallbackCandidate[],
+  policy: AutoFallbackV2Policy = {},
+): FallbackCandidate[] {
+  const limits = { ...DEFAULT_AUTO_FALLBACK_V2_POLICY, ...policy };
+  const sources = new Set<string>();
+  const lines = new Map<string, Set<string>>();
+  let parseAttempts = 0;
+  return candidates.filter((candidate) => {
+    const sourceId = candidate.sourceId ?? "current";
+    const lineKey = candidate.lineKey ?? candidate.id;
+    if (candidate.kind === "retry-current" || candidate.kind === "reparse-current") {
+      if (candidate.kind === "reparse-current") {
+        parseAttempts += 1;
+        if (parseAttempts > limits.maxParsesPerSource) return false;
+      }
+      return true;
+    }
+    if (!sources.has(sourceId) && sources.size >= limits.maxSources) return false;
+    const sourceLines = lines.get(sourceId) ?? new Set<string>();
+    if (!sourceLines.has(lineKey) && sourceLines.size >= limits.maxLinesPerSource) return false;
+    sources.add(sourceId);
+    sourceLines.add(lineKey);
+    lines.set(sourceId, sourceLines);
+    return true;
+  });
 }
 
 export interface PlaybackHealthMetric<T> {
@@ -297,6 +362,7 @@ export interface PlaybackFallbackCoordinatorOptions {
   maxAttempts?: number;
   totalTimeoutMs?: number;
   now?: () => number;
+  autoFallbackV2?: AutoFallbackV2Policy;
 }
 
 export type PlaybackFallbackDecision =
@@ -309,6 +375,7 @@ export class PlaybackFallbackCoordinator {
   private readonly now: () => number;
   private readonly maxAttempts: number;
   private readonly totalTimeoutMs: number;
+  private readonly autoFallbackV2: AutoFallbackV2Policy;
   private mode: PlaybackFallbackMode;
   private candidates: FallbackCandidate[] = [];
   private triedValue: string[] = [];
@@ -318,6 +385,7 @@ export class PlaybackFallbackCoordinator {
     this.now = options.now ?? Date.now;
     this.maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? 4));
     this.totalTimeoutMs = Math.max(1, Math.floor(options.totalTimeoutMs ?? 30_000));
+    this.autoFallbackV2 = options.autoFallbackV2 ?? {};
     this.mode = options.mode ?? "prompt";
     this.stateValue = this.initialState();
   }
@@ -328,7 +396,7 @@ export class PlaybackFallbackCoordinator {
 
   public begin(candidates: readonly FallbackCandidate[], at = this.now()): PlaybackFallbackState {
     const startedAt = finiteTime(at, this.now());
-    this.candidates = uniqueCandidates(rankFallbackCandidates(candidates));
+    this.candidates = uniqueCandidates(limitAutoFallbackCandidates(rankFallbackCandidates(candidates), this.autoFallbackV2));
     this.triedValue = [];
     this.stateValue = {
       ...this.initialState(),

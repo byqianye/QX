@@ -1,5 +1,8 @@
 <script setup lang="ts">
+import { ref } from "vue";
+
 import type { StorageMode, StorageUiState } from "../../src/storage/storage-types.js";
+import ConfirmDialog from "./ConfirmDialog.vue";
 
 const props = defineProps<{
   state: StorageUiState;
@@ -11,6 +14,7 @@ const emit = defineEmits<{
   open: [];
   switch: [mode: StorageMode];
 }>();
+const pendingMode = ref<StorageMode | null>(null);
 
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
@@ -21,7 +25,13 @@ function formatBytes(value: number): string {
 
 function requestSwitch(mode: StorageMode): void {
   if (mode === props.state.mode) return;
-  if (typeof window !== "undefined" && !window.confirm(`Switch data mode to ${mode}? The app will restart after migration.`)) return;
+  pendingMode.value = mode;
+}
+
+function confirmSwitch(): void {
+  const mode = pendingMode.value;
+  pendingMode.value = null;
+  if (!mode) return;
   emit("switch", mode);
 }
 </script>
@@ -51,4 +61,12 @@ function requestSwitch(mode: StorageMode): void {
       <button type="button" class="button-primary" data-action="storage-switch-portable" :disabled="props.pending !== null || props.state.mode === 'portable'" @click="requestSwitch('portable')">Use portable mode</button>
     </div>
   </section>
+  <ConfirmDialog
+    v-if="pendingMode"
+    title="Switch data directory mode"
+    :message="`Switch to ${pendingMode} mode? The app will restart after migration.`"
+    confirm-label="Switch and restart"
+    @cancel="pendingMode = null"
+    @confirm="confirmSwitch"
+  />
 </template>

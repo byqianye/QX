@@ -216,6 +216,7 @@ export interface PlayerSource {
   parse: number;
   url: string;
   headers: Record<string, string>;
+  mediaType?: "hls" | "dash" | "mp4" | "flv" | "web" | "unknown";
   playUrl?: string;
   jx?: number;
   format?: string;

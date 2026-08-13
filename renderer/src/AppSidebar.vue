@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import Icon from "./Icon.vue";
-import { displaySource } from "./safe-display.js";
 
 defineProps<{
   activePage: string;
   source: string;
+  sourceName?: string;
   status: string;
   canStart: boolean;
   pending: boolean;
@@ -35,7 +35,7 @@ const emit = defineEmits<{
       <span class="status-dot" :data-status="status" aria-hidden="true" />
       <div>
         <span class="sidebar-label">当前来源</span>
-        <strong>{{ displaySource(source) }}</strong>
+        <strong>{{ sourceName ?? "当前来源" }}</strong>
       </div>
     </div>
 
@@ -121,9 +121,6 @@ const emit = defineEmits<{
         @click="emit('navigate', 'downloads')"
       >
         <Icon name="grid" /><span>下载</span>
-      </button>
-      <button class="sidebar-nav-item sidebar-nav-placeholder" type="button" data-action="console-placeholder" disabled>
-        <Icon name="settings" /><span>控制台（占位）</span>
       </button>
       <button
         v-if="canStart"

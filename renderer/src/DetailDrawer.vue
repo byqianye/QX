@@ -3,13 +3,13 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import Icon from "./Icon.vue";
 import PosterImage from "./PosterImage.vue";
-import { displaySource } from "./safe-display.js";
 import type { PlaybackSourceResolution } from "../../src/desktop/playback-source-resolver.js";
 import type { FavoriteGroupItem, FavoriteItem } from "../../src/favorites/favorites-types.js";
 import type { FollowItem } from "../../src/follow/follow-types.js";
 
 const props = defineProps<{
   detail: Record<string, unknown>;
+  sourceName?: string;
   canPlay: boolean;
   playbackLabel: string;
   favorite?: FavoriteItem | null;
@@ -89,7 +89,7 @@ const playableCandidates = computed(() => (props.playbackSources?.candidates ?? 
       <dl class="detail-meta">
         <div v-for="field in detailFields" :key="field.label"><dt>{{ field.label }}</dt><dd>{{ field.value }}</dd></div>
         <div><dt>线路状态</dt><dd>{{ playbackLabel }}</dd></div>
-        <div><dt>来源</dt><dd>{{ displaySource(String(detail.vod_from || "当前来源")) }}</dd></div>
+        <div><dt>来源</dt><dd>{{ props.sourceName ?? "当前来源" }}</dd></div>
       </dl>
       <div class="favorite-actions" data-testid="favorite-detail-actions">
         <button
@@ -147,6 +147,10 @@ const playableCandidates = computed(() => (props.playbackSources?.candidates ?? 
         >查找播放源</button>
         <p v-if="props.playbackSourcePending" data-testid="playback-source-searching">正在查找播放源…</p>
         <template v-else-if="props.playbackSources">
+          <p
+            v-if="props.playbackSources.diagnostics?.runtimePreparation === 'ready'"
+            data-testid="android-runtime-ready"
+          >Android Runtime READY ({{ props.playbackSources.diagnostics.runtimeWaitDurationMs }}ms)</p>
           <div v-if="playableCandidates.length > 0" data-testid="playback-source-candidates">
             <p>找到可播放来源，请选择：</p>
             <button
@@ -155,6 +159,8 @@ const playableCandidates = computed(() => (props.playbackSources?.candidates ?? 
               type="button"
               class="button-secondary button-wide"
               data-action="playback-source-select"
+              :data-site-key="candidate.siteKey"
+              :data-vod-id="candidate.vod.id"
               @click="emit('selectPlaybackSource', candidate.siteKey, candidate.vod.id)"
             >{{ candidate.siteName }} · {{ candidate.vod.name }}（匹配 {{ candidate.score }}）</button>
           </div>

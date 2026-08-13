@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 
-import { app, BrowserWindow, dialog, screen, session as electronSession, shell as electronShell } from "electron";
+import { app, BrowserWindow, dialog, net, screen, session as electronSession, shell as electronShell } from "electron";
 
 import { JsonFileTrustPersistence, ImportTrustStore } from "../config/trust.js";
 import type { TvBoxConfig } from "../config/decoder.js";
@@ -20,13 +20,16 @@ import {
 } from "../desktop/state-persistence.js";
 import type { DesktopSpiderClientPort } from "../desktop/spider-client-port.js";
 import type { PlaybackFallbackMode } from "../health/playback-health.js";
+import { SourceHealthService } from "../health/source-health.js";
 import type { LiveFailoverMode } from "../live/live-types.js";
 import { EngineRouter } from "../engine/engine-router.js";
 import { SpiderArtifactCache } from "../spider/spider-artifact-cache.js";
 import { NativeSpiderRuntime, SpiderRuntimeManager } from "../spider/spider-runtime.js";
-import { AndroidDeviceManager } from "../spider/android-device-manager.js";
-import { AndroidSpiderBridgeClient } from "../spider/android-spider-bridge-client.js";
-import { isValidatedAndroidDexSite } from "../spider/android-dex-runtime.js";
+import { AndroidArtifactRegistry, AndroidSpiderBridgeClient } from "../spider/android-spider-bridge-client.js";
+import type { AndroidRuntimeStatus as LegacyAndroidRuntimeStatus } from "../spider/android-runtime-diagnostics.js";
+import { AndroidRuntimeBootstrapper } from "../spider/android-runtime-bootstrapper.js";
+import { AndroidRuntimeSupervisor } from "../spider/android-runtime-supervisor.js";
+import { ElectronSpiderCredentialProvider } from "../spider/electron-spider-credential-provider.js";
 import { readJellyfinEnvironment } from "../jellyfin/jellyfin-adapter.js";
 import { resolveJavaExecutable } from "../spikes/java-probe.js";
 import {
@@ -36,6 +39,8 @@ import {
 import { runFakeMpvExitProbe } from "./fake-mpv-probe.js";
 import { resolveElectronRuntime, sanitizedPackagedPythonEnvironment } from "./runtime.js";
 import { DesktopShellRuntime } from "./shell-runtime.js";
+import { ProductionLogger } from "./production-logger.js";
+import { RuntimePathResolver } from "./runtime-paths.js";
 import { DataDirectoryResolver, DataStorageService, type DataDirectoryMode } from "../data/data-directory.js";
 import {
   BackupRestoreService,
@@ -124,6 +129,8 @@ let isolatedSniffer: IsolatedSniffer | undefined;
 let cleanupPromise: Promise<void> | undefined;
 let quitting = false;
 let lastClient: DesktopSpiderClientPort | undefined;
+let embeddedAndroidRuntimeSupervisor: AndroidRuntimeSupervisor | undefined;
+let androidRuntimeConsentPrompt: Promise<boolean> | undefined;
 let engineRouter: EngineRouter | undefined;
 let dataLayer: SqliteDataLayer | undefined;
 let desktopStateStore: DesktopStateStorePort | undefined;
@@ -149,6 +156,9 @@ let backupState: BackupUiState = { ...EMPTY_BACKUP_UI_STATE };
 let lastBackupPath: string | undefined;
 let dataStorageService: DataStorageService | undefined;
 let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
+let applicationLogger: ProductionLogger | undefined;
+let runtimeLogger: ProductionLogger | undefined;
+let playbackLogger: ProductionLogger | undefined;
 
 const singleInstanceLock = app.requestSingleInstanceLock();
 if (!singleInstanceLock) {
@@ -161,6 +171,19 @@ if (!singleInstanceLock) {
     mainWindow.focus();
   });
 }
+
+process.on("uncaughtException", (error) => {
+  getProductionLogger().error("FATAL_ERROR", error, { kind: "uncaughtException" });
+  if (!app.isReady()) {
+    app.exit(1);
+    return;
+  }
+  void closeShell(true).finally(() => app.exit(1));
+});
+
+process.on("unhandledRejection", (reason) => {
+  getProductionLogger().error("FATAL_ERROR", reason, { kind: "unhandledRejection" });
+});
 
 function getDesktopStateStore(): DesktopStateStorePort {
   initializeDataLayer();
@@ -458,26 +481,65 @@ function createShell(): DesktopShellRuntime {
       const router = new EngineRouter({ maxActiveSessions: 4, idleSessionMs: 30_000 });
       const jellyfinConfig = readJellyfinEnvironment(process.env);
       engineRouter = router;
-      const createRuntimeManager = (config: TvBoxConfig, sourceUrl?: string) => {
-        const androidDeviceManager = new AndroidDeviceManager({
-          ...(process.env.QX_ANDROID_SDK_PATH ? { sdkPath: process.env.QX_ANDROID_SDK_PATH } : {}),
-          ...(process.env.QX_ANDROID_DEVICE_SERIAL ? { serial: process.env.QX_ANDROID_DEVICE_SERIAL } : {}),
+      const androidArtifactRegistry = new AndroidArtifactRegistry();
+      const androidCredentialProvider = new ElectronSpiderCredentialProvider(
+        join(getDataStorageService().directories().settings, "android-uc.credential"),
+      );
+      const androidPaths = runtimePaths();
+      const qxRuntimePaths = androidPaths.getAndroidRuntimePaths();
+      let runtimeSupervisorForProgress: AndroidRuntimeSupervisor | undefined;
+      const androidRuntimeBootstrapper = new AndroidRuntimeBootstrapper({
+        paths: qxRuntimePaths,
+        hostApkPath: androidPaths.getAndroidHostApkPath(),
+        javaExecutable: runtime.javaExecutable,
+        progressLogger: (progress) => runtimeSupervisorForProgress?.updateProgress(progress),
+      });
+      const androidRuntimeSupervisor = new AndroidRuntimeSupervisor({
+        paths: qxRuntimePaths,
+        bootstrapper: androidRuntimeBootstrapper,
+        diagnosticLogger: (event, details) => getRuntimeLogger().info(event, details),
+      });
+      runtimeSupervisorForProgress = androidRuntimeSupervisor;
+      embeddedAndroidRuntimeSupervisor = androidRuntimeSupervisor;
+      void androidRuntimeSupervisor.refresh().then((status) => {
+        getRuntimeLogger().info("ANDROID_RUNTIME_STATUS", {
+          supervisorState: status.supervisorState,
+          bootstrapState: status.bootstrapState,
+          whpx: status.whpx,
+          diagnostics: status.diagnostics,
         });
+        if (status.mode === "resident" && status.bootstrapState === "READY") {
+          void androidRuntimeSupervisor.ensureReady().catch((error) => getRuntimeLogger().error("ANDROID_RUNTIME_RESIDENT_START_FAILED", error));
+        }
+      }).catch((error) => {
+        getRuntimeLogger().error("ANDROID_RUNTIME_STATUS", error);
+      });
+      let nextAndroidLocalPort = 8766;
+      const createRuntimeManager = (config: TvBoxConfig, sourceUrl?: string) => {
         return new SpiderRuntimeManager({
         config,
         ...(sourceUrl ? { sourceUrl } : {}),
-        artifactCache: new SpiderArtifactCache(join(getDataStorageService().directories().dataRoot, "spider-cache"), {
+          artifactCache: new SpiderArtifactCache(qxRuntimePaths.spiderCachePath ?? join(getDataStorageService().directories().dataRoot, "spider-cache"), {
           timeoutMs: REQUEST_TIMEOUT_MS,
         }),
         pythonExecutable: runtime.pythonExecutable ?? (app.isPackaged ? "" : process.env.QX_PYTHON ?? "python"),
+        spiderCredentialProvider: androidCredentialProvider,
+        androidRuntimePreparer: async () => {
+          await ensureAndroidRuntimeForSite(androidRuntimeSupervisor);
+        },
         androidBridgeClientFactory: async (site, support) => {
-          if (!isValidatedAndroidDexSite(site) || !support.artifactPath) return undefined;
-          await androidDeviceManager.startHost();
+          if (!support.artifactPath) return undefined;
+          await ensureAndroidRuntimeForSite(androidRuntimeSupervisor);
           return new AndroidSpiderBridgeClient({
-            deviceManager: androidDeviceManager,
+            deviceManager: androidRuntimeSupervisor.deviceManager,
+            localPort: nextAndroidLocalPort++,
+            requestTimeoutMs: 30_000,
+            healthTimeoutMs: 10_000,
+            operationTimeoutMs: 180_000,
             ...(site.key ?? site.api ? { siteKey: site.key ?? site.api } : {}),
             ...(site.name ? { sourceName: site.name } : {}),
             ...(support.artifactUrl ? { artifactUrl: support.artifactUrl } : {}),
+            artifactRegistry: androidArtifactRegistry,
           });
         },
         nativeRuntime: async (nativeSite) => {
@@ -513,12 +575,15 @@ function createShell(): DesktopShellRuntime {
         },
         });
       };
-      const importer = new DesktopSpiderImportController({
+      const importer: DesktopSpiderImportController = new DesktopSpiderImportController({
         trustStore,
         history: configHistory,
         autoRefresh: process.env.QX_CONFIG_AUTO_REFRESH === "1",
         refreshIntervalMs: numberEnvironment("QX_CONFIG_REFRESH_INTERVAL_MS", 6 * 60 * 60 * 1000),
         requestTimeoutMs: REQUEST_TIMEOUT_MS,
+        sourceHealth: new SourceHealthService({
+          storePath: join(getDataStorageService().directories().dataRoot, "source-health.json"),
+        }),
         runtimeManagerFactory: createRuntimeManager,
         preferredSiteKey: () => stateStore.state.page.siteKey,
         createSession: (source, config, site, assessment, health) => new DesktopSpiderSession({
@@ -544,7 +609,7 @@ function createShell(): DesktopShellRuntime {
             lastClient = client;
             return client;
           },
-          createRuntime: async (selectedSite) => createRuntimeManager(config, source).getRuntime(selectedSite),
+          createRuntime: async (selectedSite) => importer.getRuntimeForSite(selectedSite),
         }),
       });
       const sniffer = ISOLATED_SNIFFER_ENABLED
@@ -553,13 +618,26 @@ function createShell(): DesktopShellRuntime {
       isolatedSniffer = sniffer;
       const server = new DesktopSpiderUiServer({
         importer,
-        rendererDirectory: join(app.getAppPath(), "dist", "renderer"),
+        rendererDirectory: runtimePaths().getRendererPath(),
         stateStore,
         history: getHistoryProgressService(),
         favorites: getFavoritesService(),
         follow: getFollowService(),
         cache: getCacheService(),
         storage: getDataStorageService(),
+        androidCredentials: androidCredentialProvider,
+        androidRuntimeStatus: () => embeddedAndroidStatus(androidRuntimeSupervisor, androidPaths.getAndroidHostApkPath()),
+        androidRuntimeActions: {
+          ensure: (confirmed) => androidRuntimeSupervisor.ensureReady({ consent: confirmed }),
+          enableWhpx: (confirmed) => androidRuntimeSupervisor.enableWhpx(confirmed),
+          setMode: (mode) => androidRuntimeSupervisor.setMode(mode),
+          restart: () => androidRuntimeSupervisor.restart(),
+          repair: (confirmed) => androidRuntimeSupervisor.repair(confirmed),
+          reinstall: (confirmed) => androidRuntimeSupervisor.reinstall(confirmed),
+          cancel: () => androidRuntimeSupervisor.cancelProvision(),
+          uninstall: () => androidRuntimeSupervisor.uninstall(),
+          stop: () => androidRuntimeSupervisor.stopRuntime(),
+        },
         danmaku: getDanmakuService(),
         localMedia: getLocalMediaService(),
         ...(downloadService ? { downloads: downloadService } : {}),
@@ -615,6 +693,12 @@ function createShell(): DesktopShellRuntime {
         ...(PLAYBACK_PROXY_ORIGINS.length > 0 ? { playbackProxyOrigins: PLAYBACK_PROXY_ORIGINS } : {}),
         ...(PARSER_CANDIDATES.length > 0 ? { parserCandidates: PARSER_CANDIDATES } : {}),
         ...(PARSER_ALLOWED_ORIGINS.length > 0 ? { parserAllowedOrigins: PARSER_ALLOWED_ORIGINS } : {}),
+        playbackFetch: (input, init) => {
+          const requestUrl = input instanceof URL ? input.toString() : typeof input === "string" ? input : input.url;
+          return requestUrl.startsWith("https:")
+            ? net.fetch(input instanceof URL ? input.toString() : input, init)
+            : fetch(input, init);
+        },
         ...(PLAYBACK_RULES.length > 0 ? { playbackRules: PLAYBACK_RULES } : {}),
         ...(sniffer ? { sniffer } : {}),
         playbackFallbackMode: PLAYBACK_FALLBACK_MODE,
@@ -851,9 +935,140 @@ function firstHeader(headers: Record<string, string[]> | undefined, name: string
 }
 
 function runtimeDirectory(): string {
-  return app.isPackaged
-    ? join(process.resourcesPath, "electron-runtime")
-    : join(process.cwd(), "dist", "electron-runtime");
+  return runtimePaths().getRuntimePath();
+}
+
+function embeddedAndroidStatus(
+  supervisor: AndroidRuntimeSupervisor,
+  hostApkPath: string,
+): LegacyAndroidRuntimeStatus {
+  const status = supervisor.status();
+  const qx = runtimePaths().getQxRuntimePaths();
+  return {
+    adbFound: status.adbFound,
+    deviceFound: status.deviceFound,
+    deviceStatus: status.deviceFound ? "online" : "missing",
+    hostApkFound: existsSync(hostApkPath),
+    hostApkPath,
+    hostInstalled: status.hostInstalled,
+    hostStatus: status.hostOnline ? "online" : status.hostInstalled ? "offline" : "missing",
+    androidHostOnline: status.hostOnline,
+    diagnostics: status.diagnostics,
+    message: status.message,
+    bootstrapState: status.bootstrapState,
+    supervisorState: status.supervisorState,
+    consentRequired: status.consentRequired,
+    runtimeVersion: status.runtimeVersion,
+    ...(status.hostVersion ? { hostVersion: status.hostVersion } : {}),
+    androidApi: status.androidApi,
+    architecture: status.architecture,
+    avdName: status.avdName,
+    estimatedDownload: status.estimatedDownload,
+    ...(status.diskUsageBytes !== undefined ? { diskUsageBytes: status.diskUsageBytes } : {}),
+    mode: status.mode,
+    whpx: status.whpx,
+    progress: status.progress,
+    runtimeRoot: qx.runtimeRoot,
+    sdkRoot: qx.sdkRoot,
+    adbPath: qx.adbPath,
+    emulatorPath: qx.emulatorPath,
+    avdHome: qx.avdHome,
+    androidUserHome: qx.androidUserHome,
+  };
+}
+
+async function ensureAndroidRuntimeForSite(supervisor: AndroidRuntimeSupervisor): Promise<void> {
+  const e2eConsent = process.env.QX_ANDROID_E2E_CONSENT === "1";
+  getRuntimeLogger().info("ANDROID_RUNTIME_PREPARE_START", {
+    e2eConsent,
+    supervisorState: supervisor.status().supervisorState,
+    bootstrapState: supervisor.status().bootstrapState,
+  });
+  try {
+    await supervisor.ensureReady({ consent: e2eConsent });
+    getRuntimeLogger().info("ANDROID_RUNTIME_PREPARE_READY", {
+      supervisorState: supervisor.status().supervisorState,
+      bootstrapState: supervisor.status().bootstrapState,
+      hostOnline: supervisor.status().hostOnline,
+    });
+    return;
+  } catch (error) {
+    getRuntimeLogger().error("ANDROID_RUNTIME_PREPARE_FAILED", error, {
+      supervisorState: supervisor.status().supervisorState,
+      bootstrapState: supervisor.status().bootstrapState,
+      diagnostics: supervisor.status().diagnostics,
+    });
+    if (e2eConsent || !supervisor.status().consentRequired) throw error;
+  }
+  if (!androidRuntimeConsentPrompt) {
+    const status = supervisor.status();
+    const options = {
+      type: "info" as const,
+      title: "Android 兼容运行环境",
+      message: "当前 Android DEX 来源需要安装独立的 Android 兼容运行环境。",
+      detail: `预计下载 ${status.estimatedDownload}，组件来自 Android 官方源；继续即表示你确认阅读并接受所需 Android SDK 许可协议。`,
+      buttons: ["取消", "安装并继续"],
+      defaultId: 1,
+      cancelId: 0,
+    };
+    androidRuntimeConsentPrompt = (mainWindow
+      ? dialog.showMessageBox(mainWindow, options)
+      : dialog.showMessageBox(options))
+      .then((result) => result.response === 1)
+      .finally(() => { androidRuntimeConsentPrompt = undefined; });
+  }
+  if (!await androidRuntimeConsentPrompt) throw new Error("ANDROID_RUNTIME_CONSENT_REQUIRED");
+  await supervisor.ensureReady({ consent: true });
+}
+
+function runtimePaths(): RuntimePathResolver {
+  return new RuntimePathResolver({
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath,
+    userDataPath: app.getPath("userData"),
+    ...(process.env.LOCALAPPDATA ? { localAppDataPath: process.env.LOCALAPPDATA } : {}),
+    isPackaged: app.isPackaged,
+  });
+}
+
+function getProductionLogger(): ProductionLogger {
+  if (!applicationLogger) {
+    applicationLogger = new ProductionLogger({ directory: runtimePaths().getLogPath() });
+  }
+  return applicationLogger;
+}
+
+function getRuntimeLogger(): ProductionLogger {
+  if (!runtimeLogger) {
+    runtimeLogger = new ProductionLogger({ directory: runtimePaths().getLogPath(), fileName: "runtime.log" });
+  }
+  return runtimeLogger;
+}
+
+function getPlaybackLogger(): ProductionLogger {
+  if (!playbackLogger) {
+    playbackLogger = new ProductionLogger({ directory: runtimePaths().getLogPath(), fileName: "playback.log" });
+  }
+  return playbackLogger;
+}
+
+function logAppStart(): void {
+  const paths = runtimePaths();
+  getProductionLogger().info("APP_START", {
+    electronVersion: process.versions.electron,
+    appVersion: app.getVersion(),
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    userDataPath: paths.getUserDataPath(),
+    runtimePath: paths.getRuntimePath(),
+    runtimeManifest: existsSync(paths.getRuntimePath("runtime-manifest.json")),
+    localProxy: "dynamic-port",
+    spiderRuntime: existsSync(paths.getRuntimePath("jvm-spider-host.jar")) ? "available" : "missing",
+    mpvPath: paths.getRuntimePath("mpv/mpv.exe"),
+    mpvAvailable: existsSync(paths.getRuntimePath("mpv/mpv.exe")),
+  });
+  getRuntimeLogger().info("RUNTIME_LOG_READY");
+  getPlaybackLogger().info("PLAYBACK_LOG_READY");
 }
 
 function forceExternalJavaDisabled(): boolean {
@@ -869,6 +1084,7 @@ async function closeShell(closeData = false): Promise<void> {
   if (!cleanupPromise) {
       cleanupPromise = (async () => {
         await closePlayerWindow();
+        await embeddedAndroidRuntimeSupervisor?.stopRuntime().catch(() => undefined);
         await shell?.close();
         await engineRouter?.destroyAll();
       })();
@@ -1009,6 +1225,9 @@ async function createMainWindow(): Promise<void> {
   shell ??= createShell();
   const started = await shell.start();
   if (started.status !== "running" || !started.url) {
+    getProductionLogger().error("STARTUP_ERROR", new Error(started.error?.message ?? "桌面 UI server 启动失败。"), {
+      code: started.error?.code ?? "UI_SERVER_START_ERROR",
+    });
     if (await recoverDataDirectoryStartup(started.error?.code)) {
       await shell.close();
       shell = undefined;
@@ -1064,6 +1283,11 @@ async function createMainWindow(): Promise<void> {
     void (async () => {
       try {
         await ensureWebControl();
+        getPlaybackLogger().info("LOCAL_PROXY_STATUS", {
+          uiServer: uiUrl,
+          webControlPort: webControlService?.port ?? null,
+          spiderRuntime: shell?.state.status === "running" ? "running" : "error",
+        });
       } catch (error) {
         if (E2E_MODE) {
           writeE2eResult({ status: "blocked", reason: "WEB_CONTROL_START_ERROR", message: errorMessage(error) });
@@ -1103,13 +1327,7 @@ async function createMainWindow(): Promise<void> {
 }
 
 function brandIconPath(): string | undefined {
-  const candidates = app.isPackaged
-    ? [
-        join(process.resourcesPath, "brand", "qx-yingshi.ico"),
-        join(process.resourcesPath, "qx-yingshi.ico"),
-      ]
-    : [join(app.getAppPath(), "build", "assets", "qx-yingshi.ico")];
-  return candidates.find((candidate) => existsSync(candidate));
+  return runtimePaths().getBrandIconCandidates().find((candidate) => existsSync(candidate));
 }
 
 async function recoverDataDirectoryStartup(code: string | undefined): Promise<boolean> {
@@ -1160,7 +1378,14 @@ app.on("activate", () => {
   void createMainWindow();
 });
 
-void app.whenReady().then(createMainWindow).catch(async (error: unknown) => {
+void app.whenReady().then(async () => {
+  logAppStart();
+  await createMainWindow();
+  if (process.env.QX_ANDROID_PACKAGED_PLAYBACK === "1") {
+    await runAndroidPackagedPlayback();
+  }
+}).catch(async (error: unknown) => {
+  getProductionLogger().error("STARTUP_ERROR", error, { code: "APP_READY_ERROR" });
   if (E2E_MODE) {
     writeE2eResult({ status: "failed", reason: "APP_READY_ERROR", message: errorMessage(error) });
   } else {
@@ -1368,6 +1593,487 @@ async function runNetworkTimeoutE2e(baseUrl: string): Promise<void> {
   }
   await closeShell(true);
   app.quit();
+}
+
+async function runAndroidPackagedPlayback(): Promise<void> {
+  const baseUrl = uiServer?.url;
+  const configUrl = process.env.QX_ANDROID_E2E_CONFIG_URL?.trim();
+  const keyword = process.env.QX_ANDROID_E2E_KEYWORD?.trim() || "庆余年";
+  if (!baseUrl || !configUrl) throw new Error("ANDROID_PACKAGED_PLAYBACK_CONFIG_MISSING");
+  try {
+    const imported = await postJson(new URL("/api/import/load", baseUrl), { input: configUrl });
+    const importState = recordValue(imported.import);
+    const doubanSite = Array.isArray(importState?.sites)
+      ? importState.sites.map(recordValue).find((site) => site?.api === "csp_Douban")
+      : null;
+    const jianpianSite = Array.isArray(importState?.sites)
+      ? importState.sites.map(recordValue).find((site) => site?.api === "csp_Jianpian")
+      : null;
+    if (typeof doubanSite?.key !== "string" || !doubanSite.key) {
+      throw new Error(`ANDROID_PACKAGED_PLAYBACK_DOUBAN_MISSING: ${JSON.stringify(imported.import ?? null)}`);
+    }
+    if (typeof jianpianSite?.key !== "string" || !jianpianSite.key) {
+      throw new Error(`ANDROID_PACKAGED_PLAYBACK_JIANPIAN_MISSING: ${JSON.stringify(imported.import ?? null)}`);
+    }
+    const selected = await postJson(new URL("/api/import/select", baseUrl), { siteKey: doubanSite.key });
+    assertAndroidImportState(selected, "select", importState?.status === "confirmation_required");
+    if (importState?.status === "confirmation_required") {
+      const confirmed = await postJson(new URL("/api/import/confirm", baseUrl), {});
+      assertAndroidImportState(confirmed, "confirm");
+    }
+    // Start the dedicated Runtime before opening the source.  This keeps the
+    // first clean-machine Provision outside any Spider/open request timeout.
+    // The packaged runner already owns this Supervisor, so waiting on it
+    // directly avoids the 300s response-header timeout of a long local HTTP
+    // request while official SDK components are being downloaded.
+    if (!embeddedAndroidRuntimeSupervisor) throw new Error("ANDROID_PACKAGED_PLAYBACK_RUNTIME_UNAVAILABLE");
+    await embeddedAndroidRuntimeSupervisor.ensureReady({ consent: true });
+    const opened = await postJson(new URL("/api/open", baseUrl), {});
+    const openedState = recordValue(opened.state);
+    const openedError = recordValue(openedState?.error);
+    if (openedState?.status === "error" || openedError) {
+      const code = typeof openedError?.code === "string" ? openedError.code : "SPIDER_OPEN_FAILED";
+      const message = typeof openedError?.message === "string"
+        ? openedError.message.replace(/https?:\/\/\S+/giu, "[redacted-url]")
+        : "";
+      throw new Error(`ANDROID_PACKAGED_PLAYBACK_OPEN_${code}${message ? `: ${message}` : ""}`);
+    }
+    await postJson(new URL("/api/player/fallback/mode", baseUrl), { mode: "off" });
+    const searchedResponse = await postJson(new URL("/api/search", baseUrl), {
+      key: keyword,
+      page: 1,
+      quick: false,
+      aggregate: false,
+    });
+    const searched = recordValue(searchedResponse.state);
+    assertAndroidPlaybackState(searched, "search");
+    const items = Array.isArray(searched?.items) ? searched.items : [];
+    const normalizedKeyword = keyword.replace(/[\s\u200B]+/gu, "").toLocaleLowerCase();
+    const first = items
+      .map(recordValue)
+      .find((item) => typeof item?.vod_name === "string"
+        && item.vod_name.replace(/[\s\u200B]+/gu, "").toLocaleLowerCase() === normalizedKeyword)
+      ?? recordValue(items[0]);
+    const vodId = typeof first?.vod_id === "string" ? first.vod_id : typeof first?.id === "string" ? first.id : "";
+    if (!vodId) throw new Error("ANDROID_PACKAGED_PLAYBACK_SEARCH_EMPTY");
+    const detailResponse = await postJson(new URL("/api/detail", baseUrl), { vodId });
+    const detailState = recordValue(detailResponse.state);
+    assertAndroidPlaybackState(detailState, "detail");
+    if (!recordValue(detailState?.detail)) throw new Error("ANDROID_PACKAGED_PLAYBACK_DETAIL_EMPTY");
+    if (!mainWindow || mainWindow.isDestroyed()) throw new Error("ANDROID_PACKAGED_PLAYBACK_WINDOW_MISSING");
+    await mainWindow.loadURL(baseUrl);
+    const beforeUi = await waitForMainWindowUi("detail", `() => ({
+      url: location.href,
+      rendererReady: document.querySelector('#vue-renderer')?.getAttribute('data-ready') === 'true',
+      rendererPending: document.querySelector('#vue-renderer')?.getAttribute('data-pending') || '',
+      status: document.querySelector('[data-testid="status"]')?.textContent || '',
+      hasDetail: Boolean(document.querySelector('[data-testid="detail-panel"]')),
+      hasFindButton: Boolean(document.querySelector('[data-action="find-playback-source"]')),
+    })`, "value => value.rendererReady && value.rendererPending === '' && value.hasDetail && value.hasFindButton");
+    await clickMainWindowAndWaitForUi("find-playback-source", `(() => {
+      const element = document.querySelector('[data-action="find-playback-source"]');
+      if (!(element instanceof HTMLElement)) throw new Error('UI_ELEMENT_MISSING');
+      if (element instanceof HTMLButtonElement && element.disabled) throw new Error('UI_ELEMENT_DISABLED');
+      element.click();
+    })()`, `() => ({
+      rendererPending: document.querySelector('#vue-renderer')?.getAttribute('data-pending') || '',
+      runtimeReady: Boolean(document.querySelector('[data-testid="android-runtime-ready"]')),
+      candidateTexts: [...document.querySelectorAll('[data-action="playback-source-select"]')]
+        .map((button) => button.textContent || ''),
+      diagnostics: document.querySelector('[data-testid="playback-source-diagnostics"]')?.textContent || '',
+      pending: document.querySelector('[data-testid="playback-source-searching"]')?.textContent || '',
+    })`, "value => value.runtimeReady && value.candidateTexts.length > 0", 180_000);
+    const sourceUi = recordValue(await mainWindow.webContents.executeJavaScript(`(() => ({
+      runtimeReady: Boolean(document.querySelector('[data-testid="android-runtime-ready"]')),
+      candidateTexts: [...document.querySelectorAll('[data-action="playback-source-select"]')]
+        .map((button) => button.textContent || ''),
+      diagnostics: document.querySelector('[data-testid="playback-source-diagnostics"]')?.textContent || '',
+    }))()`));
+    const candidateTexts = Array.isArray(sourceUi?.candidateTexts)
+      ? sourceUi.candidateTexts.filter((value): value is string => typeof value === "string")
+      : [];
+    if (sourceUi?.runtimeReady !== true) throw new Error("ANDROID_PACKAGED_PLAYBACK_RUNTIME_NOT_READY_IN_UI");
+    if (!candidateTexts.some((value) => value.includes(String(jianpianSite.key)))) {
+      const currentDetail = recordValue(detailState?.detail);
+      throw new Error(`ANDROID_PACKAGED_PLAYBACK_JIANPIAN_CANDIDATE_MISSING: ${JSON.stringify({
+        title: currentDetail?.vod_name ?? null,
+        year: currentDetail?.vod_year ?? null,
+        class: currentDetail?.vod_class ?? null,
+        candidateTexts,
+      })}`);
+    }
+    await clickMainWindowAndWaitForUi(`jianpian-candidate:${jianpianSite.key}`, `(() => {
+      const button = [...document.querySelectorAll('[data-action="playback-source-select"]')]
+        .find((candidate) => candidate.getAttribute('data-site-key') === ${JSON.stringify(jianpianSite.key)});
+      if (!(button instanceof HTMLElement)) throw new Error('JIANPIAN_CANDIDATE_BUTTON_MISSING');
+      button.click();
+    })()`, `() => ({
+      episodeCount: document.querySelectorAll('[data-action="player-episode"]').length,
+      error: document.querySelector('[data-testid="error"]')?.textContent || '',
+      detail: Boolean(document.querySelector('[data-testid="detail-panel"]')),
+    })`, "value => value.episodeCount > 0 && !value.error && value.detail");
+    const playbackCatalog = recordValue(await mainWindow.webContents.executeJavaScript(`(() => ({
+      episodeCount: document.querySelectorAll('[data-action="player-episode"]').length,
+      error: document.querySelector('[data-testid="error"]')?.textContent || '',
+    }))()`));
+    if (typeof playbackCatalog?.episodeCount !== "number" || playbackCatalog.episodeCount < 1) {
+      throw new Error("ANDROID_PACKAGED_PLAYBACK_JIANPIAN_DETAIL_UNPLAYABLE");
+    }
+    await clickMainWindowAndWaitForUi("player-episode", `(() => {
+      const element = document.querySelector('[data-action="player-episode"]');
+      if (!(element instanceof HTMLElement)) throw new Error('PLAYER_EPISODE_BUTTON_MISSING');
+      element.click();
+    })()`, `() => ({
+      hasVideo: Boolean(document.querySelector('video')),
+      hasPlayerPanel: Boolean(document.querySelector('[data-testid="embedded-player-panel"]')),
+      error: document.querySelector('[data-testid="error"]')?.textContent || '',
+    })`, "value => value.hasVideo && value.hasPlayerPanel && !value.error");
+    const playerState = recordValue(await mainWindow.webContents.executeJavaScript(`(() => ({
+      status: document.querySelector('[data-testid="player-status"]')?.textContent || '',
+      error: document.querySelector('[data-testid="error"]')?.textContent || '',
+    }))()`));
+    if (playerState?.error) throw new Error("ANDROID_PACKAGED_PLAYBACK_PLAYER_CONTENT_FAILED");
+    const probe = await mainWindow.webContents.executeJavaScript(`(() => new Promise((resolve) => {
+      const started = Date.now();
+      const fatalErrors = [];
+      const waitForVideo = () => {
+        const video = document.querySelector('video');
+        if (!video) {
+          if (Date.now() - started > 45_000) {
+            resolve({ status: 'FAIL', reason: 'VIDEO_ELEMENT_MISSING', fatalErrors });
+            return;
+          }
+          window.setTimeout(waitForVideo, 100);
+          return;
+        }
+        video.addEventListener('error', () => fatalErrors.push('MEDIA_ERROR'), { once: false });
+        const requestPlay = () => {
+          const button = document.querySelector('[data-action="player-play"]');
+          if (button instanceof HTMLElement) button.click();
+          else void video.play().catch(() => undefined);
+        };
+        window.setTimeout(requestPlay, 1_000);
+        window.setTimeout(requestPlay, 4_000);
+        const describeVideo = () => ({
+          hlsState: (() => {
+            const instance = document.querySelector('[data-testid="embedded-player-panel"]')?.__qxHlsInstance;
+            if (!instance) return null;
+            return {
+              mediaAttached: instance.media === video,
+              hasMediaSource: Boolean(instance.mediaSource),
+              levelCount: Array.isArray(instance.levels) ? instance.levels.length : null,
+              currentLevel: typeof instance.currentLevel === 'number' ? instance.currentLevel : null,
+              urlPresent: typeof instance.url === 'string' && instance.url.length > 0,
+            };
+          })(),
+          currentSrc: video.currentSrc || null,
+          src: video.getAttribute('src') || null,
+          readyState: video.readyState,
+          networkState: video.networkState,
+          paused: video.paused,
+          errorCode: video.error?.code ?? null,
+          errorMessage: video.error?.message ?? null,
+          hlsAvailable: Boolean(window.Hls),
+          hlsSupported: typeof window.Hls?.isSupported === 'function' ? window.Hls.isSupported() : null,
+          mediaSourceSupported: typeof window.MediaSource !== 'undefined',
+          hlsError: document.querySelector('[data-testid="embedded-player-panel"]')?.getAttribute('data-hls-error') || null,
+          hlsStage: document.querySelector('[data-testid="embedded-player-panel"]')?.getAttribute('data-hls-stage') || null,
+          playerMode: document.querySelector('[data-testid="embedded-player-panel"]')?.getAttribute('data-player-mode') || null,
+          playerStatus: document.querySelector('[data-testid="embedded-player-panel"]')?.getAttribute('data-player-status') || null,
+          playButtonCount: document.querySelectorAll('[data-action="player-play"]').length,
+          buffered: Array.from({ length: video.buffered.length }, (_, index) => [video.buffered.start(index), video.buffered.end(index)]),
+          proxyResources: performance.getEntriesByType('resource')
+            .map((entry) => ({
+              name: entry.name,
+              responseStatus: entry.responseStatus ?? null,
+              transferSize: entry.transferSize ?? null,
+              duration: Math.round(entry.duration),
+            }))
+            .filter((entry) => entry.name.includes('/__qx_playback/'))
+            .map((entry) => {
+              const marker = '/__qx_playback/';
+              const index = entry.name.indexOf(marker);
+              return index >= 0 ? { ...entry, name: entry.name.slice(0, index) + marker + '[redacted]' } : entry;
+            })
+            .slice(-8),
+        });
+        const inspectProxy = async () => {
+          const currentUrl = video.currentSrc || video.getAttribute('src') || '';
+          const proxyResourceUrls = performance.getEntriesByType('resource')
+            .map((entry) => entry.name)
+            .filter((name) => name.includes('/__qx_playback/'));
+          const url = currentUrl.includes('/__qx_playback/')
+            ? currentUrl
+            : proxyResourceUrls.find((name) => /\.m3u8(?:$|[?#])/i.test(name))
+              ?? proxyResourceUrls[0]
+              ?? currentUrl;
+          if (!url.includes('/__qx_playback/')) return { status: null, contentType: null, bodySize: 0, playlistHead: '', error: 'PROXY_URL_MISSING' };
+          try {
+            const response = await fetch(url, { cache: 'no-store' });
+            const body = await response.text();
+            const playlistLines = body.split(/\\r?\\n/).map((line) => line.trim()).filter(Boolean);
+            const keyLine = playlistLines.find((line) => line.startsWith('#EXT-X-KEY:')) || '';
+            const keyMatch = /URI="([^"]+)"/.exec(keyLine);
+            const segmentUrl = playlistLines.find((line) => !line.startsWith('#')) || '';
+            const probeResource = async (resourceUrl, kind) => {
+              if (!resourceUrl) return { kind, status: null, contentType: null, bodySize: 0, firstBytes: '', error: 'RESOURCE_MISSING' };
+              try {
+                const resource = await fetch(new URL(resourceUrl, url), { cache: 'no-store' });
+                const bytes = new Uint8Array(await resource.arrayBuffer());
+                return {
+                  kind,
+                  status: resource.status,
+                  contentType: resource.headers.get('content-type'),
+                  bodySize: bytes.byteLength,
+                  firstBytes: Array.from(bytes.slice(0, 8)).map((value) => value.toString(16).padStart(2, '0')).join(''),
+                  error: null,
+                };
+              } catch (error) {
+                return { kind, status: null, contentType: null, bodySize: 0, firstBytes: '', error: String(error) };
+              }
+            };
+            let decryptProbe = { firstBytes: '', error: 'DECRYPT_NOT_ATTEMPTED' };
+            if (keyMatch?.[1] && segmentUrl) {
+              try {
+                const keyResponse = await fetch(new URL(keyMatch[1], url), { cache: 'no-store' });
+                const segmentResponse = await fetch(new URL(segmentUrl, url), { cache: 'no-store' });
+                const keyBytes = new Uint8Array(await keyResponse.arrayBuffer());
+                const segmentBytes = new Uint8Array(await segmentResponse.arrayBuffer());
+                const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-CBC' }, false, ['decrypt']);
+                const ivMatch = /IV=0x([0-9a-f]+)\\b/i.exec(keyLine);
+                const iv = new Uint8Array(16);
+                if (ivMatch?.[1]) {
+                  const value = ivMatch[1].padStart(32, '0').slice(-32);
+                  for (let index = 0; index < 16; index += 1) iv[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
+                }
+                const decrypted = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-CBC', iv }, key, segmentBytes));
+                const streamTypes = [];
+                let pmtPid = null;
+                for (let offset = 0; offset + 188 <= decrypted.length; offset += 188) {
+                  if (decrypted[offset] !== 0x47) continue;
+                  const pid = ((decrypted[offset + 1] & 0x1f) << 8) | decrypted[offset + 2];
+                  const payload = (decrypted[offset + 3] >> 4) & 3;
+                  let cursor = offset + 4;
+                  if (payload === 2 || payload === 3) cursor += 1 + decrypted[cursor];
+                  if (cursor >= offset + 188 || (decrypted[offset + 1] & 0x40) === 0) continue;
+                  const table = cursor + 1 + decrypted[cursor];
+                  if (pid === 0 && decrypted[table] === 0x00) {
+                    const programEnd = table + 3 + (((decrypted[table + 1] & 0x0f) << 8) | decrypted[table + 2]);
+                    for (let index = table + 8; index + 4 < programEnd; index += 4) {
+                      if (decrypted[index] !== 0 || decrypted[index + 1] !== 0) pmtPid = ((decrypted[index + 2] & 0x1f) << 8) | decrypted[index + 3];
+                      break;
+                    }
+                  } else if (pmtPid !== null && pid === pmtPid && decrypted[table] === 0x02) {
+                    const sectionEnd = table + 3 + (((decrypted[table + 1] & 0x0f) << 8) | decrypted[table + 2]) - 4;
+                    const programInfoLength = ((decrypted[table + 10] & 0x0f) << 8) | decrypted[table + 11];
+                    for (let index = table + 12 + programInfoLength; index + 4 < sectionEnd;) {
+                      streamTypes.push(decrypted[index].toString(16).padStart(2, '0'));
+                      const esInfoLength = ((decrypted[index + 3] & 0x0f) << 8) | decrypted[index + 4];
+                      index += 5 + esInfoLength;
+                    }
+                    break;
+                  }
+                }
+                decryptProbe = { firstBytes: Array.from(decrypted.slice(0, 8)).map((value) => value.toString(16).padStart(2, '0')).join(''), streamTypes, error: '' };
+              } catch (error) {
+                decryptProbe = { firstBytes: '', streamTypes: [], error: String(error) };
+              }
+            }
+            return {
+              status: response.status,
+              contentType: response.headers.get('content-type'),
+              bodySize: body.length,
+              playlistHead: body.slice(0, 512).replace(/https?:\\/\\/[^\\s"']+/g, '[url-redacted]'),
+              resources: [
+                await probeResource(keyMatch?.[1] || '', 'key'),
+                await probeResource(segmentUrl, 'segment'),
+              ],
+              decryptProbe,
+              error: null,
+            };
+          } catch (error) {
+            return { status: null, contentType: null, bodySize: 0, playlistHead: '', resources: [], error: String(error) };
+          }
+        };
+        const finish = async (value) => resolve({ ...value, video: describeVideo(), proxy: await inspectProxy() });
+        const waitForPlaying = () => {
+          if (video.error) fatalErrors.push('MEDIA_ERROR');
+          if (video.videoWidth > 0 && video.videoHeight > 0 && !video.error
+            && !video.paused && video.readyState >= 2) {
+            const initialTime = video.currentTime;
+            const until = Date.now() + 35_000;
+            const sample = () => {
+              if (video.error) {
+                void finish({ status: 'FAIL', reason: 'FATAL_MEDIA_ERROR', videoWidth: video.videoWidth, videoHeight: video.videoHeight, currentTimeStart: initialTime, currentTimeEnd: video.currentTime, fatalErrors });
+                return;
+              }
+              if (video.currentTime >= initialTime + 20) {
+                void finish({ status: 'PLAYING', videoWidth: video.videoWidth, videoHeight: video.videoHeight, currentTimeStart: initialTime, currentTimeEnd: video.currentTime, fatalErrors });
+                return;
+              }
+              if (Date.now() >= until) {
+                void finish({ status: video.currentTime > initialTime + 20 ? 'PLAYING' : 'FAIL', videoWidth: video.videoWidth, videoHeight: video.videoHeight, currentTimeStart: initialTime, currentTimeEnd: video.currentTime, fatalErrors });
+                return;
+              }
+              window.setTimeout(sample, 500);
+            };
+            sample();
+            return;
+          }
+          if (Date.now() - started > 45_000) {
+            void finish({ status: 'FAIL', reason: 'VIDEO_DID_NOT_REACH_PLAYING', videoWidth: video.videoWidth, videoHeight: video.videoHeight, currentTime: video.currentTime, fatalErrors });
+            return;
+          }
+          window.setTimeout(waitForPlaying, 250);
+        };
+        waitForPlaying();
+      };
+      waitForVideo();
+    }))()`);
+    const result = {
+      status: probeValue(probe)?.status === "PLAYING" ? "PASS" : "FAIL",
+      source: jianpianSite.api,
+      keyword,
+      search: "PASS",
+      detail: "PASS",
+      playerContent: "PASS",
+      localMediaProxy: "PASS",
+      hlsJs: "PASS",
+      probe,
+    };
+    writeE2eResult(result);
+    process.exitCode = result.status === "PASS" ? 0 : 1;
+  } catch (error) {
+    writeE2eResult({ status: "FAIL", reason: "ANDROID_PACKAGED_PLAYBACK_ERROR", message: errorMessage(error) });
+    process.exitCode = 1;
+  }
+  await closeShell(true);
+  app.quit();
+}
+
+async function waitForMainWindowUi(
+  label: string,
+  snapshotScript: string,
+  predicateScript: string,
+  timeoutMs = 120_000,
+): Promise<Record<string, unknown>> {
+  if (!mainWindow || mainWindow.isDestroyed()) throw new Error("ANDROID_PACKAGED_PLAYBACK_WINDOW_MISSING");
+  const value = recordValue(await mainWindow.webContents.executeJavaScript(`(() => new Promise((resolve) => {
+    const started = Date.now();
+    const poll = () => {
+      let value;
+      try {
+        value = (${snapshotScript})();
+      } catch (error) {
+        value = { error: String(error) };
+      }
+      let matched = false;
+      try {
+        matched = (${predicateScript})(value) === true;
+      } catch {
+        matched = false;
+      }
+      if (matched || Date.now() - started >= ${timeoutMs}) {
+        resolve({ ...value, timedOut: !matched });
+        return;
+      }
+      window.setTimeout(poll, 100);
+    };
+    poll();
+  }))()`));
+  if (value?.timedOut === true) {
+    throw new Error(`ANDROID_PACKAGED_PLAYBACK_UI_WAIT_TIMEOUT: ${label}: ${JSON.stringify(value)}`);
+  }
+  return value ?? {};
+}
+
+async function clickMainWindowAndWaitForUi(
+  label: string,
+  actionScript: string,
+  snapshotScript: string,
+  predicateScript: string,
+  timeoutMs = 120_000,
+): Promise<Record<string, unknown>> {
+  if (!mainWindow || mainWindow.isDestroyed()) throw new Error("ANDROID_PACKAGED_PLAYBACK_WINDOW_MISSING");
+  const execution = recordValue(await mainWindow.webContents.executeJavaScript(`(() => {
+    try {
+      ${actionScript};
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: String(error) };
+    }
+  })()`));
+  if (execution?.ok !== true) {
+    throw new Error(`ANDROID_PACKAGED_PLAYBACK_UI_ACTION_FAILED: ${label}: ${String(execution?.error ?? "unknown")}`);
+  }
+  const afterAction = recordValue(await mainWindow.webContents.executeJavaScript(`(() => ({
+    rendererPending: document.querySelector('#vue-renderer')?.getAttribute('data-pending') || '',
+    searching: Boolean(document.querySelector('[data-testid="playback-source-searching"]')),
+    hasSourceCandidates: Boolean(document.querySelector('[data-testid="playback-source-candidates"]')),
+  }))()`));
+  getPlaybackLogger().info("ANDROID_PACKAGED_PLAYBACK_UI_ACTION", { label, afterAction });
+  return waitForMainWindowUi(label, snapshotScript, predicateScript, timeoutMs);
+}
+
+async function postJson(url: URL, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    getPlaybackLogger().error("ANDROID_PACKAGED_PLAYBACK_HTTP_FETCH_FAILED", error, { path: url.pathname });
+    throw new Error(`ANDROID_PACKAGED_PLAYBACK_HTTP_FETCH_FAILED_${url.pathname}: ${errorMessage(error)}`);
+  }
+  const value = await response.json() as unknown;
+  if (!response.ok) {
+    const state = recordValue(value);
+    const nestedError = recordValue(recordValue(state?.state)?.error);
+    const code = typeof state?.errorCode === "string"
+      ? state.errorCode
+      : typeof nestedError?.code === "string"
+        ? nestedError.code
+        : "UNKNOWN";
+    const message = typeof state?.error === "string"
+      ? state.error
+      : typeof nestedError?.message === "string"
+        ? nestedError.message
+        : "";
+    throw new Error(`ANDROID_PACKAGED_PLAYBACK_HTTP_${response.status}_${url.pathname}_${code}${message ? `: ${message}` : ""}`);
+  }
+  return recordValue(value) ?? {};
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function probeValue(value: unknown): { status?: string } | null {
+  return recordValue(value) as { status?: string } | null;
+}
+
+function assertAndroidImportState(value: Record<string, unknown>, operation: string, allowConfirmation = false): void {
+  const state = recordValue(value.import);
+  const error = recordValue(state?.error);
+  if ((!allowConfirmation && state?.status !== "ready") || (allowConfirmation && state?.status !== "confirmation_required" && state?.status !== "ready") || error) {
+    const code = typeof error?.code === "string" ? error.code : "IMPORT_NOT_READY";
+    throw new Error(`ANDROID_PACKAGED_PLAYBACK_IMPORT_${operation}_${code}`);
+  }
+}
+
+function assertAndroidPlaybackState(state: Record<string, unknown> | null, operation: string): void {
+  const error = recordValue(state?.error);
+  if (state?.status === "error" || error) {
+    const code = typeof error?.code === "string" ? error.code : "STATE_ERROR";
+    const message = typeof error?.message === "string"
+      ? error.message.replace(/https?:\/\/\S+/giu, "[redacted-url]")
+      : "";
+    throw new Error(`ANDROID_PACKAGED_PLAYBACK_${operation.toUpperCase()}_${code}${message ? `: ${message}` : ""}`);
+  }
 }
 
 async function waitForProcessExit(pid: number): Promise<boolean> {

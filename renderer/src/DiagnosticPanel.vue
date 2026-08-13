@@ -3,18 +3,18 @@ import { computed } from "vue";
 
 import AppErrorDetails from "./AppErrorDetails.vue";
 import { toAppError } from "./error.js";
-import { displaySource } from "./safe-display.js";
 import type { AppError, RendererError } from "./state.js";
 
 const props = withDefaults(defineProps<{
   code?: string | null;
   message?: string | null;
   source?: string;
+  sourceName?: string;
   playerStatus?: string;
   error?: AppError;
   diagnostic?: RendererError | null;
   showDebug?: boolean;
-}>(), { code: null, source: "当前来源", playerStatus: "idle", showDebug: false });
+}>(), { code: null, source: "当前来源", sourceName: "当前来源", playerStatus: "idle", showDebug: false });
 
 const emit = defineEmits<{ openDebug: [] }>();
 
@@ -39,7 +39,7 @@ const diagnosticSteps = computed(() => [
   <details v-else class="diagnostic-panel" data-testid="diagnostic-panel" data-od-id="diagnostic-panel">
     <summary>查看诊断</summary>
     <dl>
-      <div><dt>来源</dt><dd>{{ displaySource(source) }}</dd></div>
+      <div><dt>来源</dt><dd>{{ props.sourceName }}</dd></div>
       <div><dt>播放器</dt><dd>{{ playerStatus }}</dd></div>
       <div v-if="code"><dt>错误码</dt><dd>{{ code }}</dd></div>
       <div v-if="message"><dt>说明</dt><dd>{{ message }}</dd></div>

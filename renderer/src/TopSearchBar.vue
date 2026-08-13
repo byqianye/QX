@@ -2,11 +2,11 @@
 import { ref } from "vue";
 
 import Icon from "./Icon.vue";
-import { displaySource } from "./safe-display.js";
 
 const emit = defineEmits<{ search: [query: string] }>();
 const props = defineProps<{
   source: string;
+  sourceName?: string;
   api: string | null;
   pending: boolean;
   initialQuery?: string;
@@ -28,9 +28,8 @@ function submit(): void {
     </form>
     <div class="top-context" data-testid="source-context">
       <span class="context-kicker">来源</span>
-      <strong>{{ displaySource(source) }}</strong>
-      <span class="context-divider" aria-hidden="true">/</span>
-      <span>{{ api ? displaySource(api) : "等待选择" }}</span>
+      <strong>{{ props.sourceName ?? "当前来源" }}</strong>
+      <span v-if="!api" class="context-status">等待选择</span>
     </div>
   </header>
 </template>

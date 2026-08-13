@@ -18,10 +18,10 @@ describe("Spike18 bundled JRE specification", () => {
   });
 
   it("builds the minimal JRE with the required modules and size flags", () => {
-    expect(MINIMAL_JRE_MODULES).toEqual(["java.base", "java.net.http"]);
+    expect(MINIMAL_JRE_MODULES).toEqual(["java.base", "java.net.http", "java.xml", "java.logging", "java.desktop", "jdk.crypto.ec"]);
     expect(jlinkArguments("C:\\runtime\\jre")).toEqual([
       "--add-modules",
-      "java.base,java.net.http",
+      "java.base,java.net.http,java.xml,java.logging,java.desktop,jdk.crypto.ec",
       "--strip-debug",
       "--no-man-pages",
       "--no-header-files",

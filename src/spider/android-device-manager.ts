@@ -43,6 +43,7 @@ export interface AndroidDeviceManagerPort {
   push(localPath: string, remotePath: string): Promise<void>;
   shell(args: readonly string[]): Promise<string>;
   waitForBoot?(): Promise<AndroidDevice>;
+  waitForNetwork?(): Promise<void>;
 }
 
 export interface AndroidDeviceManagerOptions {
@@ -55,12 +56,16 @@ export interface AndroidDeviceManagerOptions {
   installTimeoutMs?: number;
   bootTimeoutMs?: number;
   bootPollMs?: number;
+  networkTimeoutMs?: number;
+  networkPollMs?: number;
+  networkProbeHost?: string;
   env?: NodeJS.ProcessEnv;
+  diagnosticLogger?: (event: string, details: Record<string, unknown>) => void;
 }
 
 export class AndroidDeviceManagerError extends Error {
   public constructor(
-    public readonly code: "ANDROID_SDK_NOT_FOUND" | "ADB_NOT_FOUND" | "ANDROID_DEVICE_NOT_FOUND" | "ANDROID_DEVICE_SERIAL_REQUIRED" | "ANDROID_DEVICE_BOOT_TIMEOUT" | "ANDROID_HOST_NOT_INSTALLED" | "ADB_COMMAND_FAILED",
+    public readonly code: "ANDROID_SDK_NOT_FOUND" | "ADB_NOT_FOUND" | "ANDROID_DEVICE_NOT_FOUND" | "ANDROID_DEVICE_SERIAL_REQUIRED" | "ANDROID_DEVICE_BOOT_TIMEOUT" | "ANDROID_DEVICE_NETWORK_TIMEOUT" | "ANDROID_HOST_NOT_INSTALLED" | "ADB_COMMAND_FAILED",
     message: string,
     public readonly diagnostics?: Readonly<Record<string, unknown>>,
     options?: ErrorOptions,
@@ -76,7 +81,7 @@ interface AdbResult {
 }
 
 export class AndroidDeviceManager implements AndroidDeviceManagerPort {
-  private readonly options: Required<Pick<AndroidDeviceManagerOptions, "commandTimeoutMs" | "installTimeoutMs" | "bootTimeoutMs" | "bootPollMs" | "hostPackage" | "hostActivity">> & AndroidDeviceManagerOptions;
+  private readonly options: Required<Pick<AndroidDeviceManagerOptions, "commandTimeoutMs" | "installTimeoutMs" | "bootTimeoutMs" | "bootPollMs" | "networkTimeoutMs" | "networkPollMs" | "networkProbeHost" | "hostPackage" | "hostActivity">> & AndroidDeviceManagerOptions;
   private adbPathValue: string | undefined;
   private emulatorPathValue: string | undefined;
   private deviceValue: AndroidDevice | undefined;
@@ -87,6 +92,9 @@ export class AndroidDeviceManager implements AndroidDeviceManagerPort {
       installTimeoutMs: 120_000,
       bootTimeoutMs: 120_000,
       bootPollMs: 1_000,
+      networkTimeoutMs: 90_000,
+      networkPollMs: 1_000,
+      networkProbeHost: "api.ztcgi.com",
       hostPackage: "com.qx.yingshi.androidhost",
       hostActivity: "com.qx.yingshi.androidhost.MainActivity",
       ...options,
@@ -188,21 +196,77 @@ export class AndroidDeviceManager implements AndroidDeviceManagerPort {
   }
 
   public async waitForBoot(): Promise<AndroidDevice> {
-    const device = this.deviceValue ?? await this.requireDevice();
     const deadline = Date.now() + this.options.bootTimeoutMs;
-    let current = device;
+    let current: AndroidDevice | undefined = this.deviceValue;
+    let devices: readonly AndroidDevice[] = [];
+    let lastObservedState = "";
     while (Date.now() <= deadline) {
-      current = await this.enrichDevice(current);
-      if (current.bootCompleted) {
-        this.deviceValue = current;
-        return current;
+      try {
+        devices = await this.listDevices();
+        const selected = selectDevice(devices, this.options.serial);
+        const observedState = selected?.state ?? "missing";
+        if (observedState !== lastObservedState) {
+          lastObservedState = observedState;
+          this.options.diagnosticLogger?.("ANDROID_RUNTIME_BOOT_DEVICE_STATE", {
+            selectedSerial: selected?.serial ?? null,
+            selectedState: observedState,
+            devices,
+          });
+        }
+        current = selected ?? current;
+        if (selected?.state === "device") {
+          current = { ...selected, bootCompleted: await this.readBootCompleted(selected.serial) };
+          this.options.diagnosticLogger?.("ANDROID_RUNTIME_BOOT_DEVICE_PROPS", {
+            serial: current.serial,
+            bootCompleted: current.bootCompleted ?? null,
+          });
+          if (current.bootCompleted) {
+            this.deviceValue = current;
+            return current;
+          }
+        }
+      } catch {
+        // The emulator's ADB transport is commonly offline while it boots.
+        // Keep polling until the bounded boot deadline instead of failing on
+        // the first offline snapshot.
       }
       await delay(Math.min(this.options.bootPollMs, Math.max(1, deadline - Date.now())));
     }
     throw new AndroidDeviceManagerError(
       "ANDROID_DEVICE_BOOT_TIMEOUT",
-      `Android device did not finish booting within ${this.options.bootTimeoutMs}ms: ${current.serial}`,
-      { serial: current.serial, timeoutMs: this.options.bootTimeoutMs, device: current },
+      `Android device did not finish booting within ${this.options.bootTimeoutMs}ms: ${current?.serial ?? this.options.serial ?? "unknown"}`,
+      { serial: current?.serial ?? this.options.serial ?? "", timeoutMs: this.options.bootTimeoutMs, device: current, devices },
+    );
+  }
+
+  private async readBootCompleted(serial: string): Promise<boolean> {
+    try {
+      const result = await this.runAdb(["-s", serial, "shell", "getprop", "sys.boot_completed"], false);
+      return result.stdout.trim() === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  public async waitForNetwork(): Promise<void> {
+    const deadline = Date.now() + this.options.networkTimeoutMs;
+    let lastDiagnostics = "";
+    while (Date.now() <= deadline) {
+      try {
+        const connectivity = await this.shell(["dumpsys", "connectivity"]);
+        lastDiagnostics = summarizeNetworkDiagnostics(connectivity);
+        if (isAndroidNetworkValidated(connectivity)) return;
+        const probe = await this.shell(["ping", "-c", "1", "-W", "3", this.options.networkProbeHost]);
+        if (isAndroidNetworkReachable(probe)) return;
+      } catch {
+        // The emulator can briefly reject shell calls while its network service starts.
+      }
+      await delay(Math.min(this.options.networkPollMs, Math.max(1, deadline - Date.now())));
+    }
+    throw new AndroidDeviceManagerError(
+      "ANDROID_DEVICE_NETWORK_TIMEOUT",
+      `Android device network was not validated within ${this.options.networkTimeoutMs}ms: ${this.deviceValue?.serial ?? this.options.serial ?? "unknown"}`,
+      { serial: this.deviceValue?.serial ?? this.options.serial ?? "", timeoutMs: this.options.networkTimeoutMs, diagnostics: lastDiagnostics },
     );
   }
 
@@ -222,7 +286,16 @@ export class AndroidDeviceManager implements AndroidDeviceManagerPort {
 
   public async install(apkPath: string): Promise<void> {
     const device = await this.requireDevice();
-    await this.runAdb(["-s", device.serial, "install", "-r", apkPath], false, this.options.installTimeoutMs);
+    try {
+      await this.runAdb(["-s", device.serial, "install", "-r", apkPath], false, this.options.installTimeoutMs);
+    } catch (error) {
+      if (!isInstallSignatureMismatch(error)) throw error;
+      // A managed AVD can retain the previous Host APK across app upgrades.
+      // Remove only that package, then install the verified current artifact.
+      await this.runAdb(["-s", device.serial, "uninstall", this.options.hostPackage], false, this.options.installTimeoutMs)
+        .catch(() => undefined);
+      await this.runAdb(["-s", device.serial, "install", "-r", apkPath], false, this.options.installTimeoutMs);
+    }
     if (!(await this.isHostInstalled())) {
       throw new AndroidDeviceManagerError(
         "ANDROID_HOST_NOT_INSTALLED",
@@ -373,6 +446,7 @@ function resolveSdkPath(explicit: string | undefined, env: NodeJS.ProcessEnv): s
   const candidates = [
     explicit,
     env.QX_ANDROID_SDK_PATH,
+    env.QX_ANDROID_HOME,
     env.ANDROID_HOME,
     env.ANDROID_SDK_ROOT,
     process.platform === "win32" && env.LOCALAPPDATA ? join(env.LOCALAPPDATA, "Android", "Sdk") : undefined,
@@ -380,6 +454,15 @@ function resolveSdkPath(explicit: string | undefined, env: NodeJS.ProcessEnv): s
     join(homedir(), ".workbuddy", "android-toolchain", "sdk"),
   ].filter((value): value is string => typeof value === "string" && value.length > 0);
   return candidates.find((value) => existsSync(value));
+}
+
+function isInstallSignatureMismatch(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const value = error as { message?: unknown; diagnostics?: { stdout?: unknown; stderr?: unknown } };
+  return [value.message, value.diagnostics?.stdout, value.diagnostics?.stderr]
+    .filter((item): item is string => typeof item === "string")
+    .join("\n")
+    .includes("INSTALL_FAILED_UPDATE_INCOMPATIBLE");
 }
 
 function findOnPath(command: string, pathValue: string | undefined): string | undefined {
@@ -454,6 +537,22 @@ export function parseAndroidDeviceProperties(stdout: string): Pick<AndroidDevice
     ...(abi ? { abi } : {}),
     bootCompleted: boot,
   };
+}
+
+export function isAndroidNetworkValidated(output: string): boolean {
+  const currentNetworks = output.split(/Current Networks:\s*/iu)[1]?.split(/Nat464Xlat:/iu)[0] ?? "";
+  return /\bIS_VALIDATED\b/iu.test(currentNetworks)
+    || /Capabilities:[^\r\n]*[&\s]VALIDATED(?:[&\s]|$)/iu.test(currentNetworks);
+}
+
+export function isAndroidNetworkReachable(output: string): boolean {
+  return /(?:1\s+packets?\s+transmitted,\s*)?1\s+(?:packets?\s+)?received/iu.test(output)
+    || /(?:ttl|time=)/iu.test(output);
+}
+
+function summarizeNetworkDiagnostics(output: string): string {
+  const line = output.split(/\r?\n/u).find((candidate) => /VALIDAT(?:ED|ION)/iu.test(candidate));
+  return line?.trim().slice(0, 500) ?? "";
 }
 
 function delay(milliseconds: number): Promise<void> {

@@ -2,7 +2,7 @@
 import type { StorageUiState } from "../../src/storage/storage-types.js";
 
 const props = defineProps<{ storage: StorageUiState }>();
-const appVersion = "0.1.0";
+const appVersion = "0.9.0-rc.1";
 const runtimeVersions = [
   "Temurin JRE 21.0.7+6",
   "CPython 3.12.10",

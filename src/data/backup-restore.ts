@@ -107,7 +107,7 @@ export class BackupRestoreService {
     this.databasePath = resolve(options.databasePath);
     this.backupsDirectory = resolve(options.backupsDirectory);
     this.tempDirectory = resolve(options.tempDirectory ?? join(this.dataRoot, "temp"));
-    this.appVersion = options.appVersion ?? "0.1.0";
+    this.appVersion = options.appVersion ?? "0.9.0-rc.1";
     this.now = options.now ?? Date.now;
     this.limits = { ...DEFAULT_LIMITS, ...(options.limits ?? {}) };
   }

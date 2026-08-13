@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createDecipheriv, randomBytes } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { isIP } from "node:net";
@@ -15,6 +15,7 @@ export interface PlaybackProxySource {
   headers: Record<string, string>;
   sourceId?: string;
   playbackSessionId?: string;
+  episodeId?: string;
 }
 
 export interface PlaybackProxyServerOptions {
@@ -38,6 +39,12 @@ export interface PlaybackProxyServerOptions {
 }
 
 export interface PlaybackProxySession {
+  readonly id?: string;
+  readonly originalUrl?: string;
+  readonly headers?: Record<string, string>;
+  readonly createdAt?: number;
+  readonly sourceKey?: string;
+  readonly episodeId?: string;
   readonly url: string;
   readonly token: string;
   readonly expiresAt: number;
@@ -57,6 +64,7 @@ export class PlaybackProxyError extends Error {
 interface ProxySessionState {
   token: string;
   origin: string;
+  origins: Set<string>;
   headers: Record<string, string>;
   createdAt: number;
   expiresAt: number;
@@ -67,6 +75,13 @@ interface ProxySessionState {
   revoked: boolean;
   sourceId: string;
   playbackSessionId: string;
+  segmentCrypto: Map<string, SegmentCrypto>;
+}
+
+interface SegmentCrypto {
+  keyUrl?: string;
+  iv?: Buffer;
+  sequence: number;
 }
 
 interface UpstreamResponse {
@@ -211,6 +226,7 @@ export class PlaybackProxyServer {
     const state: ProxySessionState = {
       token,
       origin: normalized.origin,
+      origins: new Set([normalized.origin]),
       headers: normalized.headers,
       createdAt,
       expiresAt: createdAt + this.sessionTtlMs,
@@ -221,11 +237,18 @@ export class PlaybackProxyServer {
       revoked: false,
       sourceId: source.sourceId ?? "",
       playbackSessionId,
+      segmentCrypto: new Map(),
     };
     this.sessions.set(token, state);
 
     let closed = false;
     return {
+      id: playbackSessionId,
+      originalUrl: normalized.url,
+      headers: { ...normalized.headers },
+      createdAt,
+      sourceKey: source.sourceId ?? "",
+      episodeId: source.episodeId ?? "",
       url: this.resourceUrl(token, rootResource, normalized.url),
       token,
       expiresAt: state.expiresAt,
@@ -391,9 +414,11 @@ export class PlaybackProxyServer {
       return;
     }
     if (isPlaylistResponse(upstream.response, upstream.url)) {
-      const body = await this.readResponse(upstream.response, this.maxPlaylistBytes, controller);
+      const body = normalizePlaylistBody(
+        (await this.readResponse(upstream.response, this.maxPlaylistBytes, controller)).toString("utf8"),
+      );
       const ruled = this.ruleEngine.applyPlaylist(
-        body.toString("utf8"),
+        body,
         upstream.url,
         {
           sourceId: session.sourceId,
@@ -410,6 +435,15 @@ export class PlaybackProxyServer {
     if (Number.isFinite(contentLength) && contentLength > this.maxMediaBytes) {
       await upstream.response.body?.cancel();
       writeProxyError(response, 413, "PLAYBACK_MEDIA_TOO_LARGE");
+      return;
+    }
+    const segmentPlan = session.segmentCrypto.get(initialUrl) ?? session.segmentCrypto.get(upstream.url);
+    if (segmentPlan && isMpegTsCandidate(upstream.response, upstream.url)) {
+      const body = await this.readResponse(upstream.response, this.maxMediaBytes, controller);
+      const transformed = await this.maybeNormalizeMpegTs(session, segmentPlan, body, controller);
+      const output = transformed ?? body;
+      writeUpstreamHeaders(response, upstream.response, responseStatus, output.length);
+      response.end(output);
       return;
     }
     writeUpstreamHeaders(response, upstream.response, responseStatus);
@@ -479,8 +513,13 @@ export class PlaybackProxyServer {
     const signal = controller.signal;
     let url = parseHttpUrl(initialUrl);
     for (let redirects = 0; redirects <= 5; redirects += 1) {
-      await this.assertSafeUrl(url, session.origin);
+      await this.assertSessionUrl(session, url);
       const headers = new Headers(session.headers);
+      if (url.origin !== session.origin) {
+        headers.delete("cookie");
+        headers.delete("authorization");
+        headers.delete("origin");
+      }
       const range = incomingHeaders.range;
       if (typeof range === "string") headers.set("range", range);
       const ifRange = incomingHeaders["if-range"];
@@ -516,15 +555,85 @@ export class PlaybackProxyServer {
   ): Promise<string> {
     const lines = body.split(/\r?\n/);
     const rewritten: string[] = [];
+    const serverDecryptsTs = !lines.some((line) => line.trim().startsWith("#EXT-X-MAP:"))
+      && lines.some((line) => line.trim() && !line.trim().startsWith("#"))
+      && lines
+        .filter((line) => line.trim() && !line.trim().startsWith("#"))
+        .every((line) => {
+          try {
+            return new URL(line.trim(), upstreamUrl).pathname.toLowerCase().endsWith(".ts");
+          } catch {
+            return false;
+          }
+        });
+    let sequence = parseMediaSequence(body);
+    let crypto: SegmentCrypto | undefined;
     for (const line of lines) {
       const trimmed = line.trim();
+      if (trimmed.startsWith("#EXT-X-MEDIA-SEQUENCE:")) {
+        sequence = parseIntegerTag(trimmed.slice("#EXT-X-MEDIA-SEQUENCE:".length), sequence);
+      }
+      if (trimmed.startsWith("#EXT-X-KEY:")) {
+        crypto = await this.parseSegmentCrypto(session, upstreamUrl, trimmed, sequence);
+        if (crypto?.keyUrl && serverDecryptsTs) {
+          rewritten.push("#EXT-X-KEY:METHOD=NONE");
+          continue;
+        }
+      }
       if (!trimmed || trimmed.startsWith("#")) {
         rewritten.push(await this.rewriteUriAttributes(session, upstreamUrl, line));
         continue;
       }
-      rewritten.push(await this.registerResourceUrl(session, new URL(trimmed, upstreamUrl).toString()));
+      const normalized = new URL(trimmed, upstreamUrl).toString();
+      rewritten.push(await this.registerResourceUrl(session, normalized));
+      session.segmentCrypto.set(normalized, crypto ? { ...crypto, ...(crypto.iv ? { iv: Buffer.from(crypto.iv) } : {}) } : { sequence });
+      sequence += 1;
     }
     return rewritten.join("\n");
+  }
+
+  private async parseSegmentCrypto(
+    session: ProxySessionState,
+    upstreamUrl: string,
+    line: string,
+    sequence: number,
+  ): Promise<SegmentCrypto | undefined> {
+    const method = line.match(/METHOD=([^,\s]+)/u)?.[1]?.toUpperCase();
+    if (!method || method === "NONE") return undefined;
+    if (method !== "AES-128") return undefined;
+    const keyValue = line.match(/URI="([^"]+)"/u)?.[1];
+    if (!keyValue) return undefined;
+    const keyUrl = new URL(keyValue, upstreamUrl).toString();
+    await this.assertSessionUrl(session, new URL(keyUrl));
+    const ivValue = line.match(/IV=0x([0-9a-f]+)/iu)?.[1];
+    return {
+      keyUrl,
+      sequence,
+      ...(ivValue ? { iv: hexIv(ivValue) } : {}),
+    };
+  }
+
+  private async maybeNormalizeMpegTs(
+    session: ProxySessionState,
+    plan: SegmentCrypto,
+    body: Buffer,
+    controller: AbortController,
+  ): Promise<Buffer | undefined> {
+    let clear = body;
+    let decrypted = false;
+    if (plan.keyUrl) {
+      try {
+        const keyResponse = await this.fetchFollowingRedirects("GET", session, plan.keyUrl, {}, controller);
+        const key = await this.readResponse(keyResponse.response, 64, controller);
+        if (key.length !== 16) return undefined;
+        const decipher = createDecipheriv("aes-128-cbc", key, plan.iv ?? sequenceIv(plan.sequence));
+        clear = Buffer.concat([decipher.update(body), decipher.final()]);
+        decrypted = true;
+      } catch {
+        return undefined;
+      }
+    }
+    return normalizeMpegTsForBrowser(clear) ?? (decrypted ? clear : undefined);
   }
 
   private async rewriteUriAttributes(
@@ -550,7 +659,7 @@ export class PlaybackProxyServer {
   private async registerResourceUrl(session: ProxySessionState, value: string): Promise<string> {
     const url = parseHttpUrl(value);
     url.hash = "";
-    await this.assertSafeUrl(url, session.origin);
+    await this.assertSessionUrl(session, url);
     const normalized = url.toString();
     let resourceId = session.resourceIds.get(normalized);
     if (!resourceId) {
@@ -559,6 +668,12 @@ export class PlaybackProxyServer {
       session.resources.set(resourceId, normalized);
     }
     return this.resourceUrl(session.token, resourceId, normalized);
+  }
+
+  private async assertSessionUrl(session: ProxySessionState, value: URL): Promise<void> {
+    if (session.origins.has(value.origin)) return;
+    await this.assertSafeUrl(value, value.origin);
+    session.origins.add(value.origin);
   }
 
   private resourceUrl(token: string, resourceId: string, upstreamUrl: string): string {
@@ -604,6 +719,177 @@ function parseHttpUrl(value: string): URL {
     throw new PlaybackProxyError("PLAYBACK_URL_INVALID", "Playback URLs cannot contain credentials.");
   }
   return url;
+}
+
+/**
+ * Some real-world Spider sources return the HLS text as decimal UTF-8 byte
+ * values separated by whitespace. Decode that transport wrapper before the
+ * normal playlist URI rewrite; ordinary playlists pass through unchanged.
+ */
+function normalizePlaylistBody(body: string): string {
+  const trimmed = body.trim();
+  if (!trimmed || !/^(?:\d{1,3}\s+)*\d{1,3}$/u.test(trimmed)) return body;
+  const tokens = trimmed.split(/\s+/u);
+  const bytes = Buffer.allocUnsafe(tokens.length);
+  for (let index = 0; index < tokens.length; index += 1) {
+    const value = Number(tokens[index]);
+    if (!Number.isInteger(value) || value < 0 || value > 255) return body;
+    bytes[index] = value;
+  }
+  const decoded = bytes.toString("utf8");
+  return decoded.replace(/^\uFEFF/u, "").startsWith("#EXTM3U") ? decoded : body;
+}
+
+/**
+ * Some HLS providers put malformed multi-channel AAC in MPEG-TS segments.
+ * Chromium's MSE rejects those segments even though the H.264 video is valid.
+ * Keep ordinary/stereo streams byte-for-byte identical; only rebuild a TS
+ * segment after detecting an AAC channel configuration above stereo.
+ */
+export function normalizeMpegTsForBrowser(input: Buffer): Buffer | undefined {
+  if (input.length < 188 || input[0] !== 0x47) return undefined;
+  const packets = parseTsPackets(input);
+  const pat = packets.find((packet) => packet.pid === 0 && packet.payloadStart);
+  if (!pat) return undefined;
+  const patSection = sectionFromPacket(pat);
+  if (!patSection || patSection.length < 12) return undefined;
+  const pmtPid = ((patSection[10]! & 0x1f) << 8) | patSection[11]!;
+  const pmt = packets.find((packet) => packet.pid === pmtPid && packet.payloadStart);
+  if (!pmt) return undefined;
+  const pmtSection = sectionFromPacket(pmt);
+  if (!pmtSection || pmtSection.length < 16) return undefined;
+  const programInfoLength = ((pmtSection[10]! & 0x0f) << 8) | pmtSection[11]!;
+  const entries: Buffer[] = [];
+  for (let cursor = 12 + programInfoLength; cursor + 5 <= pmtSection.length - 4;) {
+    const infoLength = ((pmtSection[cursor + 3]! & 0x0f) << 8) | pmtSection[cursor + 4]!;
+    const end = cursor + 5 + infoLength;
+    if (end > pmtSection.length - 4) break;
+    entries.push(pmtSection.subarray(cursor, end));
+    cursor = end;
+  }
+  const audioPids = new Set<number>();
+  let multiChannelAudio = false;
+  for (const entry of entries) {
+    const streamType = entry[0]!;
+    if (streamType !== 0x0f && streamType !== 0x11) continue;
+    const pid = ((entry[1]! & 0x1f) << 8) | entry[2]!;
+    audioPids.add(pid);
+    if (packets.some((packet) => packet.pid === pid && hasMultiChannelAac(packet.packet, packet.cursor))) {
+      multiChannelAudio = true;
+    }
+  }
+  if (!multiChannelAudio || audioPids.size === 0) return undefined;
+
+  const keptEntries = entries.filter((entry) => !audioPids.has(((entry[1]! & 0x1f) << 8) | entry[2]!));
+  const prefix = pmtSection.subarray(0, 12 + programInfoLength);
+  const body = Buffer.concat([prefix, ...keptEntries]);
+  const sectionLength = body.length + 1;
+  const nextSection = Buffer.alloc(body.length + 4);
+  body.copy(nextSection);
+  nextSection[1] = (nextSection[1]! & 0xf0) | ((sectionLength >> 8) & 0x0f);
+  nextSection[2] = sectionLength & 0xff;
+  nextSection.writeUInt32BE(mpegTsCrc32(nextSection.subarray(0, body.length)), body.length);
+  replaceSectionInPacket(pmt, nextSection);
+
+  const videoPids = new Set(keptEntries.map((entry) => ((entry[1]! & 0x1f) << 8) | entry[2]!));
+  const output = packets
+    .filter((packet) => packet.pid === 0 || packet.pid === pmtPid || packet.pid === 17 || videoPids.has(packet.pid))
+    .map((packet) => packet.packet);
+  return Buffer.concat(output);
+}
+
+interface TsPacket {
+  packet: Buffer;
+  pid: number;
+  payloadStart: boolean;
+  cursor: number;
+}
+
+function parseTsPackets(input: Buffer): TsPacket[] {
+  const packets: TsPacket[] = [];
+  for (let offset = 0; offset + 188 <= input.length; offset += 188) {
+    if (input[offset] !== 0x47) return [];
+    const packet = Buffer.from(input.subarray(offset, offset + 188));
+    const adaptation = (packet[3]! >> 4) & 3;
+    const cursor = adaptation === 2 || adaptation === 3 ? 5 + packet[4]! : 4;
+    if (cursor > 188) return [];
+    packets.push({
+      packet,
+      pid: ((packet[1]! & 0x1f) << 8) | packet[2]!,
+      payloadStart: (packet[1]! & 0x40) !== 0,
+      cursor,
+    });
+  }
+  return packets;
+}
+
+function sectionFromPacket(packet: TsPacket): Buffer | undefined {
+  if (packet.cursor >= packet.packet.length) return undefined;
+  const payload = packet.packet.subarray(packet.cursor);
+  const start = packet.payloadStart ? payload[0]! + 1 : 0;
+  if (start + 3 > payload.length) return undefined;
+  const length = ((payload[start + 1]! & 0x0f) << 8) | payload[start + 2]!;
+  const end = start + 3 + length;
+  return end <= payload.length ? payload.subarray(start, end) : undefined;
+}
+
+function replaceSectionInPacket(packet: TsPacket, section: Buffer): void {
+  packet.packet.fill(0xff, packet.cursor);
+  packet.packet[packet.cursor] = 0;
+  section.copy(packet.packet, packet.cursor + 1);
+}
+
+function hasMultiChannelAac(packet: Buffer, cursor: number): boolean {
+  for (let index = cursor; index + 7 < packet.length; index += 1) {
+    if (packet[index] !== 0xff || (packet[index + 1]! & 0xf6) !== 0xf0) continue;
+    const channelConfiguration = ((packet[index + 2]! & 0x01) << 2) | ((packet[index + 3]! & 0xc0) >> 6);
+    // channel_configuration=0 delegates the layout to a Program Config
+    // Element. In the real Jianpian segments this is a 5.1 layout, which
+    // Chromium rejects while the H.264 video remains decodable.
+    return channelConfiguration === 0 || channelConfiguration > 2;
+  }
+  return false;
+}
+
+function mpegTsCrc32(data: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of data) {
+    crc ^= byte << 24;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc & 0x80000000) !== 0
+        ? ((crc << 1) ^ 0x04c11db7) >>> 0
+        : (crc << 1) >>> 0;
+    }
+  }
+  return crc >>> 0;
+}
+
+function hexIv(value: string): Buffer {
+  const normalized = value.padStart(32, "0").slice(-32);
+  return Buffer.from(normalized, "hex");
+}
+
+function sequenceIv(sequence: number): Buffer {
+  const iv = Buffer.alloc(16);
+  iv.writeBigUInt64BE(BigInt(Math.max(0, sequence)), 8);
+  return iv;
+}
+
+function parseMediaSequence(body: string): number {
+  const value = body.match(/#EXT-X-MEDIA-SEQUENCE:\s*(\d+)/u)?.[1];
+  return parseIntegerTag(value, 0);
+}
+
+function parseIntegerTag(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function isMpegTsCandidate(response: Response, url: string): boolean {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  return contentType.includes("mpegts")
+    || contentType.includes("mp2t")
+    || new URL(url).pathname.toLowerCase().endsWith(".ts");
 }
 
 function normalizeOrigin(value: string): string {

@@ -159,6 +159,7 @@ export interface PackagedE2eResult {
   followIdentity: string | null;
   sidecarPid: number | null;
   error?: string;
+  localMediaProbe?: Record<string, unknown>;
 }
 
 export async function runPackagedE2e(options: PackagedE2eOptions): Promise<PackagedE2eResult> {
@@ -168,6 +169,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
   let favoriteId: string | null = null;
   let followIdentity: string | null = null;
   let sidecarPid: number | null = null;
+  let localMediaProbe: Record<string, unknown> | undefined;
 
   try {
     const initialHtml = await readPage(options);
@@ -650,12 +652,21 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       }
     }
     const opened = await post(options.baseUrl, "/api/open");
+    if (options.captureWindow) {
+      await post(options.baseUrl, "/api/view-state", { navigation: "home", siteKey: null });
+      await readPage(options);
+      await options.captureWindow("home-source-ready");
+    }
     const search = await post(options.baseUrl, "/api/search", {
       key: "蜘蛛侠",
       quick: false,
       page: 1,
     });
     searchVodId = firstVodId(search.state);
+    if (options.captureWindow) {
+      await readPage(options);
+      await options.captureWindow("search-results");
+    }
     if (options.verifyAggregateSearch && search.state?.aggregateSearch) {
       checks.aggregateSearch = search.state.aggregateSearch.status === "complete"
         && search.state.aggregateSearch.total >= 2
@@ -667,6 +678,10 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
     }
     const detail = await post(options.baseUrl, "/api/detail", { vodId: searchVodId });
     detailVodId = stringField(detail.state?.detail?.vod_id);
+    if (options.captureWindow) {
+      await readPage(options);
+      await options.captureWindow("detail-drawer");
+    }
     if (options.verifyWebControl) {
       if (!options.webControlUrl) throw new Error("Packaged Web control E2E URL is not configured");
       checks.webControl = await verifyWebControlEndpoint(options.webControlUrl);
@@ -838,6 +853,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
         episodeIndex: 0,
       });
       const hlsHtml = await readPage(options);
+      if (options.captureWindow) await options.captureWindow("player-hls");
       const hlsDom = await probeWindow(options, hlsHtml);
       if (options.verifyDanmaku) {
         const loaded = await post(options.baseUrl, "/api/danmaku/load", {
@@ -949,10 +965,10 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
         && playbackOpened.state?.status === "ready"
         && mp4.state?.player?.status === "loading"
         && playerSourceUrl(mp4.state) !== null
-        && playerSourceUrl(mp4.state)?.endsWith("/media/fixture.mp4") === true
+        && isLocalProxyUrl(playerSourceUrl(mp4.state))
         && mp4Html.includes('data-testid="embedded-player"');
       checks.embeddedHls = hls.state?.player?.status === "loading"
-        && playerSourceUrl(hls.state)?.endsWith("/media/fixture.m3u8") === true
+        && isLocalProxyUrl(playerSourceUrl(hls.state))
         && hlsHtml.includes('data-testid="embedded-player"')
         && (hlsHtml.includes("/assets/hls.min.js") || hlsDom?.hlsLoaded === true);
       if (options.verifyCast) {
@@ -977,7 +993,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
         && parsed.state?.error === null
         && parsed.state?.player?.error === null
         && parsed.state?.player?.source?.parse === 0
-        && playerSourceUrl(parsed.state)?.endsWith("/media/fixture.m3u8") === true;
+        && isLocalProxyUrl(playerSourceUrl(parsed.state));
       if (options.verifyParserFallback) {
         const attempts = parsed.state?.player?.parse?.attempts ?? [];
         checks.parserFallback = parsed.state?.player?.parse?.status === "succeeded"
@@ -1050,7 +1066,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       if (mp4Dom && hlsDom) {
         checks.embeddedMp4Dom = mp4Dom.hasVideo
           && mp4Dom.readyState >= 1
-          && mp4Dom.src.endsWith("/media/fixture.mp4");
+          && isLocalProxyUrl(mp4Dom.src);
         checks.embeddedHlsDom = hlsDom.hasVideo && hlsDom.hlsLoaded && hlsDom.readyState >= 1;
       }
       if (headeredDom) {
@@ -1112,7 +1128,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
           && tried.includes("current-reparse")
           && tried.some((id) => id.startsWith("line:1:episode:0"))
           && fallback.state?.player?.status === "loading"
-          && playerSourceUrl(fallback.state)?.endsWith("/media/fixture.m3u8") === true;
+          && isLocalProxyUrl(playerSourceUrl(fallback.state));
       }
       if (options.verifyLocalMedia) {
         if (!options.localMediaFile) throw new Error("Packaged local media E2E file is not configured");
@@ -1131,6 +1147,16 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
         const rangeResponse = localUrl
           ? await fetch(localUrl, { headers: { range: "bytes=0-3" } })
           : null;
+        const rangeBodyLength = rangeResponse ? (await rangeResponse.arrayBuffer()).byteLength : null;
+        let localHtml = "";
+        if (options.readWindowHtml) {
+          await post(options.baseUrl, "/api/view-state", { navigation: "local" });
+          localHtml = await readPage(options);
+          if (options.evaluateWindow) {
+            localHtml = await readWindowUntil(options, '[data-testid="local-media-page"]');
+            localMediaProbe = await probeLocalMedia(options);
+          }
+        }
         const localPlaying = playedLocal
           ? await post(options.baseUrl, "/api/player/sync", {
               ...(localSessionId ? { sessionId: localSessionId } : {}),
@@ -1149,19 +1175,15 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
               event: { type: "user-pause" },
             })
           : null;
-        let localHtml = "";
-        if (options.readWindowHtml) {
-          await post(options.baseUrl, "/api/view-state", { navigation: "local" });
-          localHtml = await readPage(options);
-        }
         const localHistory = localPaused?.state?.history?.items.find((item) => item.sourceType === "local");
         const localStopped = localPaused ? await post(options.baseUrl, "/api/player/stop") : null;
         checks.localMedia = localItem !== undefined
           && openedLocal.state?.localMedia?.items.some((item) => item.fileReference.startsWith("local-file:")) === true
           && rangeResponse?.status === 206
-          && (await rangeResponse.arrayBuffer()).byteLength === 4
+          && rangeBodyLength === 4
           && localUrl?.includes("/api/local-media/stream/") === true
           && localHistory?.position === 3
+          && (!options.evaluateWindow || localMediaProbe?.status === "PASS")
           && (!options.readWindowHtml || localHtml.includes('data-testid="local-media-page"'));
         checks.localMediaRestart = options.freshTrust
           ? true
@@ -1242,10 +1264,14 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
     if (options.captureWindow) {
       await post(options.baseUrl, "/api/view-state", { navigation: "settings", theme: "light" });
       await readPage(options);
-      await options.captureWindow("about-light");
+      await new Promise<void>((resolve) => setTimeout(resolve, 2500));
+      await readPage(options);
+      await options.captureWindow("settings-runtime-light");
       await post(options.baseUrl, "/api/view-state", { navigation: "settings", theme: "dark" });
       await readPage(options);
-      await options.captureWindow("about-dark");
+      await new Promise<void>((resolve) => setTimeout(resolve, 2500));
+      await readPage(options);
+      await options.captureWindow("settings-runtime-dark");
       await post(options.baseUrl, "/api/view-state", { navigation: "home", theme: "light" });
     }
 
@@ -1278,6 +1304,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       favoriteId,
       followIdentity,
       sidecarPid,
+      ...(localMediaProbe ? { localMediaProbe } : {}),
     };
   } catch (error) {
     return {
@@ -1288,6 +1315,7 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       favoriteId,
       followIdentity,
       sidecarPid,
+      ...(localMediaProbe ? { localMediaProbe } : {}),
       error: errorMessage(error),
     };
   }
@@ -1367,6 +1395,93 @@ async function readWindowUntil(options: PackagedE2eOptions, selector: string): P
     read();
   }))()`);
   return typeof result === "string" ? result : "";
+}
+
+async function probeLocalMedia(options: PackagedE2eOptions): Promise<Record<string, unknown>> {
+  if (!options.evaluateWindow) throw new Error("Packaged local media probe requires a renderer evaluator");
+  const value = await options.evaluateWindow(`(() => new Promise((resolve) => {
+    const started = Date.now();
+    const fatalErrors = [];
+    const finish = (status, reason, video) => resolve({
+      status,
+      ...(reason ? { reason } : {}),
+      hasVideo: Boolean(video),
+      videoWidth: video?.videoWidth || 0,
+      videoHeight: video?.videoHeight || 0,
+      currentTimeStart: video?.__qxLocalStart ?? null,
+      currentTimeEnd: video?.currentTime ?? null,
+      readyState: video?.readyState || 0,
+      errorCode: video?.error?.code ?? null,
+      fatal: Boolean(video?.error) || fatalErrors.length > 0,
+      fatalErrors,
+    });
+    const waitForVideo = () => {
+      const video = document.querySelector('[data-testid="embedded-player"]');
+      if (!video) {
+        if (Date.now() - started > 20_000) finish('FAIL', 'VIDEO_ELEMENT_MISSING', null);
+        else window.setTimeout(waitForVideo, 100);
+        return;
+      }
+      video.addEventListener('error', () => {
+        if (!fatalErrors.includes('MEDIA_ERROR')) fatalErrors.push('MEDIA_ERROR');
+      });
+      const waitForMetadata = () => {
+        if (video.error) {
+          finish('FAIL', 'FATAL_MEDIA_ERROR', video);
+          return;
+        }
+        if (video.videoWidth > 0 && video.videoHeight > 0) {
+          video.pause();
+          try { video.currentTime = 0; } catch (_) { /* metadata is already the acceptance gate */ }
+          video.__qxLocalStart = video.currentTime;
+          const requestPlay = () => {
+            const button = document.querySelector('[data-action="player-play"]');
+            if (button instanceof HTMLElement) button.click();
+            void video.play().catch(() => undefined);
+          };
+          requestPlay();
+          const deadline = Date.now() + 6_000;
+          const waitForAdvance = () => {
+            if (video.error) {
+              finish('FAIL', 'FATAL_MEDIA_ERROR', video);
+              return;
+            }
+            if (video.currentTime > video.__qxLocalStart + 0.05) {
+              finish('PASS', undefined, video);
+              return;
+            }
+            if (Date.now() >= deadline) {
+              finish('FAIL', 'VIDEO_CURRENT_TIME_DID_NOT_ADVANCE', video);
+              return;
+            }
+            window.setTimeout(waitForAdvance, 100);
+          };
+          waitForAdvance();
+          return;
+        }
+        if (Date.now() - started > 20_000) {
+          finish('FAIL', 'VIDEO_METADATA_NOT_LOADED', video);
+          return;
+        }
+        window.setTimeout(waitForMetadata, 100);
+      };
+      waitForMetadata();
+    };
+    waitForVideo();
+  }))()`);
+  if (!isRecord(value)
+    || (value.status !== "PASS" && value.status !== "FAIL")
+    || typeof value.hasVideo !== "boolean"
+    || typeof value.videoWidth !== "number"
+    || typeof value.videoHeight !== "number"
+    || (value.currentTimeStart !== null && typeof value.currentTimeStart !== "number")
+    || (value.currentTimeEnd !== null && typeof value.currentTimeEnd !== "number")
+    || typeof value.readyState !== "number"
+    || (value.errorCode !== null && typeof value.errorCode !== "number")
+    || typeof value.fatal !== "boolean") {
+    throw new Error(`Packaged local media probe returned an invalid result: ${JSON.stringify(value)}`);
+  }
+  return value;
 }
 
 async function load(baseUrl: string, input: string): Promise<UiEnvelope> {
@@ -1819,6 +1934,10 @@ interface UiState {
 function playerSourceUrl(state: UiState | null): string | null {
   const source = state?.player?.source;
   return typeof source?.url === "string" ? source.url : null;
+}
+
+function isLocalProxyUrl(url: string | null): boolean {
+  return typeof url === "string" && /\/__qx_playback\//u.test(url);
 }
 
 function playerSourceHeaders(state: UiState | null): Record<string, string> | null {

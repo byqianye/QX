@@ -1,0 +1,2824 @@
+{
+  "generatedAt": "2026-08-12T12:49:10.872Z",
+  "sourceUrl": "http://xn--z7x900a.net/",
+  "keywords": [
+    "庆余年",
+    "movie",
+    "tv"
+  ],
+  "sites": [
+    {
+      "siteKey": "豆瓣",
+      "siteName": "🐼┃公众号：我不是肥猫┃",
+      "type": 3,
+      "api": "csp_Douban",
+      "runtime": "native",
+      "resolvedClass": "com.github.catvod.spider.Douban",
+      "searchable": false,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "UNKNOWN",
+      "init": {
+        "status": "FAIL",
+        "durationMs": 0,
+        "errorCode": "INIT_FAILED",
+        "message": "Android DEX Spider runtime is unavailable",
+        "retryable": false
+      },
+      "home": {
+        "status": "FAIL",
+        "durationMs": 0,
+        "errorCode": "HOME_FAILED",
+        "message": "Spider runtime capability is unavailable",
+        "retryable": false
+      },
+      "category": {
+        "status": "FAIL",
+        "durationMs": 0,
+        "errorCode": "CATEGORY_FAILED",
+        "message": "Spider runtime capability is unavailable",
+        "retryable": false
+      },
+      "search": {
+        "status": "FAIL",
+        "durationMs": 0,
+        "errorCode": "SEARCH_FAILED",
+        "message": "Spider runtime capability is unavailable",
+        "retryable": false,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": false,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": true,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "INIT_FAILED",
+      "timings": {
+        "create": 1,
+        "initMs": 0,
+        "homeMs": 0,
+        "categoryMs": 0,
+        "searchMs": 0,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "failureReason": "Android DEX Spider runtime is unavailable"
+    },
+    {
+      "siteKey": "豆瓣预告",
+      "siteName": "🐼┃豆瓣┃预告",
+      "type": 3,
+      "api": "csp_YGP",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.YGP",
+      "searchable": false,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 1036
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 4653
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 2765
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 52,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": false,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": true,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 1036,
+        "homeMs": 4653,
+        "categoryMs": 2765,
+        "searchMs": 52,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "config",
+      "siteName": "🐼┃配置┃中心",
+      "type": 3,
+      "api": "csp_Config",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Config",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 973
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 294
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 86
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 21,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": true,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 973,
+        "homeMs": 294,
+        "categoryMs": 86,
+        "searchMs": 21,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "csp_FeiMaoUC",
+      "siteName": "⚡┃闪电┃优汐",
+      "type": 3,
+      "api": "csp_Duopan",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Duopan",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": true,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 11176
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 6628
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 5755
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 17128,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "UNKNOWN",
+      "playable": false,
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": true,
+        "metadataOnly": false,
+        "vod": false,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": true
+      },
+      "status": "AUTH_REQUIRED",
+      "timings": {
+        "create": 0,
+        "initMs": 11176,
+        "homeMs": 6628,
+        "categoryMs": 5755,
+        "searchMs": 17128,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "failureReason": "no_results"
+    },
+    {
+      "siteKey": "csp_Duopan",
+      "siteName": "🖍︎┃蜡笔┃影视",
+      "type": 3,
+      "api": "csp_Duopan",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Duopan",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": true,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 3418
+      },
+      "home": {
+        "status": "FAIL",
+        "durationMs": 15004,
+        "errorCode": "ANDROID_BRIDGE_TIMEOUT",
+        "message": "Android Spider Host request timed out: homeContent",
+        "retryable": false
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 6278
+      },
+      "search": {
+        "status": "PASS",
+        "durationMs": 1477,
+        "resultCount": 24,
+        "attempts": 3,
+        "p50Ms": 480,
+        "p90Ms": 565,
+        "p95Ms": 565
+      },
+      "detail": {
+        "status": "PASS",
+        "durationMs": 2927,
+        "resultCount": 1
+      },
+      "player": {
+        "status": "FAIL",
+        "durationMs": 15000,
+        "errorCode": "SOURCE_TIMEOUT",
+        "message": "SOURCE_PLAYER_TIMEOUT",
+        "retryable": false
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "TIMEOUT",
+      "timings": {
+        "create": 0,
+        "initMs": 3418,
+        "homeMs": 15004,
+        "categoryMs": 6278,
+        "searchMs": 1477,
+        "detailMs": 2927,
+        "playerMs": 15000
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "failureReason": "SOURCE_PLAYER_TIMEOUT"
+    },
+    {
+      "siteKey": "csp_Netfixtv",
+      "siteName": "💌┃️至臻┃影视",
+      "type": 3,
+      "api": "csp_Duopan",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Duopan",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": true,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 10369
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 12686
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 282
+      },
+      "search": {
+        "status": "PASS",
+        "durationMs": 2007,
+        "resultCount": 21,
+        "attempts": 3,
+        "p50Ms": 659,
+        "p90Ms": 711,
+        "p95Ms": 711
+      },
+      "detail": {
+        "status": "PASS",
+        "durationMs": 3274,
+        "resultCount": 1
+      },
+      "player": {
+        "status": "FAIL",
+        "durationMs": 15000,
+        "errorCode": "SOURCE_TIMEOUT",
+        "message": "SOURCE_PLAYER_TIMEOUT",
+        "retryable": false
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "TIMEOUT",
+      "timings": {
+        "create": 1,
+        "initMs": 10369,
+        "homeMs": 12686,
+        "categoryMs": 282,
+        "searchMs": 2007,
+        "detailMs": 3274,
+        "playerMs": 15000
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "failureReason": "SOURCE_PLAYER_TIMEOUT"
+    },
+    {
+      "siteKey": "潮流",
+      "siteName": "🏜┃潮流┃APP",
+      "type": 3,
+      "api": "csp_AppRJ",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.AppRJ",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 672
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 780
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 398
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 102,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 672,
+        "homeMs": 780,
+        "categoryMs": 398,
+        "searchMs": 102,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "肥猫",
+      "siteName": "🐼┃肥猫┃APP",
+      "type": 3,
+      "api": "csp_AppGet",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.AppGet",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 1006
+      },
+      "home": {
+        "status": "FAIL",
+        "durationMs": 15007,
+        "errorCode": "ANDROID_BRIDGE_TIMEOUT",
+        "message": "Android Spider Host request timed out: homeContent",
+        "retryable": false
+      },
+      "category": {
+        "status": "FAIL",
+        "durationMs": 15012,
+        "errorCode": "ANDROID_BRIDGE_TIMEOUT",
+        "message": "Android Spider Host request timed out: categoryContent",
+        "retryable": false
+      },
+      "search": {
+        "status": "FAIL",
+        "durationMs": 13066,
+        "errorCode": "SOURCE_TIMEOUT",
+        "message": "SOURCE_TIMEOUT",
+        "retryable": true,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "TIMEOUT",
+      "timings": {
+        "create": 0,
+        "initMs": 1006,
+        "homeMs": 15007,
+        "categoryMs": 15012,
+        "searchMs": 13066,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "failureReason": "no_results"
+    },
+    {
+      "siteKey": "干饭",
+      "siteName": "🍚┃干饭┃APP",
+      "type": 3,
+      "api": "csp_AppGet",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.AppGet",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 1701
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 26
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 14
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 8,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 1701,
+        "homeMs": 26,
+        "categoryMs": 14,
+        "searchMs": 8,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "光盘",
+      "siteName": "📀┃光盘┃APP",
+      "type": 3,
+      "api": "csp_AppQi",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.AppQi",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 1856
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 11001
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 10999
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 10,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 1856,
+        "homeMs": 11001,
+        "categoryMs": 10999,
+        "searchMs": 10,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "行动",
+      "siteName": "😌┃行动┃APP",
+      "type": 3,
+      "api": "csp_AppQi",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.AppQi",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 316
+      },
+      "home": {
+        "status": "FAIL",
+        "durationMs": 15016,
+        "errorCode": "ANDROID_BRIDGE_TIMEOUT",
+        "message": "Android Spider Host request timed out: homeContent",
+        "retryable": false
+      },
+      "category": {
+        "status": "FAIL",
+        "durationMs": 15007,
+        "errorCode": "ANDROID_BRIDGE_TIMEOUT",
+        "message": "Android Spider Host request timed out: categoryContent",
+        "retryable": false
+      },
+      "search": {
+        "status": "FAIL",
+        "durationMs": 31478,
+        "errorCode": "SOURCE_TIMEOUT",
+        "message": "SOURCE_TIMEOUT",
+        "retryable": true,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "TIMEOUT",
+      "timings": {
+        "create": 0,
+        "initMs": 316,
+        "homeMs": 15016,
+        "categoryMs": 15007,
+        "searchMs": 31478,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "failureReason": "no_results"
+    },
+    {
+      "siteKey": "再来",
+      "siteName": "✌️┃再来┃APP",
+      "type": 3,
+      "api": "csp_AppGet",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.AppGet",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 336
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 965
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 288
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 11,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 336,
+        "homeMs": 965,
+        "categoryMs": 288,
+        "searchMs": 11,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "一碗",
+      "siteName": "🥣┃一碗┃APP",
+      "type": 3,
+      "api": "csp_AppGet",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.AppGet",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 331
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 1933
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 564
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 9,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 331,
+        "homeMs": 1933,
+        "categoryMs": 564,
+        "searchMs": 9,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "蔬菜",
+      "siteName": "🫛┃蔬菜┃APP",
+      "type": 3,
+      "api": "csp_AppGet",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.AppGet",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 1568
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 650
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 307
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 10,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 1568,
+        "homeMs": 650,
+        "categoryMs": 307,
+        "searchMs": 10,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "永永",
+      "siteName": "♾️┃永永┃APP",
+      "type": 3,
+      "api": "csp_AppGet",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.AppGet",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 316
+      },
+      "home": {
+        "status": "FAIL",
+        "durationMs": 15003,
+        "errorCode": "ANDROID_BRIDGE_TIMEOUT",
+        "message": "Android Spider Host request timed out: homeContent",
+        "retryable": false
+      },
+      "category": {
+        "status": "FAIL",
+        "durationMs": 15013,
+        "errorCode": "ANDROID_BRIDGE_TIMEOUT",
+        "message": "Android Spider Host request timed out: categoryContent",
+        "retryable": false
+      },
+      "search": {
+        "status": "FAIL",
+        "durationMs": 12897,
+        "errorCode": "SOURCE_TIMEOUT",
+        "message": "SOURCE_TIMEOUT",
+        "retryable": true,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "TIMEOUT",
+      "timings": {
+        "create": 0,
+        "initMs": 316,
+        "homeMs": 15003,
+        "categoryMs": 15013,
+        "searchMs": 12897,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "failureReason": "no_results"
+    },
+    {
+      "siteKey": "csp_Jpys",
+      "siteName": "🥇️┃金牌┃影视",
+      "type": 3,
+      "api": "csp_Jpys",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Jpys",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 311
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 3782
+      },
+      "category": {
+        "status": "FAIL",
+        "durationMs": 396,
+        "errorCode": "SPIDER_METHOD_FAILED",
+        "message": "No value for data",
+        "retryable": false
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 8,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 311,
+        "homeMs": 3782,
+        "categoryMs": 396,
+        "searchMs": 8,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "csp_Wwys",
+      "siteName": "🌾️┃农民┃影视",
+      "type": 3,
+      "api": "csp_Wwys",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Wwys",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 317
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 1284
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 39
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 12,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 317,
+        "homeMs": 1284,
+        "categoryMs": 39,
+        "searchMs": 12,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "荐片",
+      "siteName": "🎬┃荐片┃影视",
+      "type": 3,
+      "api": "csp_Jianpian",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Jianpian",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 4819
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 1283
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 59
+      },
+      "search": {
+        "status": "PASS",
+        "durationMs": 5409,
+        "resultCount": 60,
+        "attempts": 3,
+        "p50Ms": 1271,
+        "p90Ms": 3331,
+        "p95Ms": 3331
+      },
+      "detail": {
+        "status": "PASS",
+        "durationMs": 292,
+        "resultCount": 1
+      },
+      "player": {
+        "status": "PASS",
+        "durationMs": 6,
+        "resultCount": 1,
+        "retryable": true
+      },
+      "authentication": "NONE",
+      "playable": true,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "FULLY_PLAYABLE",
+      "timings": {
+        "create": 0,
+        "initMs": 4819,
+        "homeMs": 1283,
+        "categoryMs": 59,
+        "searchMs": 5409,
+        "detailMs": 292,
+        "playerMs": 6
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "csp_SaoHuo",
+      "siteName": "🔥┃火火┃影视",
+      "type": 3,
+      "api": "csp_SaoHuo",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.SaoHuo",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 2883
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 2202
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 319
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 10,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 2883,
+        "homeMs": 2202,
+        "categoryMs": 319,
+        "searchMs": 10,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "csp_Gz360",
+      "siteName": "🍉┃瓜子┃影视",
+      "type": 3,
+      "api": "csp_Gz360",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Gz360",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 308
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 11195
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 851
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 10,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 308,
+        "homeMs": 11195,
+        "categoryMs": 851,
+        "searchMs": 10,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "厂长",
+      "siteName": "🏭┃厂长┃影视",
+      "type": 3,
+      "api": "csp_Czsapp",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Czsapp",
+      "searchable": true,
+      "quickSearch": true,
+      "filterable": true,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 313
+      },
+      "home": {
+        "status": "FAIL",
+        "durationMs": 15011,
+        "errorCode": "ANDROID_BRIDGE_TIMEOUT",
+        "message": "Android Spider Host request timed out: homeContent",
+        "retryable": false
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 11009
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 12,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 1,
+        "initMs": 313,
+        "homeMs": 15011,
+        "categoryMs": 11009,
+        "searchMs": 12,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "csp_SP360",
+      "siteName": "📺┃360┃官源",
+      "type": 3,
+      "api": "csp_SP360",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.SP360",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 314
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 65
+      },
+      "category": {
+        "status": "FAIL",
+        "durationMs": 6812,
+        "errorCode": "SPIDER_METHOD_FAILED",
+        "message": "Attempt to invoke virtual method 'org.json.JSONArray org.json.JSONObject.optJSONArray(java.lang.String)' on a null object reference",
+        "retryable": false
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 16,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 314,
+        "homeMs": 65,
+        "categoryMs": 6812,
+        "searchMs": 16,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "csp_Bili",
+      "siteName": "🅱┃️哔哩┃合集",
+      "type": 3,
+      "api": "csp_Bili",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Bili",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 450
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 3989
+      },
+      "category": {
+        "status": "FAIL",
+        "durationMs": 798,
+        "errorCode": "SPIDER_METHOD_FAILED",
+        "message": "java.lang.IllegalStateException: Expected BEGIN_OBJECT but was STRING at line 1 column 1 path $",
+        "retryable": false
+      },
+      "search": {
+        "status": "FAIL",
+        "durationMs": 194,
+        "errorCode": "SPIDER_METHOD_FAILED",
+        "message": "java.lang.IllegalStateException: Expected BEGIN_OBJECT but was STRING at line 1 column 1 path $",
+        "retryable": false,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_FAILED",
+      "timings": {
+        "create": 0,
+        "initMs": 450,
+        "homeMs": 3989,
+        "categoryMs": 798,
+        "searchMs": 194,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "failureReason": "java.lang.IllegalStateException: Expected BEGIN_OBJECT but was STRING at line 1 column 1 path $"
+    },
+    {
+      "siteKey": "csp_Dm84",
+      "siteName": "🤣┃动漫┃巴士",
+      "type": 3,
+      "api": "csp_Dm84",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Dm84",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 316
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 6838
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 802
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 14,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 316,
+        "homeMs": 6838,
+        "categoryMs": 802,
+        "searchMs": 14,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "方舟",
+      "siteName": "🐷┃方舟┃动漫",
+      "type": 3,
+      "api": "csp_AppGet",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.AppGet",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 317
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 821
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 270
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 9,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 317,
+        "homeMs": 821,
+        "categoryMs": 270,
+        "searchMs": 9,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "番薯",
+      "siteName": "🍠┃番薯┃动漫",
+      "type": 3,
+      "api": "csp_AppGet",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.AppGet",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 314
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 1061
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 286
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 9,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 314,
+        "homeMs": 1061,
+        "categoryMs": 286,
+        "searchMs": 9,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "csp_FirstAid",
+      "siteName": "🚑┃急救┃教学",
+      "type": 3,
+      "api": "csp_FirstAid",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.FirstAid",
+      "searchable": false,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 324
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 6
+      },
+      "category": {
+        "status": "FAIL",
+        "durationMs": 8,
+        "errorCode": "SPIDER_METHOD_FAILED",
+        "message": "length=1; index=1",
+        "retryable": false
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 24,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": false,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 324,
+        "homeMs": 6,
+        "categoryMs": 8,
+        "searchMs": 24,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "酷狗",
+      "siteName": "🐾┃酷狗┃音乐",
+      "type": 3,
+      "api": "csp_Kugou",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Kugou",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 370
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 5
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 284
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 21,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": true,
+        "detail": false,
+        "player": false,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": false,
+        "live": false,
+        "music": true,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "MUSIC_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 370,
+        "homeMs": 5,
+        "categoryMs": 284,
+        "searchMs": 21,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "failureReason": "no_results"
+    },
+    {
+      "siteKey": "MTV",
+      "siteName": "🎧┃明星┃MV",
+      "type": 3,
+      "api": "csp_Bili",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Bili",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 492
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 830
+      },
+      "category": {
+        "status": "FAIL",
+        "durationMs": 759,
+        "errorCode": "SPIDER_METHOD_FAILED",
+        "message": "java.lang.IllegalStateException: Expected BEGIN_OBJECT but was STRING at line 1 column 1 path $",
+        "retryable": false
+      },
+      "search": {
+        "status": "FAIL",
+        "durationMs": 153,
+        "errorCode": "SPIDER_METHOD_FAILED",
+        "message": "java.lang.IllegalStateException: Expected BEGIN_OBJECT but was STRING at line 1 column 1 path $",
+        "retryable": false,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": true,
+        "detail": false,
+        "player": false,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": false,
+        "live": false,
+        "music": true,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "MUSIC_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 492,
+        "homeMs": 830,
+        "categoryMs": 759,
+        "searchMs": 153,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "failureReason": "no_results"
+    },
+    {
+      "siteKey": "看球",
+      "siteName": "⚾┃看球┃直播",
+      "type": 3,
+      "api": "csp_Kanqiu",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Kanqiu",
+      "searchable": true,
+      "quickSearch": true,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 464
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 8
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 2227
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 12,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": true,
+        "detail": false,
+        "player": false,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": false,
+        "live": true,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "LIVE_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 464,
+        "homeMs": 8,
+        "categoryMs": 2227,
+        "searchMs": 12,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "failureReason": "no_results"
+    },
+    {
+      "siteKey": "瓜子",
+      "siteName": "🏀┃瓜子┃体育",
+      "type": 3,
+      "api": "csp_GuaziTY",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.GuaziTY",
+      "searchable": false,
+      "quickSearch": false,
+      "filterable": true,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 321
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 6
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 2028
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 12,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": false,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 321,
+        "homeMs": 6,
+        "categoryMs": 2028,
+        "searchMs": 12,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    },
+    {
+      "siteKey": "米搜",
+      "siteName": "🌖┃米搜┃网盘",
+      "type": 3,
+      "api": "csp_MiSou",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.MiSou",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 9338
+      },
+      "home": {
+        "status": "FAIL",
+        "durationMs": 15022,
+        "errorCode": "ANDROID_BRIDGE_TIMEOUT",
+        "message": "Android Spider Host request timed out: homeContent",
+        "retryable": false
+      },
+      "category": {
+        "status": "FAIL",
+        "durationMs": 15009,
+        "errorCode": "ANDROID_BRIDGE_TIMEOUT",
+        "message": "Android Spider Host request timed out: categoryContent",
+        "retryable": false
+      },
+      "search": {
+        "status": "FAIL",
+        "durationMs": 36033,
+        "errorCode": "SOURCE_TIMEOUT",
+        "message": "SOURCE_TIMEOUT",
+        "retryable": true,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": false,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": true
+      },
+      "status": "NETDISK_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 9338,
+        "homeMs": 15022,
+        "categoryMs": 15009,
+        "searchMs": 36033,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "failureReason": "no_results"
+    },
+    {
+      "siteKey": "csp_PanSearch",
+      "siteName": "🚃┃盘搜┃网盘",
+      "type": 3,
+      "api": "csp_PanSearch",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.PanSearch",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 392
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 5
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 9
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 14,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": true,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": false,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": true
+      },
+      "status": "NETDISK_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 392,
+        "homeMs": 5,
+        "categoryMs": 9,
+        "searchMs": 14,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "failureReason": "no_results"
+    },
+    {
+      "siteKey": "儿童",
+      "siteName": "📚┃儿童┃启蒙",
+      "type": 3,
+      "api": "https://gh-proxy.net/https://raw.githubusercontent.com/fantaiying7/EXT/refs/heads/main/drpy2.min.js",
+      "runtime": "javascript",
+      "searchable": false,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "UNKNOWN",
+      "init": {
+        "status": "FAIL",
+        "durationMs": 2863,
+        "errorCode": "QUICKJS_SCRIPT_LOAD_FAILED",
+        "message": "Unable to load QuickJS script: [redacted-url]",
+        "retryable": false
+      },
+      "home": {
+        "status": "FAIL",
+        "durationMs": 5013,
+        "errorCode": "JS_WORKER_TIMEOUT",
+        "message": "JavaScript Spider worker timed out during home",
+        "retryable": false
+      },
+      "category": {
+        "status": "FAIL",
+        "durationMs": 0,
+        "errorCode": "JS_WORKER_NOT_INITIALIZED",
+        "message": "JavaScript Spider worker is not initialized",
+        "retryable": false
+      },
+      "search": {
+        "status": "FAIL",
+        "durationMs": 0,
+        "errorCode": "JS_WORKER_NOT_INITIALIZED",
+        "message": "JavaScript Spider worker is not initialized",
+        "retryable": false,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": false,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "INIT_FAILED",
+      "timings": {
+        "create": 1,
+        "initMs": 2863,
+        "homeMs": 5013,
+        "categoryMs": 0,
+        "searchMs": 0,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "failureReason": "Unable to load QuickJS script: [redacted-url]"
+    },
+    {
+      "siteKey": "csp_少儿",
+      "siteName": "📚┃少儿┃教育",
+      "type": 3,
+      "api": "csp_Bili",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Bili",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 401
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 998
+      },
+      "category": {
+        "status": "FAIL",
+        "durationMs": 673,
+        "errorCode": "SPIDER_METHOD_FAILED",
+        "message": "java.lang.IllegalStateException: Expected BEGIN_OBJECT but was STRING at line 1 column 1 path $",
+        "retryable": false
+      },
+      "search": {
+        "status": "FAIL",
+        "durationMs": 252,
+        "errorCode": "SPIDER_METHOD_FAILED",
+        "message": "java.lang.IllegalStateException: Expected BEGIN_OBJECT but was STRING at line 1 column 1 path $",
+        "retryable": false,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": true,
+        "detail": false,
+        "player": false,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": false,
+        "live": false,
+        "music": false,
+        "education": true,
+        "netdisk": false
+      },
+      "status": "EDUCATION_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 401,
+        "homeMs": 998,
+        "categoryMs": 673,
+        "searchMs": 252,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "failureReason": "no_results"
+    },
+    {
+      "siteKey": "csp_小学",
+      "siteName": "📚┃小学┃课堂",
+      "type": 3,
+      "api": "csp_Bili",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Bili",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 438
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 130
+      },
+      "category": {
+        "status": "FAIL",
+        "durationMs": 75,
+        "errorCode": "SPIDER_METHOD_FAILED",
+        "message": "java.lang.IllegalStateException: Expected BEGIN_OBJECT but was STRING at line 1 column 1 path $",
+        "retryable": false
+      },
+      "search": {
+        "status": "FAIL",
+        "durationMs": 249,
+        "errorCode": "SPIDER_METHOD_FAILED",
+        "message": "java.lang.IllegalStateException: Expected BEGIN_OBJECT but was STRING at line 1 column 1 path $",
+        "retryable": false,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": true,
+        "detail": false,
+        "player": false,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": false,
+        "live": false,
+        "music": false,
+        "education": true,
+        "netdisk": false
+      },
+      "status": "EDUCATION_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 438,
+        "homeMs": 130,
+        "categoryMs": 75,
+        "searchMs": 249,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "failureReason": "no_results"
+    },
+    {
+      "siteKey": "csp_初中",
+      "siteName": "📚┃初中┃课堂",
+      "type": 3,
+      "api": "csp_Bili",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Bili",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 411
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 215
+      },
+      "category": {
+        "status": "FAIL",
+        "durationMs": 115,
+        "errorCode": "SPIDER_METHOD_FAILED",
+        "message": "java.lang.IllegalStateException: Expected BEGIN_OBJECT but was STRING at line 1 column 1 path $",
+        "retryable": false
+      },
+      "search": {
+        "status": "FAIL",
+        "durationMs": 318,
+        "errorCode": "SPIDER_METHOD_FAILED",
+        "message": "java.lang.IllegalStateException: Expected BEGIN_OBJECT but was STRING at line 1 column 1 path $",
+        "retryable": false,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": true,
+        "detail": false,
+        "player": false,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": false,
+        "live": false,
+        "music": false,
+        "education": true,
+        "netdisk": false
+      },
+      "status": "EDUCATION_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 411,
+        "homeMs": 215,
+        "categoryMs": 115,
+        "searchMs": 318,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "failureReason": "no_results"
+    },
+    {
+      "siteKey": "csp_高中",
+      "siteName": "📚┃高中┃课堂",
+      "type": 3,
+      "api": "csp_Bili",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Bili",
+      "searchable": true,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 499
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 166
+      },
+      "category": {
+        "status": "FAIL",
+        "durationMs": 112,
+        "errorCode": "SPIDER_METHOD_FAILED",
+        "message": "java.lang.IllegalStateException: Expected BEGIN_OBJECT but was STRING at line 1 column 1 path $",
+        "retryable": false
+      },
+      "search": {
+        "status": "FAIL",
+        "durationMs": 295,
+        "errorCode": "SPIDER_METHOD_FAILED",
+        "message": "java.lang.IllegalStateException: Expected BEGIN_OBJECT but was STRING at line 1 column 1 path $",
+        "retryable": false,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": false,
+        "category": false,
+        "search": true,
+        "detail": false,
+        "player": false,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": false,
+        "live": false,
+        "music": false,
+        "education": true,
+        "netdisk": false
+      },
+      "status": "EDUCATION_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 499,
+        "homeMs": 166,
+        "categoryMs": 112,
+        "searchMs": 295,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "failureReason": "no_results"
+    },
+    {
+      "siteKey": "push_agent",
+      "siteName": "关注公众号：肥猫宝贝",
+      "type": 3,
+      "api": "csp_Push",
+      "runtime": "android-dex",
+      "resolvedClass": "com.github.catvod.spider.Push",
+      "searchable": false,
+      "quickSearch": false,
+      "filterable": false,
+      "classLoad": "PASS",
+      "init": {
+        "status": "PASS",
+        "durationMs": 313
+      },
+      "home": {
+        "status": "PASS",
+        "durationMs": 4
+      },
+      "category": {
+        "status": "PASS",
+        "durationMs": 3
+      },
+      "search": {
+        "status": "EMPTY",
+        "durationMs": 16,
+        "resultCount": 0,
+        "attempts": 3
+      },
+      "detail": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "player": {
+        "status": "SKIPPED",
+        "durationMs": 0
+      },
+      "authentication": "NONE",
+      "playable": false,
+      "capabilities": {
+        "home": true,
+        "category": true,
+        "search": false,
+        "detail": true,
+        "player": true,
+        "requiresAuth": false,
+        "metadataOnly": false,
+        "vod": true,
+        "live": false,
+        "music": false,
+        "education": false,
+        "netdisk": false
+      },
+      "status": "SEARCH_ONLY",
+      "timings": {
+        "create": 0,
+        "initMs": 313,
+        "homeMs": 4,
+        "categoryMs": 3,
+        "searchMs": 16,
+        "detailMs": 0,
+        "playerMs": 0
+      },
+      "artifact": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png",
+      "artifactSha256": "04f73a0bb4c79fd2547e6c7b488b82afcc20b42572f5ff3030b0c430cd0419ab",
+      "artifactSize": 864852,
+      "artifactUrl": "https://img2.gelonghui.com/library/f7c90-40d96eab-56f3-4c13-a248-8d80bcb9b83a.png"
+    }
+  ],
+  "summary": {
+    "total": 39,
+    "searchable": 33,
+    "statusCounts": {
+      "FULLY_PLAYABLE": 1,
+      "SEARCH_DETAIL_ONLY": 0,
+      "SEARCH_ONLY": 20,
+      "AUTH_REQUIRED": 1,
+      "METADATA_ONLY": 0,
+      "LIVE_ONLY": 1,
+      "NETDISK_ONLY": 2,
+      "MUSIC_ONLY": 2,
+      "EDUCATION_ONLY": 4,
+      "OFFLINE": 0,
+      "TIMEOUT": 5,
+      "RUNTIME_INCOMPATIBLE": 0,
+      "CLASS_NOT_FOUND": 0,
+      "INIT_FAILED": 2,
+      "SEARCH_FAILED": 1,
+      "DETAIL_FAILED": 0,
+      "PLAYER_FAILED": 0,
+      "UNSUPPORTED": 0,
+      "UNKNOWN": 0
+    },
+    "runtimeCounts": {
+      "native": 1,
+      "android-dex": 37,
+      "javascript": 1
+    },
+    "p50Ms": 2711,
+    "p90Ms": 44091,
+    "p95Ms": 61817
+  }
+}

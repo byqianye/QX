@@ -1,14 +1,34 @@
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { AndroidDeviceManager } from "../src/spider/android-device-manager.js";
 import { AndroidSpiderBridgeClient } from "../src/spider/android-spider-bridge-client.js";
+import { buildAndroidRuntimeManifest } from "../src/spider/android-runtime-manifest.js";
 
 const projectRoot = resolve(import.meta.dirname, "..");
 const apkPath = process.env.QX_ANDROID_HOST_APK?.trim()
   || join(projectRoot, "android-spider-host", "app", "build", "outputs", "apk", "debug", "app-debug.apk");
+const qxRuntimeRoot = join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "QXMovie", "android-runtime");
+const qxSdkPath = join(qxRuntimeRoot, "sdk");
+const qxAdbPath = join(qxSdkPath, "platform-tools", process.platform === "win32" ? "adb.exe" : "adb");
+const qxEnvironment: NodeJS.ProcessEnv = {
+  ...process.env,
+  QX_ANDROID_HOME: qxSdkPath,
+  QX_ANDROID_AVD_HOME: join(qxRuntimeRoot, "avd"),
+  ANDROID_HOME: qxSdkPath,
+  ANDROID_SDK_ROOT: qxSdkPath,
+  ANDROID_AVD_HOME: join(qxRuntimeRoot, "avd"),
+  ANDROID_USER_HOME: join(qxRuntimeRoot, "state", "android-user"),
+  ANDROID_EMULATOR_HOME: join(qxRuntimeRoot, "state", "android-user"),
+  ANDROID_ADB_SERVER_PORT: "5038",
+  ADB_SERVER_SOCKET: "tcp:5038",
+  ADB: qxAdbPath,
+  Path: [join(qxSdkPath, "platform-tools"), join(qxSdkPath, "emulator"), join(qxSdkPath, "cmdline-tools", "latest", "bin"), process.env.SystemRoot ? join(process.env.SystemRoot, "System32") : "C:\\Windows\\System32"].join(";"),
+};
 
 async function main(): Promise<void> {
   const command = process.argv[2] ?? "check";
@@ -18,8 +38,9 @@ async function main(): Promise<void> {
   }
 
   const manager = new AndroidDeviceManager({
-    ...(process.env.QX_ANDROID_SDK_PATH ? { sdkPath: process.env.QX_ANDROID_SDK_PATH } : {}),
-    ...(process.env.ADB ? { adbPath: process.env.ADB } : {}),
+    sdkPath: process.env.QX_ANDROID_SDK_PATH?.trim() || qxSdkPath,
+    adbPath: process.env.ADB?.trim() || qxAdbPath,
+    env: qxEnvironment,
     ...(process.env.QX_ANDROID_DEVICE_SERIAL ? { serial: process.env.QX_ANDROID_DEVICE_SERIAL } : {}),
   });
   if (command === "install") {
@@ -52,6 +73,16 @@ async function main(): Promise<void> {
 }
 
 async function checkAndroidHost(manager: AndroidDeviceManager): Promise<void> {
+  if (!existsSync(qxSdkPath) && !process.env.QX_ANDROID_SDK_PATH?.trim()) {
+    console.log(JSON.stringify({
+      status: "BLOCKED",
+      runtimeRoot: qxRuntimeRoot,
+      sdk: { found: false, path: qxSdkPath },
+      adb: { found: false, path: qxAdbPath },
+      blockers: ["QX_RUNTIME_NOT_PROVISIONED"],
+    }, null, 2));
+    return;
+  }
   const environment = await manager.check();
   const hostApkFound = existsSync(apkPath);
   let hostInstalled = false;
@@ -82,6 +113,7 @@ async function checkAndroidHost(manager: AndroidDeviceManager): Promise<void> {
     : "BLOCKED";
   console.log(JSON.stringify({
     status,
+    runtimeRoot: qxRuntimeRoot,
     sdk: { found: environment.sdkFound, path: environment.sdkPath },
     adb: { found: environment.adbFound, path: environment.adbPath, version: environment.adbVersion },
     emulator: { found: environment.emulatorFound, path: environment.emulatorPath, avds: environment.avds },
@@ -128,7 +160,17 @@ function buildAndroidHost(): void {
     windowsHide: true,
   });
   if (result.error) throw result.error;
+  if (result.status === 0) writeAndroidRuntimeManifest();
   process.exitCode = result.status ?? 1;
+}
+
+function writeAndroidRuntimeManifest(): void {
+  if (!existsSync(apkPath)) throw new Error(`HOST_APK_NOT_FOUND: ${apkPath}`);
+  const sha256 = createHash("sha256").update(readFileSync(apkPath)).digest("hex");
+  const output = join(projectRoot, "build", "android-runtime-manifest.json");
+  mkdirSync(dirname(output), { recursive: true });
+  writeFileSync(output, `${JSON.stringify(buildAndroidRuntimeManifest(sha256), null, 2)}\n`, "utf8");
+  console.log(`Android runtime manifest: ${output}`);
 }
 
 function requireApk(): void {

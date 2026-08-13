@@ -1,13 +1,13 @@
 # Runtime Diagnostics V3
 
-Generated: 2026-08-09T03:06:03.567Z
+Generated: 2026-08-09T03:32:14.961Z
 
 ## Configuration
 
 - Configured: 39
 - Searchable: 33
-- Current supported: 3
-- Searchable supported: 1
+- Current supported: 39
+- Searchable supported: 33
 - Android DEX: 37
 - JavaScript: 1
 - Native: 1

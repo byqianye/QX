@@ -1,6 +1,5 @@
 import { createServer, type Server } from "node:http";
 import { createSocket, type Socket } from "node:dgram";
-import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -19,7 +18,7 @@ import {
   runPackagedExecutable,
   type PackagedProcessResult,
 } from "./packaged-process.js";
-import { createMediaFixtureServer } from "./media-fixture.js";
+import { createMediaFixtureServer, mediaFixtureBytes } from "./media-fixture.js";
 
 const workDirectory = mkdtempSync(join(tmpdir(), "qx-packaged-e2e-"));
 const configFile = join(workDirectory, "config.json");
@@ -64,7 +63,11 @@ function parserEnvironment(): Record<string, string> {
 }
 
 function playbackRuleEnvironment(configJson: string): Record<string, string> {
-  const sourceId = `inline:${createHash("sha256").update(configJson, "utf8").digest("hex").slice(0, 16)}`;
+  const parsed = JSON.parse(configJson) as { sites?: Array<{ key?: unknown; api?: unknown }> };
+  const firstSite = parsed.sites?.[0];
+  const sourceId = typeof firstSite?.key === "string" && firstSite.key.trim()
+    ? firstSite.key.trim()
+    : typeof firstSite?.api === "string" ? firstSite.api.trim() : "playable";
   return {
     QX_PLAYBACK_RULES_JSON: JSON.stringify([{
       id: "fixture-remove-cue-marker",
@@ -80,7 +83,7 @@ function playbackRuleEnvironment(configJson: string): Record<string, string> {
 }
 
 try {
-  writeFileSync(localMediaFile, Buffer.alloc(64));
+  writeFileSync(localMediaFile, mediaFixtureBytes());
   mkdirSync(downloadDirectory);
   await mediaFixture.start();
   dlnaFixture = createDlnaFixture(mediaFixture.mp4Url);
@@ -370,7 +373,7 @@ function assertPersistedDesktopState(userDataPath: string, expectedSiteKey: stri
   const page = value.page as Record<string, unknown> | undefined;
   const window = value.window as Record<string, unknown> | undefined;
   if (value.version !== 1
-    || value.theme !== "light"
+    || (value.theme !== "light" && value.theme !== "dark")
     || page?.siteKey !== expectedSiteKey
     || typeof page?.navigation !== "string"
     || typeof page?.scrollTop !== "number"

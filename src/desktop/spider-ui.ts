@@ -22,11 +22,13 @@ import {
   type PlaybackStatus,
   type PlaybackState,
   type PlaybackSource,
+  type PlaybackTraceStage,
 } from "./playback.js";
 import {
   PlaybackProxyServer,
   type PlaybackProxySession,
 } from "./playback-proxy.js";
+import { MediaResolver } from "./media-resolver.js";
 import {
   parseVodPlayback,
   type PlaybackCatalog,
@@ -43,7 +45,7 @@ import {
   type PageStatePatch,
 } from "./state-persistence.js";
 import type { SpiderResponse } from "../spider/rpc.js";
-import type { SourceCapabilities } from "../source/media-source.js";
+import type { QxPlayerResult, SourceCapabilities } from "../source/media-source.js";
 import { normalizeVod, normalizeVodDetails, unwrapSpiderResponse } from "../source/normalizers.js";
 import type { AggregateSearchSnapshot } from "../search/aggregate-search.js";
 import {
@@ -59,12 +61,14 @@ import { isRemoteSubtitleTrack, type SubtitleTrack } from "../subtitles.js";
 import {
   PlaybackFallbackCoordinator,
   PlaybackHealthRegistry,
+  isAutoFallbackRetryable,
   type FallbackCandidate,
   type PlaybackFallbackMode,
   type PlaybackFallbackState,
   type PlaybackFallbackTrigger,
   type PlaybackHealthSnapshot,
 } from "../health/playback-health.js";
+import type { SourceHealthService } from "../health/source-health.js";
 import {
   EMPTY_HISTORY_UI_STATE,
   type HistoryCatalogEpisode,
@@ -126,6 +130,8 @@ import { LocalMediaError, LocalMediaService, type LocalMediaStream } from "../lo
 import { EMPTY_LOCAL_MEDIA_UI_STATE, type LocalMediaUiState } from "../local-media/local-media-types.js";
 import { DownloadError } from "../downloads/download-backend.js";
 import { DownloadService, DownloadServiceError } from "../downloads/download-service.js";
+import type { AndroidRuntimeStatus } from "../spider/android-runtime-diagnostics.js";
+import type { AndroidRuntimeMode } from "../spider/android-runtime-types.js";
 import { EMPTY_DOWNLOAD_UI_STATE, type DownloadUiState } from "../downloads/download-types.js";
 import { PushService, PushServiceError, type PushSubmissionResult } from "../push/push-service.js";
 import type { PushPlaybackSessionSnapshot, PushRequest, PushSourceReference, PushUrlRequest } from "../push/push-types.js";
@@ -213,6 +219,11 @@ export interface DesktopSpiderSessionPort {
 }
 
 export type DesktopSpiderUiPage = "import" | "home" | "category" | "search" | "detail" | "closed";
+
+type DetailReturnContext = {
+  page: "home" | "category" | "search";
+  scrollTop: number;
+};
 
 export type PlayerHostMode = "embedded" | "detached";
 
@@ -302,6 +313,7 @@ export interface DesktopSpiderUiOptions {
   parserCandidates?: readonly ParserCandidate[];
   parserAllowedOrigins?: readonly string[];
   parserFetch?: typeof fetch;
+  playbackFetch?: typeof fetch;
   playbackRules?: readonly PlaybackRule[];
   sniffer?: IsolatedSniffer;
   playbackFallbackMode?: PlaybackFallbackMode;
@@ -315,6 +327,7 @@ export interface DesktopSpiderUiOptions {
   danmaku?: DanmakuService;
   localMedia?: LocalMediaService;
   downloads?: DownloadService;
+  sourceHealth?: SourceHealthService;
   onPlaybackComplete?: () => void | Promise<void>;
 }
 
@@ -327,6 +340,7 @@ export class DesktopSpiderUiController {
   private localError: { code: string; message: string } | null = null;
   private items: Record<string, unknown>[] = [];
   private detailItem: Record<string, unknown> | null = null;
+  private detailReturnContext: DetailReturnContext | null = null;
   private playbackCatalog: PlaybackCatalog | null = null;
   private playbackSelection: PlaybackSelection | null = null;
   private playerHost: PlayerHostMode = "embedded";
@@ -336,6 +350,7 @@ export class DesktopSpiderUiController {
   private playbackSourceResolution: PlaybackSourceResolution | null = null;
   private readonly playerController = new EmbeddedPlaybackController();
   private readonly playbackProxy: PlaybackProxyServer;
+  private readonly mediaResolver: MediaResolver;
   private readonly parserCandidates: readonly ParserCandidate[];
   private readonly parseResolver: ParseChainResolver;
   private readonly sniffer: IsolatedSniffer | undefined;
@@ -358,9 +373,12 @@ export class DesktopSpiderUiController {
   private readonly danmakuService: DanmakuService | undefined;
   private readonly localMediaService: LocalMediaService | undefined;
   private readonly downloadService: DownloadService | undefined;
+  private readonly sourceHealth: SourceHealthService | undefined;
   private onPlaybackComplete: (() => void | Promise<void>) | undefined;
   private historyResume: HistoryResumeCandidate | null = null;
   private pendingResumeSeconds = 0;
+  private sourceHealthAttemptStartedAt = 0;
+  private sourceHealthPlaybackRecorded = false;
 
   public constructor(options: DesktopSpiderUiOptions) {
     this.session = options.session;
@@ -373,6 +391,7 @@ export class DesktopSpiderUiController {
     this.danmakuService = options.danmaku;
     this.localMediaService = options.localMedia;
     this.downloadService = options.downloads;
+    this.sourceHealth = options.sourceHealth;
     this.onPlaybackComplete = options.onPlaybackComplete;
     this.parserCandidates = options.parserCandidates?.map(cloneParserCandidate) ?? [];
     this.sniffer = options.sniffer;
@@ -382,6 +401,12 @@ export class DesktopSpiderUiController {
       ...(options.playbackFallbackMode ? { mode: options.playbackFallbackMode } : {}),
       ...(options.playbackFallbackMaxAttempts ? { maxAttempts: options.playbackFallbackMaxAttempts } : {}),
       ...(options.playbackFallbackTimeoutMs ? { totalTimeoutMs: options.playbackFallbackTimeoutMs } : {}),
+      autoFallbackV2: {
+        maxSources: 5,
+        maxLinesPerSource: 3,
+        maxParsesPerSource: 3,
+        totalTimeoutMs: options.playbackFallbackTimeoutMs ?? 45_000,
+      },
     });
     this.parseResolver = new ParseChainResolver({
       ...(options.parserAllowedOrigins ? { allowedOrigins: options.parserAllowedOrigins } : {}),
@@ -391,8 +416,10 @@ export class DesktopSpiderUiController {
       {
         ...(options.playbackProxyOrigins ? { allowedOrigins: options.playbackProxyOrigins } : {}),
         ...(options.playbackRules ? { rules: options.playbackRules } : {}),
+        ...(options.playbackFetch ? { fetchImpl: options.playbackFetch } : {}),
       },
     );
+    this.mediaResolver = new MediaResolver(this.playbackProxy);
   }
 
   public get state(): DesktopSpiderUiState {
@@ -628,6 +655,7 @@ export class DesktopSpiderUiController {
       this.page = "home";
       this.items = [];
       this.detailItem = null;
+      this.detailReturnContext = null;
       this.clearPlaybackCatalog();
       this.playbackSourceResolution = null;
       this.scrollTop = 0;
@@ -643,6 +671,7 @@ export class DesktopSpiderUiController {
         this.page = "home";
         this.items = listFrom(response);
         this.detailItem = null;
+        this.detailReturnContext = null;
         this.playbackSourceResolution = null;
         this.scrollTop = 0;
         this.aggregateSearchValue = null;
@@ -664,6 +693,7 @@ export class DesktopSpiderUiController {
         this.page = "category";
         this.items = listFrom(response);
         this.detailItem = null;
+        this.detailReturnContext = null;
         this.playbackSourceResolution = null;
         this.scrollTop = 0;
         this.aggregateSearchValue = null;
@@ -684,6 +714,7 @@ export class DesktopSpiderUiController {
         this.page = "search";
         this.items = listFrom(response);
         this.detailItem = null;
+        this.detailReturnContext = null;
         this.playbackSourceResolution = null;
         this.scrollTop = 0;
         this.aggregateSearchValue = null;
@@ -692,6 +723,9 @@ export class DesktopSpiderUiController {
   }
 
   public detail(vodId: string, timeoutMs?: number): Promise<DesktopSpiderUiState> {
+    if (this.page !== "detail" && isDetailReturnPage(this.page)) {
+      this.detailReturnContext = { page: this.page, scrollTop: this.scrollTop };
+    }
     return this.run(
       "detail",
       () => this.session.detailContent([vodId], timeoutMs),
@@ -708,6 +742,21 @@ export class DesktopSpiderUiController {
         this.aggregateSearchValue = null;
       },
     );
+  }
+
+  public closeDetail(): DesktopSpiderUiState {
+    if (this.page !== "detail") return this.state;
+    const returnContext = this.detailReturnContext ?? { page: "home" as const, scrollTop: 0 };
+    this.page = returnContext.page;
+    this.scrollTop = returnContext.scrollTop;
+    this.detailItem = null;
+    this.clearPlaybackCatalog();
+    this.playbackSourceResolution = null;
+    this.playbackSelection = null;
+    this.historyResume = null;
+    this.aggregateSearchValue = null;
+    this.detailReturnContext = null;
+    return this.state;
   }
 
   public player(
@@ -1014,6 +1063,8 @@ export class DesktopSpiderUiController {
       };
     }
     this.playbackHealthRegistry.tracker(this.currentHealthKey).beginAttempt();
+    this.sourceHealthAttemptStartedAt = Date.now();
+    this.sourceHealthPlaybackRecorded = false;
     this.historyService?.flush("stop");
     this.playerController.stop();
     this.danmakuService?.clear();
@@ -1038,8 +1089,13 @@ export class DesktopSpiderUiController {
         );
         if (playback.available) {
           const playbackSessionId = randomUUID();
-          const source = await this.preparePlayback(playback, playbackSessionId, request.flag);
+          const source = await this.preparePlayback(playback, playbackSessionId, request.flag, request.id);
           this.playerController.load(source);
+          this.playerController.recordStage("DETAIL");
+          this.playerController.recordStage("EPISODE");
+          this.playerController.recordStage("PLAYER_CONTENT");
+          this.playerController.recordStage("MEDIA_RESOLVE");
+          this.playerController.recordStage("PROXY_START");
           if (this.pendingResumeSeconds > 0) this.playerController.seek(this.pendingResumeSeconds);
           const sourceState = this.playerController.state.source;
           if (!sourceState) throw new Error("Playback source was not loaded");
@@ -1070,9 +1126,11 @@ export class DesktopSpiderUiController {
               url: sourceState.url,
             },
           };
+          this.sourceHealth?.recordPlayerSuccess(this.sourceHealthId(), Date.now() - this.sourceHealthAttemptStartedAt);
         }
       },
       allowFallback ? async (failure) => {
+        this.sourceHealth?.recordPlayerFailure(this.sourceHealthId(), failure.error, Date.now() - this.sourceHealthAttemptStartedAt);
         this.playbackDiagnosticsValue = playbackAttemptDiagnostics(
           request,
           failure.response,
@@ -1192,6 +1250,7 @@ export class DesktopSpiderUiController {
     } else if (trigger === "proxy-fatal" || trigger === "player-fatal") {
       tracker.recordFatalError(code);
     }
+    if (this.fallbackCoordinator.state.mode === "auto" && !isAutoFallbackRetryable(code)) return false;
     const decision = this.fallbackCoordinator.trigger(trigger, reason);
     if (decision.kind !== "attempt") return false;
     const nextRequest = this.fallbackRequests.get(decision.candidate.id);
@@ -1267,13 +1326,17 @@ export class DesktopSpiderUiController {
     if (!event) {
       if (patch.status === "playing") tracker.recordFirstFrame();
       if (patch.error) {
-        void this.triggerMediaFailure(playbackFallbackTrigger(patch.error, patch.error.code), patch.error.message);
+        void this.triggerMediaFailure(playbackFallbackTrigger(patch.error, patch.error.code), patch.error.message, patch.error.code);
       }
       return;
     }
     switch (event.type) {
       case "first-frame":
         tracker.recordFirstFrame(event.at);
+        if (!this.sourceHealthPlaybackRecorded) {
+          this.sourceHealthPlaybackRecorded = true;
+          this.sourceHealth?.recordPlaybackSuccess(this.sourceHealthId(), Date.now() - this.sourceHealthAttemptStartedAt);
+        }
         break;
       case "startup-timeout":
         tracker.recordStartupFailure(event.reason, event.at);
@@ -1287,10 +1350,12 @@ export class DesktopSpiderUiController {
         break;
       case "fatal-error":
         tracker.recordFatalError(event.code, event.at);
+        this.sourceHealth?.recordPlaybackFailure(this.sourceHealthId(), { code: event.code ?? "PLAYER_FATAL_ERROR" }, Date.now() - this.sourceHealthAttemptStartedAt);
         void this.triggerMediaFailure("player-fatal", event.code ?? "播放器致命错误");
         break;
       case "segment-failure":
         tracker.recordSegmentFailure(event.reason, event.at);
+        this.sourceHealth?.recordPlaybackFailure(this.sourceHealthId(), { code: "HLS_SEGMENT_FAILED" }, Date.now() - this.sourceHealthAttemptStartedAt);
         if (tracker.shouldTriggerSegmentFailure()) {
           void this.triggerMediaFailure("segment-errors", event.reason ?? "连续分片错误");
         }
@@ -1301,7 +1366,7 @@ export class DesktopSpiderUiController {
       case "http-status":
         tracker.recordHttpStatus(event.status ?? 0, event.at);
         if ((event.status ?? 0) >= 500) {
-          void this.triggerMediaFailure("proxy-fatal", `HTTP ${event.status}`);
+          void this.triggerMediaFailure("proxy-fatal", `HTTP ${event.status}`, `MEDIA_HTTP_${event.status}`);
         }
         break;
       case "completion":
@@ -1317,9 +1382,11 @@ export class DesktopSpiderUiController {
     }
   }
 
-  private async triggerMediaFailure(trigger: PlaybackFallbackTrigger, reason: string): Promise<void> {
+  private async triggerMediaFailure(trigger: PlaybackFallbackTrigger, reason: string, codeHint?: string): Promise<void> {
     const request = this.currentPlaybackRequest;
     if (!request) return;
+    const code = codeHint ?? mediaFailureCode(trigger);
+    if (this.fallbackCoordinator.state.mode === "auto" && !isAutoFallbackRetryable(code)) return;
     const decision = this.fallbackCoordinator.trigger(trigger, reason);
     if (decision.kind !== "attempt") return;
     const nextRequest = this.fallbackRequests.get(decision.candidate.id);
@@ -1336,10 +1403,14 @@ export class DesktopSpiderUiController {
     }
   }
 
+  private sourceHealthId(): string {
+    return this.session.view.api?.trim() || this.session.view.source;
+  }
+
   private buildFallbackCandidates(request: PlaybackRequest): FallbackCandidate[] {
     const candidates: FallbackCandidate[] = [
-      { id: "current-retry", label: "当前线路重试", kind: "retry-current" },
-      { id: "current-reparse", label: "当前线路重新解析", kind: "reparse-current" },
+      { id: "current-retry", label: "当前线路重试", kind: "retry-current", sourceId: this.session.view.source, parseAttempt: 0 },
+      { id: "current-reparse", label: "当前线路重新解析", kind: "reparse-current", sourceId: this.session.view.source, parseAttempt: 1 },
     ];
     const currentLine = request.metadata?.lineIndex ?? null;
     const currentEpisode = request.metadata?.episodeIndex ?? null;
@@ -1364,6 +1435,8 @@ export class DesktopSpiderUiController {
           label: `${line.name} · ${episode.name}`,
           kind: score !== null && (currentScore === null || score > currentScore) ? "healthier" : "same-content",
           healthScore: score,
+          sourceId: this.session.view.source,
+          lineKey: String(line.index),
         });
       }
     }
@@ -1424,6 +1497,7 @@ export class DesktopSpiderUiController {
     playback: Extract<DesktopSpiderPlaybackState, { available: true }>,
     playbackSessionId: string,
     flag: string,
+    episodeId: string,
   ): Promise<PlaybackSource> {
     await this.releasePlaybackProxy();
     let resolved = {
@@ -1431,7 +1505,8 @@ export class DesktopSpiderUiController {
       url: playback.url,
       headers: { ...playback.headers },
     };
-    if (playback.parse === 1) {
+    let parsedThroughResolver = false;
+    if (playback.parse === 1 || playback.jx === 1) {
       this.parseState = { ...initialParseState(), status: "resolving" };
       try {
         const parsed = await this.parseResolver.resolve({
@@ -1459,6 +1534,7 @@ export class DesktopSpiderUiController {
           error: null,
         };
         resolved = parsed;
+        parsedThroughResolver = true;
       } catch (error) {
         const parseError = error instanceof ParseChainError
           ? error
@@ -1495,6 +1571,7 @@ export class DesktopSpiderUiController {
             url: sniffed.url,
             headers: sanitizeSnifferHeaders(playback.headers, sniffed.headers),
           };
+          parsedThroughResolver = true;
         } catch (snifferError) {
           const snifferCode = isRecord(snifferError) && typeof snifferError.code === "string"
             ? snifferError.code
@@ -1519,13 +1596,39 @@ export class DesktopSpiderUiController {
         error: null,
       };
     }
-    const baseMediaSource: PlaybackSource = Object.keys(resolved.headers).length === 0
-      ? { parse: 0, url: resolved.url, headers: {} }
-      : await this.createMediaProxy(resolved, playbackSessionId);
+    const resolvedJx = parsedThroughResolver ? 0 : playback.jx ?? 0;
+    const playerResult: QxPlayerResult = {
+      parse: 0,
+      url: resolved.url,
+      headers: { ...resolved.headers },
+      // ParseManager and MediaResolver have already reduced this to a direct
+      // media URL, so the unified result must not re-enter the parse branch.
+      jx: resolvedJx,
+      sourceKey: playback.sourceKey ?? this.session.view.source,
+      sourceName: playback.sourceName ?? this.session.view.api ?? this.session.view.source,
+      episodeId: playback.episodeId ?? episodeId,
+      ...(playback.playUrl ? { playUrl: playback.playUrl } : {}),
+      ...(playback.format ? { format: playback.format } : {}),
+      ...(playback.flag ? { flag: playback.flag } : {}),
+      ...(playback.jxFrom ? { jxFrom: playback.jxFrom } : {}),
+    };
+    const resolvedMedia = await this.mediaResolver.resolve(playerResult, {
+      playbackSessionId,
+      sourceKey: playerResult.sourceKey,
+      sourceName: playerResult.sourceName,
+      episodeId: playerResult.episodeId,
+    });
+    this.proxySession = resolvedMedia.proxySession;
+    const baseMediaSource: PlaybackSource = {
+      parse: 0,
+      url: resolvedMedia.url,
+      headers: { ...resolvedMedia.headers },
+      mediaType: resolvedMedia.mediaType,
+      jx: resolvedJx,
+    };
     const mediaSource: PlaybackSource = {
       ...baseMediaSource,
       ...(playback.playUrl ? { playUrl: playback.playUrl } : {}),
-      ...(playback.jx === undefined ? {} : { jx: playback.jx }),
       ...(playback.format ? { format: playback.format } : {}),
       ...(playback.flag ? { flag: playback.flag } : {}),
       ...(playback.jxFrom ? { jxFrom: playback.jxFrom } : {}),
@@ -1620,6 +1723,7 @@ export interface DesktopSpiderUiServerOptions {
   parserCandidates?: readonly ParserCandidate[];
   parserAllowedOrigins?: readonly string[];
   parserFetch?: typeof fetch;
+  playbackFetch?: typeof fetch;
   playbackRules?: readonly PlaybackRule[];
   sniffer?: IsolatedSniffer;
   playbackFallbackMode?: PlaybackFallbackMode;
@@ -1630,6 +1734,23 @@ export interface DesktopSpiderUiServerOptions {
   follow?: FollowService;
   cache?: CacheService;
   storage?: DataStorageService;
+  androidCredentials?: {
+    status(): Promise<{ provider: "uc"; configured: boolean }>;
+    setAccessToken(token: string): void;
+    clear(): void;
+  };
+  androidRuntimeStatus?: () => AndroidRuntimeStatus | Promise<AndroidRuntimeStatus>;
+  androidRuntimeActions?: {
+    ensure(confirmed: boolean): Promise<unknown>;
+    enableWhpx(confirmed: boolean): Promise<unknown>;
+    setMode(mode: AndroidRuntimeMode): Promise<unknown>;
+    restart(): Promise<unknown>;
+    repair(confirmed: boolean): Promise<unknown>;
+    reinstall(confirmed: boolean): Promise<unknown>;
+    cancel?(): Promise<unknown>;
+    uninstall(): Promise<void>;
+    stop(): Promise<void>;
+  };
   danmaku?: DanmakuService;
   localMedia?: LocalMediaService;
   downloads?: DownloadService;
@@ -1669,6 +1790,7 @@ export class DesktopSpiderUiServer {
   private readonly parserCandidates: readonly ParserCandidate[] | undefined;
   private readonly parserAllowedOrigins: readonly string[] | undefined;
   private readonly parserFetch: typeof fetch | undefined;
+  private readonly playbackFetch: typeof fetch | undefined;
   private readonly playbackRules: readonly PlaybackRule[] | undefined;
   private readonly sniffer: IsolatedSniffer | undefined;
   private readonly playbackFallbackMode: PlaybackFallbackMode | undefined;
@@ -1680,6 +1802,9 @@ export class DesktopSpiderUiServer {
   private readonly cacheService: CacheService | undefined;
   private readonly posterProxy: PosterProxy;
   private readonly storageService: DataStorageService | undefined;
+  private readonly androidCredentials: DesktopSpiderUiServerOptions["androidCredentials"];
+  private readonly androidRuntimeStatus: DesktopSpiderUiServerOptions["androidRuntimeStatus"];
+  private readonly androidRuntimeActions: DesktopSpiderUiServerOptions["androidRuntimeActions"];
   private readonly danmakuService: DanmakuService | undefined;
   private readonly localMediaService: LocalMediaService | undefined;
   private readonly downloadService: DownloadService | undefined;
@@ -1732,6 +1857,7 @@ export class DesktopSpiderUiServer {
     this.parserCandidates = options.parserCandidates?.map(cloneParserCandidate);
     this.parserAllowedOrigins = options.parserAllowedOrigins;
     this.parserFetch = options.parserFetch;
+    this.playbackFetch = options.playbackFetch;
     this.playbackRules = options.playbackRules;
     this.sniffer = options.sniffer;
     this.playbackFallbackMode = options.playbackFallbackMode;
@@ -1743,6 +1869,9 @@ export class DesktopSpiderUiServer {
     this.cacheService = options.cache;
     this.posterProxy = new PosterProxy({ ...(this.cacheService ? { cache: this.cacheService } : {}) });
     this.storageService = options.storage;
+    this.androidCredentials = options.androidCredentials;
+    this.androidRuntimeStatus = options.androidRuntimeStatus;
+    this.androidRuntimeActions = options.androidRuntimeActions;
     this.danmakuService = options.danmaku;
     this.localMediaService = options.localMedia;
     this.downloadService = options.downloads;
@@ -2079,12 +2208,79 @@ export class DesktopSpiderUiServer {
         this.writeCurrentState(response);
         return;
       }
+      if (request.method === "GET" && url.pathname === "/api/android/credentials/status") {
+        if (!this.androidCredentials) {
+          writeJson(response, { error: "ANDROID_CREDENTIALS_UNAVAILABLE" }, 503);
+          return;
+        }
+        writeJson(response, await this.androidCredentials.status());
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/android/runtime/status") {
+        if (!this.androidRuntimeStatus) {
+          writeJson(response, { error: "ANDROID_RUNTIME_DIAGNOSTICS_UNAVAILABLE" }, 503);
+          return;
+        }
+        writeJson(response, await this.androidRuntimeStatus());
+        return;
+      }
       if (request.method !== "POST") {
         writeJson(response, { error: "Not found" }, 404);
         return;
       }
 
       const body = await readJson(request);
+      if (url.pathname.startsWith("/api/android/runtime/")) {
+        const actions = this.androidRuntimeActions;
+        if (!actions) throw new Error("ANDROID_RUNTIME_ACTIONS_UNAVAILABLE");
+        if (url.pathname === "/api/android/runtime/ensure") {
+          if (body.confirmed !== true) throw new Error("ANDROID_RUNTIME_CONFIRMATION_REQUIRED");
+          writeJson(response, await actions.ensure(true));
+          return;
+        }
+        if (url.pathname === "/api/android/runtime/enable-whpx") {
+          if (body.confirmed !== true) throw new Error("ANDROID_RUNTIME_CONFIRMATION_REQUIRED");
+          writeJson(response, await actions.enableWhpx(true));
+          return;
+        }
+        if (url.pathname === "/api/android/runtime/mode") {
+          if (body.mode !== "auto" && body.mode !== "resident" && body.mode !== "disabled") throw new Error("ANDROID_RUNTIME_MODE_INVALID");
+          writeJson(response, await actions.setMode(body.mode));
+          return;
+        }
+        if (url.pathname === "/api/android/runtime/restart") {
+          writeJson(response, await actions.restart());
+          return;
+        }
+        if (url.pathname === "/api/android/runtime/repair") {
+          if (body.confirmed !== true) throw new Error("ANDROID_RUNTIME_CONFIRMATION_REQUIRED");
+          writeJson(response, await actions.repair(true));
+          return;
+        }
+        if (url.pathname === "/api/android/runtime/reinstall") {
+          if (body.confirmed !== true) throw new Error("ANDROID_RUNTIME_CONFIRMATION_REQUIRED");
+          writeJson(response, await actions.reinstall(true));
+          return;
+        }
+        if (url.pathname === "/api/android/runtime/cancel") {
+          if (!actions.cancel) throw new Error("ANDROID_RUNTIME_CANCEL_UNAVAILABLE");
+          writeJson(response, await actions.cancel());
+          return;
+        }
+        if (url.pathname === "/api/android/runtime/uninstall") {
+          if (body.confirmed !== true) throw new Error("ANDROID_RUNTIME_CONFIRMATION_REQUIRED");
+          await actions.uninstall();
+          writeJson(response, { status: "UNINSTALLED" });
+          return;
+        }
+        if (url.pathname === "/api/android/runtime/stop") {
+          await actions.stop();
+          writeJson(response, { status: "STOPPED" });
+          return;
+        }
+        writeJson(response, { error: "Not found" }, 404);
+        return;
+      }
       if (url.pathname.startsWith("/api/push/")) {
         await this.handlePushRequest(url.pathname, body);
         this.writeCurrentState(response);
@@ -2336,6 +2532,29 @@ export class DesktopSpiderUiServer {
         return;
       }
 
+      if (url.pathname.startsWith("/api/android/credentials/")) {
+        const credentials = this.androidCredentials;
+        if (!credentials) throw new Error("ANDROID_CREDENTIALS_UNAVAILABLE");
+        if (url.pathname === "/api/android/credentials/status") {
+          writeJson(response, await credentials.status());
+          return;
+        }
+        if (url.pathname === "/api/android/credentials/set") {
+          const token = stringValue(body.accessToken, "").trim();
+          if (!token) throw new Error("ANDROID_CREDENTIAL_ACCESS_TOKEN_REQUIRED");
+          credentials.setAccessToken(token);
+          writeJson(response, { provider: "uc", configured: true });
+          return;
+        }
+        if (url.pathname === "/api/android/credentials/clear") {
+          credentials.clear();
+          writeJson(response, { provider: "uc", configured: false });
+          return;
+        }
+        writeJson(response, { error: "Not found" }, 404);
+        return;
+      }
+
       if (url.pathname.startsWith("/api/backup/")) {
         await this.handleBackupRequest(url.pathname, body, response);
         return;
@@ -2384,7 +2603,7 @@ export class DesktopSpiderUiServer {
           {
             const key = stringValue(body.key, "");
             const page = numberValue(body.page, 1);
-            if (this.importer) {
+            if (this.importer && body.aggregate !== false) {
               const sourceIds = stringList(body.sourceIds);
               await this.importer.aggregateSearch(key, {
                 page,
@@ -2409,13 +2628,31 @@ export class DesktopSpiderUiServer {
             this.persistPage({ navigation: "detail", recentDetailId: vodId });
           }
           break;
+        case "/api/detail/close":
+          {
+            const closed = ui.closeDetail();
+            if (closed.page === "home" || closed.page === "category" || closed.page === "search") {
+              this.persistPage({
+                navigation: closed.page,
+                scrollTop: closed.scrollTop,
+                recentDetailId: null,
+              });
+            }
+          }
+          break;
         case "/api/playback-sources/search":
           {
             if (!this.importer) throw new Error("PLAYBACK_SOURCE_RESOLVER_UNAVAILABLE");
             if (!ui.state.detail) throw new Error("PLAYBACK_SOURCE_DETAIL_REQUIRED");
             const resolution = await this.importer.resolvePlaybackSources(
               normalizeVod(ui.state.detail),
-              { currentSiteKey: this.importer.selectedSiteKey },
+              {
+                currentSiteKey: this.importer.selectedSiteKey,
+                progressive: {
+                  tierASize: 6,
+                  onTier: (tierResolution) => { ui.setPlaybackSourceResolution(tierResolution); },
+                },
+              },
             );
             ui.setPlaybackSourceResolution(resolution);
           }
@@ -2426,13 +2663,27 @@ export class DesktopSpiderUiServer {
             const siteKey = stringValue(body.siteKey, "");
             const vodId = stringValue(body.vodId, "");
             const candidate = ui.playbackSourceCandidate(siteKey, vodId);
-            if (!candidate || !candidate.playable) throw new Error("PLAYBACK_SOURCE_CANDIDATE_INVALID");
+            if (!candidate || !candidate.playable) {
+              const availableCandidates = ui.state.playbackSources?.candidates.map((value) => ({
+                siteKey: value.siteKey,
+                vodId: String(value.vod.id ?? value.vod.vod_id ?? ""),
+                playable: value.playable,
+              })) ?? [];
+              throw new Error(`PLAYBACK_SOURCE_CANDIDATE_INVALID: ${JSON.stringify({ siteKey, vodId, availableCandidates })}`);
+            }
             const selected = this.importer.selectSite(siteKey);
             if (selected.selectedSiteKey !== siteKey || selected.status === "error") {
               throw new Error("PLAYBACK_SOURCE_SITE_UNAVAILABLE");
             }
             const selectedUi = this.activeUi();
             if (!selectedUi) throw new Error("PLAYBACK_SOURCE_SITE_UNAVAILABLE");
+            // resolvePlaybackSources() may have already opened the candidate's
+            // session. Re-opening that same session breaks the real DEX
+            // Spider lifecycle, so only open newly selected idle sessions.
+            if (selectedUi.state.status !== "ready") {
+              const opened = await selectedUi.open(siteKey, this.importer.selectedExt);
+              if (opened.status === "error") throw new Error("PLAYBACK_SOURCE_SITE_UNAVAILABLE");
+            }
             await selectedUi.detail(vodId);
             if (!selectedUi.state.playbackCatalog?.lines.some((line) => line.episodes.length > 0)) {
               throw new Error("PLAYBACK_SOURCE_DETAIL_UNPLAYABLE");
@@ -3148,11 +3399,13 @@ export class DesktopSpiderUiServer {
     if (!this.importedUi) {
       this.importedUi = new DesktopSpiderUiController({
         session,
+        sourceHealth: this.importer.sourceHealthService,
         onPlaybackComplete: () => this.pushService?.drainQueue(),
         ...(this.playbackProxyOrigins ? { playbackProxyOrigins: this.playbackProxyOrigins } : {}),
         ...(this.parserCandidates ? { parserCandidates: this.parserCandidates } : {}),
         ...(this.parserAllowedOrigins ? { parserAllowedOrigins: this.parserAllowedOrigins } : {}),
         ...(this.parserFetch ? { parserFetch: this.parserFetch } : {}),
+        ...(this.playbackFetch ? { playbackFetch: this.playbackFetch } : {}),
         ...(this.playbackRules ? { playbackRules: this.playbackRules } : {}),
         ...(this.sniffer ? { sniffer: this.sniffer } : {}),
         ...(this.playbackFallbackMode ? { playbackFallbackMode: this.playbackFallbackMode } : {}),
@@ -3676,6 +3929,16 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
         <button data-action="confirm-import">确认并信任</button>
       </section>`
     : "";
+  const androidCredentials = `<section data-testid="android-credentials" class="android-credentials">
+    <strong>Android Spider / UC 凭据</strong>
+    <p data-testid="android-credential-status">正在读取状态…</p>
+    <form data-action="android-credential-form">
+      <label>access_token <input name="accessToken" type="password" autocomplete="off" spellcheck="false"></label>
+      <button type="submit">保存</button>
+      <button type="button" data-action="android-credential-clear">清除</button>
+    </form>
+    <small>凭据仅用于 Android Spider 播放，不会显示或写入诊断报告。</small>
+  </section>`;
   const error = state.error
     ? `<section class="error" data-testid="error">
         <strong>${escapeHtml(errorLabel(state.error.code))}</strong>
@@ -3733,7 +3996,10 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
         <button data-action="player-attach">返回主窗口</button>
         <button data-action="player-stop">停止播放</button>
       </section>`
-    : renderEmbeddedPlayer(state.player);
+    : renderEmbeddedPlayer(
+      state.player,
+      state.playbackSession?.id ? { sessionId: state.playbackSession.id } : {},
+    );
   const healthMarkup = renderPlaybackHealth(state);
   const detail = state.detail
     ? `<section data-testid="detail-panel" class="detail-panel">
@@ -3782,6 +4048,7 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
         <p data-testid="status" class="${state.loading ? "loading" : ""}">${escapeHtml(statusLabel[state.status])}${state.loading ? " · 加载中" : ""}</p>
       </header>
       ${warning}
+      ${androidCredentials}
       ${error}
       ${aggregateSearch}
       ${navigation}
@@ -3804,6 +4071,31 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
           window.location.reload();
         };
         document.querySelectorAll('[data-action="confirm-import"]').forEach((button) => button.addEventListener('click', () => send('/api/import/confirm')));
+        const credentialStatus = document.querySelector('[data-testid="android-credential-status"]');
+        const refreshCredentialStatus = async () => {
+          try {
+            const response = await fetch('/api/android/credentials/status');
+            const value = await response.json();
+            if (credentialStatus) credentialStatus.textContent = value.configured ? '已配置' : '未配置';
+          } catch {
+            if (credentialStatus) credentialStatus.textContent = '不可用';
+          }
+        };
+        document.querySelector('[data-action="android-credential-form"]')?.addEventListener('submit', async (event) => {
+          event.preventDefault();
+          const form = event.currentTarget;
+          const input = form.querySelector('input[name="accessToken"]');
+          const accessToken = input?.value?.trim() || '';
+          if (!accessToken) return;
+          await fetch('/api/android/credentials/set', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ accessToken }) });
+          if (input) input.value = '';
+          await refreshCredentialStatus();
+        });
+        document.querySelector('[data-action="android-credential-clear"]')?.addEventListener('click', async () => {
+          await fetch('/api/android/credentials/clear', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+          await refreshCredentialStatus();
+        });
+        void refreshCredentialStatus();
         document.querySelectorAll('[data-action="open"]').forEach((button) => button.addEventListener('click', () => send('/api/open')));
         document.querySelectorAll('[data-action="home"]').forEach((button) => button.addEventListener('click', () => send('/api/home')));
         document.querySelectorAll('[data-action="category"]').forEach((button) => button.addEventListener('click', () => send('/api/category', { typeId: button.dataset.typeId, page: Number(button.dataset.page || '1') })));
@@ -3940,10 +4232,14 @@ function renderPlaybackHealth(state: DesktopSpiderUiState): string {
         <span>${escapeHtml(fallback.reason ?? "")}</span>
         <span>${fallback.next ? `即将尝试线路：${escapeHtml(fallback.next.label)}` : ""}</span>
       </div>`;
+  const trace = state.player.trace
+    ? `<p data-testid="playback-trace">Trace ${escapeHtml(state.player.trace.id)} · ${escapeHtml(state.player.trace.stages.map((stage) => stage.stage).join(" → "))}</p>`
+    : "";
   return `<section data-testid="playback-health-panel" class="playback-health-panel">
     <strong>流健康与自动线路回退</strong>
     <label>回退模式 <select data-action="playback-fallback-mode"><option value="off" ${fallback.mode === "off" ? "selected" : ""}>关闭</option><option value="prompt" ${fallback.mode === "prompt" ? "selected" : ""}>仅提示</option><option value="auto" ${fallback.mode === "auto" ? "selected" : ""}>自动</option></select></label>
     <p data-testid="playback-health-metrics">解析 ${metric(health.resolveSuccess)} · 首帧 ${metric(health.firstFrameMs, "ms")} · 缓冲 ${metric(health.bufferingCount, "次")} · 分片失败 ${metric(health.segmentFailure, "次")} · 评分 ${health.score.value === null ? "unknown" : health.score.value}</p>
+    ${trace}
     ${fallbackStatus}
     <div class="player-controls">
       ${fallback.status === "prompt" ? '<button data-action="playback-fallback-approve">尝试下一条</button>' : ""}
@@ -4123,6 +4419,7 @@ function renderPlaybackSourceDiagnostics(
   return `<details data-testid="playback-source-diagnostics">
     <summary>查看诊断</summary>
     <p>配置 ${diagnostics.configSiteCount} 个来源 → 允许搜索 ${diagnostics.searchableSites} → QX 当前支持 ${diagnostics.runtimeSupportedSites}</p>
+    <p${diagnostics.runtimePreparation === "ready" ? ` data-testid="android-runtime-ready"` : ""}>Android Runtime ${diagnostics.runtimePreparation === "ready" ? "READY" : "未使用"}${diagnostics.runtimePreparation === "ready" ? `（准备 ${diagnostics.runtimeWaitDurationMs}ms）` : ""}</p>
     <p>成功搜索 ${diagnostics.searchSuccessSites.length} → 获得 ${diagnostics.searchResultCount} 个结果 → 匹配 ${diagnostics.matchedCandidateCount} → 有播放线路 ${diagnostics.playableCandidateCount}</p>
     ${unsupportedHint ? `<p>${escapeHtml(unsupportedHint)}</p>` : ""}
     <ul>${diagnostics.sites.map((site) => `<li>${escapeHtml(site.siteName)}：初始化 ${escapeHtml(site.initialization)}，搜索 ${escapeHtml(site.search)}，结果 ${site.resultCount}${site.skipReason ? `，${escapeHtml(site.skipReason)}` : ""}</li>`).join("")}</ul>
@@ -4210,6 +4507,7 @@ function playerMediaSyncFromRequest(body: Record<string, unknown>): PlayerMediaS
   const sessionId = optionalString(body.sessionId);
   if (sessionId) patch.sessionId = sessionId;
   if (isPlaybackStatus(body.status)) patch.status = body.status;
+  if (isPlaybackTraceStage(body.stage)) patch.stage = body.stage;
   if (typeof body.currentTime === "number") patch.currentTime = body.currentTime;
   if (typeof body.duration === "number") patch.duration = body.duration;
   if (typeof body.volume === "number") patch.volume = body.volume;
@@ -4232,7 +4530,22 @@ function playbackMediaEventFromRequest(value: unknown): PlaybackMediaEvent | und
     ...(typeof value.code === "string" ? { code: value.code.slice(0, 80) } : {}),
     ...(typeof value.reason === "string" ? { reason: value.reason.slice(0, 120) } : {}),
     ...(typeof value.status === "number" && Number.isInteger(value.status) ? { status: value.status } : {}),
+    ...(isPlaybackTraceStage(value.stage) ? { stage: value.stage } : {}),
   };
+}
+
+function isPlaybackTraceStage(value: unknown): value is PlaybackTraceStage {
+  return value === "SOURCE"
+    || value === "DETAIL"
+    || value === "EPISODE"
+    || value === "PLAYER_CONTENT"
+    || value === "MEDIA_RESOLVE"
+    || value === "PROXY_START"
+    || value === "MANIFEST"
+    || value === "VARIANT"
+    || value === "SEGMENT"
+    || value === "DECODER"
+    || value === "PLAYING";
 }
 
 function isPlaybackMediaEventType(value: unknown): value is PlaybackMediaEvent["type"] {
@@ -4277,6 +4590,16 @@ function playbackFallbackTrigger(error: unknown, codeHint?: string): PlaybackFal
   return "player-content-failure";
 }
 
+function mediaFailureCode(trigger: PlaybackFallbackTrigger): string {
+  switch (trigger) {
+    case "startup-timeout": return "SOURCE_TIMEOUT";
+    case "segment-errors": return "HLS_SEGMENT_FAILED";
+    case "proxy-fatal": return "HLS_MANIFEST_FAILED";
+    case "player-fatal": return "PLAYER_FATAL_ERROR";
+    default: return "PLAYBACK_FAILURE";
+  }
+}
+
 function playbackErrorCode(error: unknown): string | null {
   return isRecord(error) && typeof error.code === "string" ? error.code : null;
 }
@@ -4289,6 +4612,10 @@ function playbackErrorMessage(error: unknown, fallback: string): string {
 
 function isPlaybackFallbackMode(value: unknown): value is PlaybackFallbackMode {
   return value === "off" || value === "prompt" || value === "auto";
+}
+
+function isDetailReturnPage(value: string): value is "home" | "category" | "search" {
+  return value === "home" || value === "category" || value === "search";
 }
 
 function statePatchFromRequest(body: Record<string, unknown>): DesktopStatePatch {

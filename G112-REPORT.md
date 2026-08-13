@@ -1,6 +1,6 @@
 # G112 switch and release-gate progress report
 
-Status: blocked by unfinished required gates  
+Status: blocked by unfinished required gates
 Dependency: G111 `1276fd7`
 
 ## Delivered

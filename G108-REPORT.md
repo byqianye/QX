@@ -1,6 +1,6 @@
 # G108 configuration, storage, and SourceCore progress report
 
-Status: in progress  
+Status: in progress
 Dependency: G107 `32ec107`
 
 ## Delivered

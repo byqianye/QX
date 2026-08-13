@@ -1,6 +1,6 @@
 # G110 playback and component progress report
 
-Status: in progress  
+Status: in progress
 Dependency: G109 `1a8f291`
 
 ## Delivered

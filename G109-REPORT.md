@@ -1,6 +1,6 @@
 # G109 native sources and restricted runtime progress report
 
-Status: in progress  
+Status: in progress
 Dependency: G108 `73013c8`
 
 ## Delivered

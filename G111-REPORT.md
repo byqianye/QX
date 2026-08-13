@@ -1,6 +1,6 @@
 # G111 business data retention progress report
 
-Status: in progress  
+Status: in progress
 Dependency: G110 `a2f0dd3`
 
 ## Delivered

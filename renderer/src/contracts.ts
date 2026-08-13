@@ -69,6 +69,51 @@ export interface ConfigCatalogSnapshot {
   validVersionCount: number;
 }
 
+export type SourceSessionAction = "open" | "call" | "cancel" | "close" | "snapshot";
+
+export interface SourceSessionPayload {
+  action: SourceSessionAction;
+  sessionId: string;
+  sourceId?: string;
+  siteKey?: string;
+  api?: string;
+  siteType?: 0 | 1 | 4;
+  ext?: string;
+  method?: "home" | "category" | "search" | "detail";
+  params?: Record<string, unknown>;
+  timeoutMs?: number;
+  headers?: Record<string, string>;
+}
+
+export interface SourceCapabilities {
+  home: boolean;
+  category: boolean;
+  search: boolean;
+  detail: boolean;
+  playback: boolean;
+  localProxy: boolean;
+  filters: boolean;
+  pagination: boolean;
+  engine: "http";
+}
+
+export interface SourceSessionSnapshot {
+  sessionId: string;
+  sourceId: string;
+  siteKey?: string;
+  api: string;
+  siteType: 0 | 1 | 4;
+  state: "ready" | "closed";
+  capabilities: SourceCapabilities;
+}
+
+export interface SourceSessionResult {
+  session: SourceSessionSnapshot;
+  method?: string;
+  result?: unknown;
+  cancelled: boolean;
+}
+
 const BACKEND_ERROR_CATEGORIES = new Set<BackendErrorCategory>([
   "InvalidConfig",
   "UnsupportedRuntime",

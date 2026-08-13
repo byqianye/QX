@@ -1,6 +1,6 @@
 {
   "name": "qx-yingshi",
-  "version": "0.1.0",
+  "version": "0.9.0-rc.1",
   "description": "桌面端用户自有媒体与直播内容播放器",
   "author": "QX影视",
   "private": true,
@@ -12,6 +12,28 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "build": "tsx scripts/release-build.ts",
+    "prepack-check": "tsx scripts/prepack-check.ts",
+    "preview:build": "npm run android-host:build && npm run build && npm run prepack-check",
+    "preview:dir": "npm run preview:build && electron-builder --config electron-builder.preview.yml --dir --x64",
+    "preview:installer": "npm run preview:build && electron-builder --config electron-builder.preview.yml --win nsis --x64",
+    "preview:portable": "npm run preview:build && electron-builder --config electron-builder.preview.yml --win portable --x64",
+    "preview:smoke": "tsx scripts/preview-smoke.ts",
+    "preview:android-playback": "tsx scripts/packaged-android-playback.ts",
+    "preview:android-clean-e2e": "tsx scripts/clean-windows-android-e2e.ts",
+    "rc:build": "npm run android-host:build && npm run build && npm run prepack-check",
+    "rc:dir": "npm run rc:build && electron-builder --config electron-builder.rc.yml --dir --x64",
+    "rc:installer": "npm run rc:build && electron-builder --config electron-builder.rc.yml --win nsis --x64",
+    "rc:portable": "npm run rc:build && electron-builder --config electron-builder.rc.yml --win portable --x64",
+    "rc:artifacts": "tsx scripts/build-windows-rc.ts",
+    "rc:clean-install": "tsx scripts/rc-clean-install.ts",
+    "rc:upgrade": "tsx scripts/rc-upgrade-e2e.ts",
+    "rc:uninstall": "tsx scripts/rc-uninstall-smoke.ts",
+    "rc:portable-smoke": "tsx scripts/rc-portable-smoke.ts",
+    "pack": "npm run android-host:build && npm run build && npm run prepack-check && electron-builder --dir",
+    "dist:win": "npm run android-host:build && npm run build && npm run prepack-check && electron-builder --win --x64",
+    "dist:win:installer": "npm run android-host:build && npm run build && npm run prepack-check && electron-builder --win nsis --x64",
+    "dist:win:portable": "npm run android-host:build && npm run build && npm run prepack-check && electron-builder --win portable --x64",
     "renderer:build": "vite build --config vite.config.ts",
     "brand:assets": "tsx src/release/generate-brand-assets.ts",
     "electron:build-runtime": "tsx src/electron/package-runtime.ts",
@@ -19,7 +41,8 @@
     "electron:dev": "npm run electron:build && electron .",
     "electron:smoke": "npm run electron:build && tsx src/electron/smoke-launch.ts",
     "electron:package:win": "npm run electron:build && electron-packager . QX影视 --platform=win32 --arch=x64 --out=dist/electron-package --overwrite --prune=true --icon=build/assets/qx-yingshi.ico --extra-resource=dist/electron-runtime --extra-resource=build/assets/qx-yingshi.ico",
-    "electron:installer:win": "npm run electron:build && electron-builder --win nsis",
+    "electron:installer:win": "npm run dist:win:installer",
+    "electron:e2e:unpacked": "tsx scripts/packaged-smoke.ts release/win-unpacked/QX影视.exe",
     "electron:e2e:package": "npm run electron:package:win && tsx src/electron/e2e-launch.ts",
     "electron:installer:e2e": "tsx src/electron/installer-e2e.ts",
     "electron:g76:local": "tsx src/electron/g76-local-acceptance.ts",
@@ -37,6 +60,8 @@
     "spike:jvm": "tsx src/spikes/jvm-probe.ts",
     "spike:player": "tsx src/spikes/playable-player-probe.ts",
     "spike:android-spider": "tsx src/spikes/android-spider-poc.ts",
+    "spike:android-runtime-v1": "tsx src/spikes/android-runtime-v1.ts",
+    "g105:source-audit": "tsx scripts/g105-source-audit.ts",
     "spike:douban": "tsx src/spikes/douban-probe.ts",
     "spike:douban-detail": "tsx src/spikes/douban-detail-probe.ts",
     "spike:douban-detail-sidecar": "tsx src/spikes/douban-detail-sidecar-probe.ts",
@@ -53,7 +78,8 @@
     "android-host:install": "tsx scripts/android-host.ts install",
     "android-host:start": "tsx scripts/android-host.ts start",
     "android-host:stop": "tsx scripts/android-host.ts stop",
-    "android-host:check": "tsx scripts/android-host.ts check"
+    "android-host:check": "tsx scripts/android-host.ts check",
+    "android-host:check:qx": "tsx scripts/android-host.ts check --qx"
   },
   "dependencies": {
     "hls.js": "^1.6.17",
@@ -73,48 +99,5 @@
     "typescript": "^5.8.3",
     "vite": "^7.3.6",
     "vitest": "^3.2.4"
-  },
-  "build": {
-    "appId": "com.qx.yingshi",
-    "productName": "QX影视",
-    "asar": true,
-    "directories": {
-      "output": "dist/installer"
-    },
-    "files": [
-      "dist/electron/**/*",
-      "dist/renderer/**/*",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "dist/electron-runtime",
-        "to": "electron-runtime"
-      },
-      {
-        "from": "build/assets/qx-yingshi.ico",
-        "to": "brand/qx-yingshi.ico"
-      }
-    ],
-    "win": {
-      "icon": "build/assets/qx-yingshi.ico",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": ["x64"]
-        }
-      ],
-      "artifactName": "QX影视-${version}-setup.${ext}"
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "menuCategory": "QX影视",
-      "deleteAppDataOnUninstall": false,
-      "include": "build/installer.nsh"
-    }
   }
 }

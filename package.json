@@ -18,6 +18,7 @@
     "check:frontend": "npm run typecheck && npm run renderer:build",
     "check:rust": "tsx scripts/check-rust.ts",
     "check:tauri": "npm run check:frontend && npm run check:rust",
+    "g112:release-gate": "tsx scripts/g112-release-gate.ts",
     "tauri:dev": "tsx scripts/tauri-command.ts dev",
     "tauri:build": "tsx scripts/tauri-command.ts build",
     "build:windows:x64": "tsx scripts/tauri-command.ts build --bundles nsis --target x86_64-pc-windows-msvc",

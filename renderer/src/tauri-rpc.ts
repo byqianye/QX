@@ -4,6 +4,8 @@ import {
   isBackendFailure,
   isBackendResponse,
   type AppSnapshot,
+  type ConfigCatalogPayload,
+  type ConfigCatalogSnapshot,
 } from "./contracts.js";
 
 let sequence = 0;
@@ -30,6 +32,28 @@ export async function requestAppSnapshot(): Promise<AppSnapshot> {
     throw new Error(`${response.error.category}: ${response.error.reasonCode}`);
   }
   if (!isBackendResponse<AppSnapshot>(response)) {
+    throw new Error(`Invalid Tauri response for ${BACKEND_RPC_VERSION}`);
+  }
+  return response.payload;
+}
+
+export async function ingestConfigCatalog(payload: ConfigCatalogPayload): Promise<ConfigCatalogSnapshot> {
+  if (!isTauriRuntime()) throw new Error("Tauri RPC is unavailable outside the Tauri runtime");
+  const { invoke } = await import("@tauri-apps/api/core");
+  const request = createBackendRequest(payload, crypto.randomUUID(), sessionId, ++sequence);
+  let response: unknown;
+  try {
+    response = await invoke("backend_config_catalog", { request });
+  } catch (error: unknown) {
+    if (isBackendFailure(error)) {
+      throw new Error(`${error.error.category}: ${error.error.reasonCode}`);
+    }
+    throw error;
+  }
+  if (isBackendFailure(response)) {
+    throw new Error(`${response.error.category}: ${response.error.reasonCode}`);
+  }
+  if (!isBackendResponse<ConfigCatalogSnapshot>(response)) {
     throw new Error(`Invalid Tauri response for ${BACKEND_RPC_VERSION}`);
   }
   return response.payload;

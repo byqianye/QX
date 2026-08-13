@@ -33,6 +33,7 @@ if (version.error || version.status !== 0) {
 for (const args of [
   ["fmt", "--manifest-path", manifest, "--", "--check"],
   ["check", "--manifest-path", manifest],
+  ["test", "--manifest-path", manifest],
 ]) {
   const result = spawnSync(cargo, args, { stdio: "inherit", env, windowsHide: true });
   if (result.error) {

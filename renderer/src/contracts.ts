@@ -53,6 +53,22 @@ export interface AppSnapshot {
   databasePath: string;
 }
 
+export interface ConfigCatalogPayload {
+  source: string;
+  sourceKind: "url" | "file" | "json";
+  raw: string;
+}
+
+export interface ConfigCatalogSnapshot {
+  schemaVersion: "v1";
+  source: string;
+  sourceKind: ConfigCatalogPayload["sourceKind"];
+  versionHash: string;
+  siteCount: number;
+  usedCache: boolean;
+  validVersionCount: number;
+}
+
 const BACKEND_ERROR_CATEGORIES = new Set<BackendErrorCategory>([
   "InvalidConfig",
   "UnsupportedRuntime",

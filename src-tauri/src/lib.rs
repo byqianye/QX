@@ -3,6 +3,8 @@ use std::fs;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
+mod config_catalog;
+
 pub const BACKEND_RPC_VERSION: &str = "qx.backend.v1";
 pub const BACKEND_EVENT_VERSION: &str = "qx.event.v1";
 pub const APP_NAME: &str = "QX影视";
@@ -81,6 +83,30 @@ pub struct AppSnapshot {
     pub database_path: String,
 }
 
+fn app_data_paths(
+    app: &AppHandle,
+) -> Result<(std::path::PathBuf, std::path::PathBuf), BackendError> {
+    let data_directory = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| BackendError {
+            category: BackendErrorCategory::InvalidConfig,
+            reason_code: error.to_string(),
+            retryable: false,
+            diagnostic_id: "app-local-data-unavailable".to_string(),
+            safe_details: std::collections::BTreeMap::new(),
+        })?;
+    fs::create_dir_all(&data_directory).map_err(|error| BackendError {
+        category: BackendErrorCategory::InvalidConfig,
+        reason_code: error.to_string(),
+        retryable: true,
+        diagnostic_id: "app-local-data-create-failed".to_string(),
+        safe_details: std::collections::BTreeMap::new(),
+    })?;
+    let database_path = data_directory.join("qx-v1.sqlite3");
+    Ok((data_directory, database_path))
+}
+
 #[tauri::command]
 fn backend_app_snapshot(
     app: AppHandle,
@@ -99,34 +125,8 @@ fn backend_app_snapshot(
         ));
     }
 
-    let data_directory = match app.path().app_local_data_dir() {
-        Ok(path) => path,
-        Err(error) => {
-            return Err(failure(
-                &request,
-                BackendError {
-                    category: BackendErrorCategory::InvalidConfig,
-                    reason_code: error.to_string(),
-                    retryable: false,
-                    diagnostic_id: "app-local-data-unavailable".to_string(),
-                    safe_details: std::collections::BTreeMap::new(),
-                },
-            ))
-        }
-    };
-    if let Err(error) = fs::create_dir_all(&data_directory) {
-        return Err(failure(
-            &request,
-            BackendError {
-                category: BackendErrorCategory::InvalidConfig,
-                reason_code: error.to_string(),
-                retryable: true,
-                diagnostic_id: "app-local-data-create-failed".to_string(),
-                safe_details: std::collections::BTreeMap::new(),
-            },
-        ));
-    }
-    let database_path = data_directory.join("qx-v1.sqlite3");
+    let (data_directory, database_path) =
+        app_data_paths(&app).map_err(|error| failure(&request, error))?;
 
     Ok(BackendResponse {
         version: BACKEND_RPC_VERSION.to_string(),
@@ -144,6 +144,66 @@ fn backend_app_snapshot(
     })
 }
 
+#[tauri::command]
+fn backend_config_catalog(
+    app: AppHandle,
+    request: BackendRequest,
+) -> Result<BackendResponse<config_catalog::ConfigCatalogSnapshot>, BackendFailure> {
+    if request.version != BACKEND_RPC_VERSION {
+        return Err(failure(
+            &request,
+            BackendError {
+                category: BackendErrorCategory::InvalidConfig,
+                reason_code: "RPC_VERSION_UNSUPPORTED".to_string(),
+                retryable: false,
+                diagnostic_id: "rpc-invalid-version".to_string(),
+                safe_details: std::collections::BTreeMap::new(),
+            },
+        ));
+    }
+    let payload: config_catalog::ConfigCatalogPayload =
+        serde_json::from_value(request.payload.clone()).map_err(|error| {
+            failure(
+                &request,
+                BackendError {
+                    category: BackendErrorCategory::InvalidConfig,
+                    reason_code: "CONFIG_PAYLOAD_INVALID".to_string(),
+                    retryable: false,
+                    diagnostic_id: "config-catalog-payload-invalid".to_string(),
+                    safe_details: [("error".to_string(), error.to_string())]
+                        .into_iter()
+                        .collect(),
+                },
+            )
+        })?;
+    let (_, database_path) = app_data_paths(&app).map_err(|error| failure(&request, error))?;
+    let snapshot = config_catalog::ingest(&database_path, &payload).map_err(|error| {
+        let config_catalog::CatalogError {
+            code,
+            message,
+            retryable,
+        } = error;
+        failure(
+            &request,
+            BackendError {
+                category: BackendErrorCategory::InvalidConfig,
+                reason_code: code,
+                retryable,
+                diagnostic_id: "config-catalog-error".to_string(),
+                safe_details: [("message".to_string(), message)].into_iter().collect(),
+            },
+        )
+    })?;
+    Ok(BackendResponse {
+        version: BACKEND_RPC_VERSION.to_string(),
+        request_id: request.request_id,
+        session_id: request.session_id,
+        sequence: request.sequence,
+        ok: true,
+        payload: snapshot,
+    })
+}
+
 fn failure(request: &BackendRequest, error: BackendError) -> BackendFailure {
     BackendFailure {
         version: BACKEND_RPC_VERSION.to_string(),
@@ -157,14 +217,17 @@ fn failure(request: &BackendRequest, error: BackendError) -> BackendFailure {
 
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![backend_app_snapshot])
+        .invoke_handler(tauri::generate_handler![
+            backend_app_snapshot,
+            backend_config_catalog
+        ])
         .run(tauri::generate_context!())
         .expect("error while running QX影视 Tauri application");
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AppSnapshot, BACKEND_RPC_VERSION};
+    use super::{AppSnapshot, BACKEND_EVENT_VERSION, BACKEND_RPC_VERSION};
 
     #[test]
     fn contract_constants_are_stable() {

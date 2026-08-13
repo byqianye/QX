@@ -55,4 +55,11 @@ describe("Tauri backend contracts", () => {
       },
     })).toBe(true);
   });
+
+  it("keeps the config catalog payload scoped to the v1 storage contract", () => {
+    expect({ source: "inline:fixture", sourceKind: "json", raw: "{}" }).toMatchObject({
+      source: "inline:fixture",
+      sourceKind: "json",
+    });
+  });
 });

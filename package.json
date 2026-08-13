@@ -14,7 +14,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "test:contracts": "vitest run tests/tauri-contract.test.ts --reporter=dot",
-    "test:storage": "vitest run tests/tauri-storage-contract.test.ts tests/tauri-source-session-contract.test.ts tests/tauri-runtime-capability.test.ts tests/sqlite-data-layer.test.ts --reporter=dot",
+    "test:storage": "vitest run tests/tauri-storage-contract.test.ts tests/tauri-source-session-contract.test.ts tests/tauri-runtime-capability.test.ts tests/tauri-playback-proxy-contract.test.ts tests/sqlite-data-layer.test.ts --reporter=dot",
     "check:frontend": "npm run typecheck && npm run renderer:build",
     "check:rust": "tsx scripts/check-rust.ts",
     "check:tauri": "npm run check:frontend && npm run check:rust",

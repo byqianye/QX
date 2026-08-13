@@ -10,6 +10,8 @@ import {
   type SourceSessionResult,
   type RuntimeCapabilityPayload,
   type RuntimeCapabilitySnapshot,
+  type PlaybackProxyPayload,
+  type PlaybackProxySnapshot,
 } from "./contracts.js";
 
 let sequence = 0;
@@ -94,6 +96,20 @@ export async function requestRuntimeCapability(payload: RuntimeCapabilityPayload
     throw new Error(`${response.error.category}: ${response.error.reasonCode}`);
   }
   if (!isBackendResponse<RuntimeCapabilitySnapshot>(response)) {
+    throw new Error(`Invalid Tauri response for ${BACKEND_RPC_VERSION}`);
+  }
+  return response.payload;
+}
+
+export async function requestPlaybackProxy(payload: PlaybackProxyPayload): Promise<PlaybackProxySnapshot> {
+  if (!isTauriRuntime()) throw new Error("Tauri RPC is unavailable outside the Tauri runtime");
+  const { invoke } = await import("@tauri-apps/api/core");
+  const request = createBackendRequest(payload, crypto.randomUUID(), sessionId, ++sequence);
+  const response = await invoke("backend_playback_proxy", { request });
+  if (isBackendFailure(response)) {
+    throw new Error(`${response.error.category}: ${response.error.reasonCode}`);
+  }
+  if (!isBackendResponse<PlaybackProxySnapshot>(response)) {
     throw new Error(`Invalid Tauri response for ${BACKEND_RPC_VERSION}`);
   }
   return response.payload;

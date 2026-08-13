@@ -5,6 +5,7 @@ use tauri::{AppHandle, Manager};
 
 mod config_catalog;
 mod native_sources;
+mod playback_proxy;
 mod runtime_capability;
 mod source_session;
 
@@ -345,6 +346,77 @@ fn backend_runtime_capability(
     })
 }
 
+#[tauri::command]
+async fn backend_playback_proxy(
+    state: tauri::State<'_, playback_proxy::PlaybackProxyState>,
+    request: BackendRequest,
+) -> Result<BackendResponse<playback_proxy::PlaybackProxySnapshot>, BackendFailure> {
+    if request.version != BACKEND_RPC_VERSION {
+        return Err(failure(
+            &request,
+            BackendError {
+                category: BackendErrorCategory::InvalidConfig,
+                reason_code: "RPC_VERSION_UNSUPPORTED".to_string(),
+                retryable: false,
+                diagnostic_id: "rpc-invalid-version".to_string(),
+                safe_details: std::collections::BTreeMap::new(),
+            },
+        ));
+    }
+    let payload: playback_proxy::PlaybackProxyPayload =
+        serde_json::from_value(request.payload.clone()).map_err(|error| {
+            failure(
+                &request,
+                BackendError {
+                    category: BackendErrorCategory::InvalidConfig,
+                    reason_code: "PLAYBACK_PROXY_PAYLOAD_INVALID".to_string(),
+                    retryable: false,
+                    diagnostic_id: "playback-proxy-payload-invalid".to_string(),
+                    safe_details: [("error".to_string(), error.to_string())]
+                        .into_iter()
+                        .collect(),
+                },
+            )
+        })?;
+    let snapshot = state.handle(&payload).await.map_err(|error| {
+        let (reason_code, message, category) = match error {
+            playback_proxy::PlaybackProxyError::Invalid(message) => (
+                "PLAYBACK_PROXY_INVALID",
+                message,
+                BackendErrorCategory::InvalidConfig,
+            ),
+            playback_proxy::PlaybackProxyError::NotFound => (
+                "PLAYBACK_PROXY_NOT_FOUND",
+                "playback proxy session was not found".to_string(),
+                BackendErrorCategory::SourceUnavailable,
+            ),
+            playback_proxy::PlaybackProxyError::Request(message) => (
+                "PLAYBACK_PROXY_FAILED",
+                message,
+                BackendErrorCategory::PlaybackFailed,
+            ),
+        };
+        failure(
+            &request,
+            BackendError {
+                category,
+                reason_code: reason_code.to_string(),
+                retryable: true,
+                diagnostic_id: "playback-proxy-error".to_string(),
+                safe_details: [("message".to_string(), message)].into_iter().collect(),
+            },
+        )
+    })?;
+    Ok(BackendResponse {
+        version: BACKEND_RPC_VERSION.to_string(),
+        request_id: request.request_id,
+        session_id: request.session_id,
+        sequence: request.sequence,
+        ok: true,
+        payload: snapshot,
+    })
+}
+
 fn source_session_failure(
     request: &BackendRequest,
     error: source_session::SourceSessionError,
@@ -410,9 +482,11 @@ pub fn run() {
             backend_app_snapshot,
             backend_config_catalog,
             backend_source_session,
-            backend_runtime_capability
+            backend_runtime_capability,
+            backend_playback_proxy
         ])
         .manage(source_session::SourceSessionState::default())
+        .manage(playback_proxy::PlaybackProxyState::default())
         .run(tauri::generate_context!())
         .expect("error while running QX影视 Tauri application");
 }

@@ -134,6 +134,21 @@ export interface RuntimeCapabilitySnapshot {
   };
 }
 
+export interface PlaybackProxyPayload {
+  action: "start" | "close";
+  sessionId: string;
+  url?: string;
+  headers?: Record<string, string>;
+}
+
+export interface PlaybackProxySnapshot {
+  sessionId: string;
+  proxyUrl?: string;
+  mediaType?: "hls" | "dash" | "progressive";
+  state: "ready" | "closed";
+  reasonCode?: string;
+}
+
 const BACKEND_ERROR_CATEGORIES = new Set<BackendErrorCategory>([
   "InvalidConfig",
   "UnsupportedRuntime",

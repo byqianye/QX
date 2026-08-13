@@ -30,6 +30,17 @@ pub struct BackendResponse<T> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BackendFailure {
+    pub version: String,
+    pub request_id: String,
+    pub session_id: String,
+    pub sequence: u64,
+    pub ok: bool,
+    pub error: BackendError,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BackendEvent<T> {
     pub version: String,
     pub event: String,
@@ -71,37 +82,50 @@ pub struct AppSnapshot {
 }
 
 #[tauri::command]
-pub fn backend_app_snapshot(
+fn backend_app_snapshot(
     app: AppHandle,
     request: BackendRequest,
-) -> Result<BackendResponse<AppSnapshot>, BackendError> {
+) -> Result<BackendResponse<AppSnapshot>, BackendFailure> {
     if request.version != BACKEND_RPC_VERSION {
-        return Err(BackendError {
-            category: BackendErrorCategory::InvalidConfig,
-            reason_code: "RPC_VERSION_UNSUPPORTED".to_string(),
-            retryable: false,
-            diagnostic_id: "rpc-invalid-version".to_string(),
-            safe_details: std::collections::BTreeMap::new(),
-        });
+        return Err(failure(
+            &request,
+            BackendError {
+                category: BackendErrorCategory::InvalidConfig,
+                reason_code: "RPC_VERSION_UNSUPPORTED".to_string(),
+                retryable: false,
+                diagnostic_id: "rpc-invalid-version".to_string(),
+                safe_details: std::collections::BTreeMap::new(),
+            },
+        ));
     }
 
-    let data_directory = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|error| BackendError {
-            category: BackendErrorCategory::InvalidConfig,
-            reason_code: error.to_string(),
-            retryable: false,
-            diagnostic_id: "app-local-data-unavailable".to_string(),
-            safe_details: std::collections::BTreeMap::new(),
-        })?;
-    fs::create_dir_all(&data_directory).map_err(|error| BackendError {
-        category: BackendErrorCategory::InvalidConfig,
-        reason_code: error.to_string(),
-        retryable: true,
-        diagnostic_id: "app-local-data-create-failed".to_string(),
-        safe_details: std::collections::BTreeMap::new(),
-    })?;
+    let data_directory = match app.path().app_local_data_dir() {
+        Ok(path) => path,
+        Err(error) => {
+            return Err(failure(
+                &request,
+                BackendError {
+                    category: BackendErrorCategory::InvalidConfig,
+                    reason_code: error.to_string(),
+                    retryable: false,
+                    diagnostic_id: "app-local-data-unavailable".to_string(),
+                    safe_details: std::collections::BTreeMap::new(),
+                },
+            ))
+        }
+    };
+    if let Err(error) = fs::create_dir_all(&data_directory) {
+        return Err(failure(
+            &request,
+            BackendError {
+                category: BackendErrorCategory::InvalidConfig,
+                reason_code: error.to_string(),
+                retryable: true,
+                diagnostic_id: "app-local-data-create-failed".to_string(),
+                safe_details: std::collections::BTreeMap::new(),
+            },
+        ));
+    }
     let database_path = data_directory.join("qx-v1.sqlite3");
 
     Ok(BackendResponse {
@@ -118,6 +142,17 @@ pub fn backend_app_snapshot(
             database_path: database_path.display().to_string(),
         },
     })
+}
+
+fn failure(request: &BackendRequest, error: BackendError) -> BackendFailure {
+    BackendFailure {
+        version: BACKEND_RPC_VERSION.to_string(),
+        request_id: request.request_id.clone(),
+        session_id: request.session_id.clone(),
+        sequence: request.sequence,
+        ok: false,
+        error,
+    }
 }
 
 pub fn run() {

@@ -13,7 +13,7 @@ const cargoBin = join(homedir(), ".cargo", "bin");
 const args = process.argv.slice(2);
 const envScript = join(process.cwd(), "scripts", "tauri-env.cmd");
 const command = existsSync(envScript)
-  ? ["scripts\\tauri-env.cmd", ...args.map(quoteCmdArg)].join(" ")
+  ? ["scripts\\tauri-env.cmd", ...args].join(" ")
   : `"${process.execPath}" "${cli}" ${args.map(quoteCmdArg).join(" ")}`;
 const result = spawnSync(process.platform === "win32" ? "cmd.exe" : process.execPath,
   process.platform === "win32" ? ["/d", "/c", command] : [cli, ...args], {

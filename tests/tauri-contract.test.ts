@@ -4,6 +4,7 @@ import {
   BACKEND_EVENT_VERSION,
   BACKEND_RPC_VERSION,
   createBackendRequest,
+  isBackendFailure,
   isBackendResponse,
 } from "../renderer/src/contracts.js";
 
@@ -36,5 +37,22 @@ describe("Tauri backend contracts", () => {
       ok: true,
       payload: {},
     })).toBe(false);
+  });
+
+  it("accepts versioned failures with the stable error model", () => {
+    expect(isBackendFailure({
+      version: BACKEND_RPC_VERSION,
+      requestId: "req-1",
+      sessionId: "session-1",
+      sequence: 2,
+      ok: false,
+      error: {
+        category: "InvalidConfig",
+        reasonCode: "RPC_VERSION_UNSUPPORTED",
+        retryable: false,
+        diagnosticId: "rpc-invalid-version",
+        safeDetails: {},
+      },
+    })).toBe(true);
   });
 });

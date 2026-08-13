@@ -53,6 +53,16 @@ export interface AppSnapshot {
   databasePath: string;
 }
 
+const BACKEND_ERROR_CATEGORIES = new Set<BackendErrorCategory>([
+  "InvalidConfig",
+  "UnsupportedRuntime",
+  "SourceUnavailable",
+  "ComponentMissing",
+  "ComponentUntrusted",
+  "UnsupportedDrm",
+  "PlaybackFailed",
+]);
+
 export function createBackendRequest<TPayload>(
   payload: TPayload,
   requestId: string,
@@ -76,6 +86,26 @@ export function isBackendResponse<TPayload>(value: unknown): value is BackendRes
     && typeof value.sessionId === "string"
     && typeof value.sequence === "number"
     && "payload" in value;
+}
+
+export function isBackendFailure(value: unknown): value is BackendFailure {
+  if (!isRecord(value)) return false;
+  return value.ok === false
+    && value.version === BACKEND_RPC_VERSION
+    && typeof value.requestId === "string"
+    && typeof value.sessionId === "string"
+    && typeof value.sequence === "number"
+    && isBackendError(value.error);
+}
+
+function isBackendError(value: unknown): value is BackendError {
+  if (!isRecord(value) || typeof value.category !== "string") return false;
+  return BACKEND_ERROR_CATEGORIES.has(value.category as BackendErrorCategory)
+    && typeof value.reasonCode === "string"
+    && typeof value.retryable === "boolean"
+    && typeof value.diagnosticId === "string"
+    && isRecord(value.safeDetails)
+    && Object.values(value.safeDetails).every((detail) => typeof detail === "string");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

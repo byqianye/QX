@@ -1,4 +1,10 @@
-import { BACKEND_RPC_VERSION, createBackendRequest, isBackendResponse, type AppSnapshot } from "./contracts.js";
+import {
+  BACKEND_RPC_VERSION,
+  createBackendRequest,
+  isBackendFailure,
+  isBackendResponse,
+  type AppSnapshot,
+} from "./contracts.js";
 
 let sequence = 0;
 const sessionId = crypto.randomUUID();
@@ -11,7 +17,18 @@ export async function requestAppSnapshot(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) throw new Error("Tauri RPC is unavailable outside the Tauri runtime");
   const { invoke } = await import("@tauri-apps/api/core");
   const request = createBackendRequest({}, crypto.randomUUID(), sessionId, ++sequence);
-  const response: unknown = await invoke("backend_app_snapshot", { request });
+  let response: unknown;
+  try {
+    response = await invoke("backend_app_snapshot", { request });
+  } catch (error: unknown) {
+    if (isBackendFailure(error)) {
+      throw new Error(`${error.error.category}: ${error.error.reasonCode}`);
+    }
+    throw error;
+  }
+  if (isBackendFailure(response)) {
+    throw new Error(`${response.error.category}: ${response.error.reasonCode}`);
+  }
   if (!isBackendResponse<AppSnapshot>(response)) {
     throw new Error(`Invalid Tauri response for ${BACKEND_RPC_VERSION}`);
   }

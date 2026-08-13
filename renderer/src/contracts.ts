@@ -104,6 +104,7 @@ export interface SourceSessionSnapshot {
   api: string;
   siteType: 0 | 1 | 4;
   state: "ready" | "closed";
+  availabilityReason?: string;
   capabilities: SourceCapabilities;
 }
 
@@ -112,6 +113,25 @@ export interface SourceSessionResult {
   method?: string;
   result?: unknown;
   cancelled: boolean;
+}
+
+export interface RuntimeCapabilityPayload {
+  api: string;
+  scriptBytes?: number;
+  allowedOrigins?: string[];
+}
+
+export interface RuntimeCapabilitySnapshot {
+  runtime: string;
+  supported: boolean;
+  reasonCode: string;
+  capabilities: {
+    home: boolean;
+    category: boolean;
+    search: boolean;
+    detail: boolean;
+    player: boolean;
+  };
 }
 
 const BACKEND_ERROR_CATEGORIES = new Set<BackendErrorCategory>([

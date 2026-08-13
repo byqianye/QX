@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 mod config_catalog;
+mod native_sources;
+mod runtime_capability;
 mod source_session;
 
 pub const BACKEND_RPC_VERSION: &str = "qx.backend.v1";
@@ -302,6 +304,47 @@ async fn backend_source_session(
     })
 }
 
+#[tauri::command]
+fn backend_runtime_capability(
+    request: BackendRequest,
+) -> Result<BackendResponse<runtime_capability::RuntimeCapabilitySnapshot>, BackendFailure> {
+    if request.version != BACKEND_RPC_VERSION {
+        return Err(failure(
+            &request,
+            BackendError {
+                category: BackendErrorCategory::InvalidConfig,
+                reason_code: "RPC_VERSION_UNSUPPORTED".to_string(),
+                retryable: false,
+                diagnostic_id: "rpc-invalid-version".to_string(),
+                safe_details: std::collections::BTreeMap::new(),
+            },
+        ));
+    }
+    let payload: runtime_capability::RuntimeCapabilityPayload =
+        serde_json::from_value(request.payload.clone()).map_err(|error| {
+            failure(
+                &request,
+                BackendError {
+                    category: BackendErrorCategory::InvalidConfig,
+                    reason_code: "RUNTIME_CAPABILITY_PAYLOAD_INVALID".to_string(),
+                    retryable: false,
+                    diagnostic_id: "runtime-capability-payload-invalid".to_string(),
+                    safe_details: [("error".to_string(), error.to_string())]
+                        .into_iter()
+                        .collect(),
+                },
+            )
+        })?;
+    Ok(BackendResponse {
+        version: BACKEND_RPC_VERSION.to_string(),
+        request_id: request.request_id,
+        session_id: request.session_id,
+        sequence: request.sequence,
+        ok: true,
+        payload: runtime_capability::probe(&payload),
+    })
+}
+
 fn source_session_failure(
     request: &BackendRequest,
     error: source_session::SourceSessionError,
@@ -324,6 +367,12 @@ fn source_session_failure(
             "source session request was cancelled".to_string(),
             true,
             BackendErrorCategory::SourceUnavailable,
+        ),
+        source_session::SourceSessionError::Unsupported(message) => (
+            "SOURCE_RUNTIME_UNSUPPORTED",
+            message,
+            false,
+            BackendErrorCategory::UnsupportedRuntime,
         ),
         source_session::SourceSessionError::Request(message) => (
             "SOURCE_SESSION_REQUEST_FAILED",
@@ -360,7 +409,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             backend_app_snapshot,
             backend_config_catalog,
-            backend_source_session
+            backend_source_session,
+            backend_runtime_capability
         ])
         .manage(source_session::SourceSessionState::default())
         .run(tauri::generate_context!())

@@ -52,6 +52,7 @@ pub struct SourceSessionSnapshot {
     pub api: String,
     pub site_type: u8,
     pub state: String,
+    pub availability_reason: Option<String>,
     pub capabilities: SourceCapabilities,
 }
 
@@ -83,6 +84,7 @@ pub enum SourceSessionError {
     Invalid(String),
     NotFound,
     Cancelled,
+    Unsupported(String),
     Request(String),
 }
 
@@ -96,17 +98,44 @@ impl SourceSessionState {
                 "sessionId is required".to_string(),
             ));
         }
-        let api = payload
+        let api_value = payload
             .api
             .as_deref()
             .ok_or_else(|| SourceSessionError::Invalid("api is required".to_string()))?;
-        let api = validate_api(api)?;
-        let site_type = payload.site_type.unwrap_or(1);
-        if !matches!(site_type, 0 | 1 | 4) {
+        let native = super::native_sources::is_native_api(api_value);
+        let api = if native {
+            api_value.trim().to_string()
+        } else {
+            validate_api(api_value)?
+        };
+        let site_type = payload.site_type.unwrap_or(if native { 3 } else { 1 });
+        if !native && !matches!(site_type, 0 | 1 | 4) {
             return Err(SourceSessionError::Invalid(
                 "CMS source type must be 0, 1, or 4".to_string(),
             ));
         }
+        let capabilities = if native {
+            super::native_sources::capabilities(&api).ok_or_else(|| {
+                SourceSessionError::Invalid(format!("native source is unavailable: {api}"))
+            })?
+        } else {
+            SourceCapabilities {
+                home: true,
+                category: true,
+                search: true,
+                detail: true,
+                playback: true,
+                local_proxy: false,
+                filters: site_type != 0,
+                pagination: true,
+                engine: "http".to_string(),
+            }
+        };
+        let availability_reason = if api.eq_ignore_ascii_case("csp_Jianpian") {
+            Some("native_jianpian_port_pending".to_string())
+        } else {
+            None
+        };
         let snapshot = SourceSessionSnapshot {
             session_id: payload.session_id.clone(),
             source_id: payload
@@ -117,17 +146,8 @@ impl SourceSessionState {
             api,
             site_type,
             state: "ready".to_string(),
-            capabilities: SourceCapabilities {
-                home: true,
-                category: true,
-                search: true,
-                detail: true,
-                playback: true,
-                local_proxy: false,
-                filters: site_type != 0,
-                pagination: true,
-                engine: "http".to_string(),
-            },
+            availability_reason,
+            capabilities,
         };
         let session = SourceSession {
             snapshot: snapshot.clone(),
@@ -184,6 +204,31 @@ impl SourceSessionState {
             .as_deref()
             .unwrap_or("home")
             .to_ascii_lowercase();
+        if super::native_sources::is_native_api(&session.snapshot.api) {
+            let result = super::native_sources::call(
+                &session.snapshot.api,
+                &method,
+                payload.params.as_ref(),
+                &to_header_map(&session.headers)?,
+                session.timeout,
+                session.cancelled.clone(),
+            )
+            .await
+            .map_err(|error| match error {
+                super::native_sources::NativeSourceError::Unsupported(message) => {
+                    SourceSessionError::Unsupported(message)
+                }
+                super::native_sources::NativeSourceError::Request(message) => {
+                    SourceSessionError::Request(message)
+                }
+            })?;
+            return Ok(SourceSessionResult {
+                session: session.snapshot,
+                method: Some(method),
+                result: Some(result),
+                cancelled: false,
+            });
+        }
         let url = request_url(&session, &method, payload.params.as_ref())?;
         let client = reqwest::Client::builder()
             .default_headers(to_header_map(&session.headers)?)
@@ -529,5 +574,39 @@ mod tests {
         state.open(&payload).expect("session opens");
         state.cancel("s1").expect("cancel works");
         assert_eq!(state.close("s1").expect("close works").state, "closed");
+    }
+
+    #[test]
+    fn exposes_native_douban_and_explicit_jianpian_unavailable_reason() {
+        let state = SourceSessionState::default();
+        let douban = SourceSessionPayload {
+            action: "open".to_string(),
+            session_id: "douban".to_string(),
+            source_id: None,
+            site_key: Some("douban".to_string()),
+            api: Some("csp_Douban".to_string()),
+            site_type: Some(3),
+            ext: None,
+            method: None,
+            params: None,
+            timeout_ms: None,
+            headers: None,
+        };
+        let snapshot = state.open(&douban).expect("Douban opens");
+        assert_eq!(snapshot.capabilities.engine, "native");
+        assert!(!snapshot.capabilities.playback);
+        assert!(snapshot.availability_reason.is_none());
+
+        let jianpian = SourceSessionPayload {
+            session_id: "jianpian".to_string(),
+            api: Some("csp_Jianpian".to_string()),
+            ..douban
+        };
+        let snapshot = state.open(&jianpian).expect("Jianpian boundary opens");
+        assert_eq!(
+            snapshot.availability_reason.as_deref(),
+            Some("native_jianpian_port_pending")
+        );
+        assert!(!snapshot.capabilities.search);
     }
 }

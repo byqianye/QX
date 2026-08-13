@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use uuid::Uuid;
 
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
 const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
@@ -255,6 +256,36 @@ fn validate_url(value: &str) -> Result<String, PlaybackProxyError> {
             "playback URL must be HTTP(S) without credentials".to_string(),
         ));
     }
+    let host = url.host_str().unwrap_or_default();
+    let host_for_parse = host.trim_matches(['[', ']']);
+    if host.eq_ignore_ascii_case("localhost") || host.ends_with(".localhost") {
+        return Err(PlaybackProxyError::Invalid(
+            "loopback playback targets are not allowed".to_string(),
+        ));
+    }
+    if let Ok(address) = host_for_parse.parse::<std::net::IpAddr>() {
+        let blocked = match address {
+            std::net::IpAddr::V4(address) => {
+                address.is_loopback()
+                    || address.is_private()
+                    || address.is_link_local()
+                    || address.is_unspecified()
+                    || address.is_multicast()
+            }
+            std::net::IpAddr::V6(address) => {
+                address.is_loopback()
+                    || address.is_unspecified()
+                    || address.is_multicast()
+                    || address.is_unique_local()
+                    || address.is_unicast_link_local()
+            }
+        };
+        if blocked {
+            return Err(PlaybackProxyError::Invalid(
+                "private or local playback targets are not allowed".to_string(),
+            ));
+        }
+    }
     Ok(url.to_string())
 }
 
@@ -298,6 +329,7 @@ fn media_type(url: &str) -> &'static str {
 }
 
 fn create_token(session_id: &str, url: &str) -> String {
+    let random = Uuid::new_v4();
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_nanos())
@@ -308,6 +340,7 @@ fn create_token(session_id: &str, url: &str) -> String {
     digest.update(url.as_bytes());
     digest.update(now.to_le_bytes());
     digest.update(counter.to_le_bytes());
+    digest.update(random.as_bytes());
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest.finalize())[..32].to_string()
 }
 
@@ -335,5 +368,17 @@ mod tests {
             .await
             .expect_err("credentials rejected");
         assert!(format!("{error:?}").contains("without credentials"));
+    }
+
+    #[test]
+    fn rejects_local_and_private_proxy_targets() {
+        for url in [
+            "http://127.0.0.1/video.mp4",
+            "http://10.0.0.2/video.mp4",
+            "http://[::1]/video.mp4",
+            "https://localhost/video.mp4",
+        ] {
+            super::validate_url(url).expect_err("local target rejected");
+        }
     }
 }

@@ -8,6 +8,7 @@ Dependency: G109 `1a8f291`
 - Tauri `backend_playback_proxy` RPC with `start` and `close` lifecycle.
 - Localhost-only proxy listener on a random port with per-session opaque token.
 - HTTP(S) URL and request-header validation; credentials, hop-by-hop headers, and CR/LF injection are rejected.
+- Loopback, localhost, private, link-local, unspecified, and multicast literal targets are rejected before proxy startup; session tokens include a random UUID component.
 - GET/HEAD, Range request forwarding, bounded response size, content type, and media type classification for HLS/DASH/progressive sources.
 - Playback proxy contract does not echo Cookie, Authorization, or other sensitive request headers.
 
@@ -16,6 +17,7 @@ Dependency: G109 `1a8f291`
 - `npm run typecheck`: PASS
 - `npm run check:rust`: `cargo fmt --check`, `cargo check`, and 14 Rust tests PASS
 - `npm run test:storage`: 5 files, 12 tests PASS
+- Full regression after the security boundary update: 111 files, 559 tests PASS
 
 ## Not complete
 

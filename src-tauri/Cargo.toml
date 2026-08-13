@@ -30,3 +30,4 @@ serde_json = "1"
 sha2 = "0.10"
 tauri = { version = "2.8.0" }
 tokio = { version = "1", features = ["macros", "sync", "time"] }
+uuid = { version = "1", features = ["v4"] }

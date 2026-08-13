@@ -7,6 +7,7 @@ Dependency: G111 `1276fd7`
 
 - Added `npm run g112:release-gate` structural checks for Tauri identifier/NSIS target, G107–G111 reports, old Electron preservation during migration, Tauri backend presence, and the 20 MiB NSIS limit when an artifact exists.
 - The gate reports unfinished G108–G111 work instead of allowing a false release-ready claim.
+- `tests/g112-release-gate.test.ts` proves the default hard failure and the explicit development-only override.
 
 ## Not passed
 

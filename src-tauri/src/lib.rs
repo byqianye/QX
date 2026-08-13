@@ -3,6 +3,7 @@ use std::fs;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
+mod business_data;
 mod config_catalog;
 mod native_sources;
 mod playback_proxy;
@@ -417,6 +418,74 @@ async fn backend_playback_proxy(
     })
 }
 
+#[tauri::command]
+fn backend_business_data(
+    app: AppHandle,
+    request: BackendRequest,
+) -> Result<BackendResponse<business_data::BusinessDataSnapshot>, BackendFailure> {
+    if request.version != BACKEND_RPC_VERSION {
+        return Err(failure(
+            &request,
+            BackendError {
+                category: BackendErrorCategory::InvalidConfig,
+                reason_code: "RPC_VERSION_UNSUPPORTED".to_string(),
+                retryable: false,
+                diagnostic_id: "rpc-invalid-version".to_string(),
+                safe_details: std::collections::BTreeMap::new(),
+            },
+        ));
+    }
+    let payload: business_data::BusinessDataPayload =
+        serde_json::from_value(request.payload.clone()).map_err(|error| {
+            failure(
+                &request,
+                BackendError {
+                    category: BackendErrorCategory::InvalidConfig,
+                    reason_code: "BUSINESS_DATA_PAYLOAD_INVALID".to_string(),
+                    retryable: false,
+                    diagnostic_id: "business-data-payload-invalid".to_string(),
+                    safe_details: [("error".to_string(), error.to_string())]
+                        .into_iter()
+                        .collect(),
+                },
+            )
+        })?;
+    let (_, database_path) = app_data_paths(&app).map_err(|error| failure(&request, error))?;
+    let snapshot = if payload.action == "read" {
+        business_data::read(&database_path, &payload.entity, &payload.id)
+    } else {
+        business_data::upsert(&database_path, &payload)
+    }
+    .map_err(|error| {
+        let (reason_code, message, retryable) = match error {
+            business_data::BusinessDataError::Invalid(message) => {
+                ("BUSINESS_DATA_INVALID", message, false)
+            }
+            business_data::BusinessDataError::Storage(message) => {
+                ("BUSINESS_DATA_STORAGE_FAILED", message, true)
+            }
+        };
+        failure(
+            &request,
+            BackendError {
+                category: BackendErrorCategory::InvalidConfig,
+                reason_code: reason_code.to_string(),
+                retryable,
+                diagnostic_id: "business-data-error".to_string(),
+                safe_details: [("message".to_string(), message)].into_iter().collect(),
+            },
+        )
+    })?;
+    Ok(BackendResponse {
+        version: BACKEND_RPC_VERSION.to_string(),
+        request_id: request.request_id,
+        session_id: request.session_id,
+        sequence: request.sequence,
+        ok: true,
+        payload: snapshot,
+    })
+}
+
 fn source_session_failure(
     request: &BackendRequest,
     error: source_session::SourceSessionError,
@@ -483,7 +552,8 @@ pub fn run() {
             backend_config_catalog,
             backend_source_session,
             backend_runtime_capability,
-            backend_playback_proxy
+            backend_playback_proxy,
+            backend_business_data
         ])
         .manage(source_session::SourceSessionState::default())
         .manage(playback_proxy::PlaybackProxyState::default())

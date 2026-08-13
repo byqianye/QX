@@ -149,6 +149,22 @@ export interface PlaybackProxySnapshot {
   reasonCode?: string;
 }
 
+export interface BusinessDataPayload {
+  action: "read" | "upsert";
+  entity: string;
+  id: string;
+  sourceId?: string;
+  value: Record<string, unknown>;
+}
+
+export interface BusinessDataSnapshot {
+  schemaVersion: "v1";
+  entity: string;
+  id: string;
+  found: boolean;
+  value?: Record<string, unknown>;
+}
+
 const BACKEND_ERROR_CATEGORIES = new Set<BackendErrorCategory>([
   "InvalidConfig",
   "UnsupportedRuntime",

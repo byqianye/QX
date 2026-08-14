@@ -38,6 +38,7 @@ Dependency: G111 `1276fd7`
 - The default `npm run verify:release` remains expected to fail while the signed-release gates are incomplete; `--allow-incomplete` is development-only.
 - Electron and old TypeScript backend remain intentionally preserved; deletion is not authorized until all prior gates pass.
 - Authenticode signing is not configured; any future release would be RC-only until signing exists.
+- A SignPath Foundation application was submitted for the public MIT-licensed repository on 2026-08-14. A mailbox search found no SignPath approval or project credentials as of the latest audit; the application itself is not release-signing evidence.
 
 ## Reproducible external gates
 

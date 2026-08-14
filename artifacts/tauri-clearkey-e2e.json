@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "evidenceType": "tauri-clearkey-e2e",
+  "verified": true,
+  "realHttp": true,
+  "mockUsed": false,
+  "packageExecutable": "src-tauri/target/release/qx-yingshi.exe",
+  "source": {
+    "catalog": "local HTTP CMS fixture",
+    "mediaUrl": "https://storage.googleapis.com/shaka-demo-assets/angel-one-clearkey/dash.mpd",
+    "manifestHost": "storage.googleapis.com",
+    "manifestPath": "/shaka-demo-assets/angel-one-clearkey/dash.mpd"
+  },
+  "observations": {
+    "tauriPlaybackProxy": true,
+    "manifestHeadMimeNormalized": true,
+    "manifestGetMimeNormalized": true,
+    "shakaManifestResolved": true,
+    "clearKeyConfigured": true,
+    "durationSeconds": 60,
+    "firstFrameObserved": true,
+    "progressBefore": "0:00",
+    "progressAfter": "0:05",
+    "userGestureRequired": true
+  },
+  "diagnosticHistory": {
+    "beforeHeadMimeFix": "SHAKA_ERROR_4000",
+    "afterHeadMimeFix": "manifest resolved; playback started after native player gesture"
+  },
+  "notes": "The packaged Tauri UI used a local HTTP CMS fixture only to return the real public ClearKey DASH URL and UUID clearKeys. Rust proxy HEAD and GET responses exposed application/dash+xml; Shaka resolved the 60-second manifest. After an explicit player-control gesture, the media clock advanced from 0:00 to 0:05. The first-frame signal is based on the player playing event and progress, not a saved screenshot. This proves the ClearKey DASH proxy/player path on the current Win11 host; it is not clean-machine or signed-Release evidence."
+}

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import EmbeddedPlayer from "./EmbeddedPlayer.vue";
 import { RendererApi } from "./api.js";
+import { isTauriRuntime, requestPlayerWindow } from "./tauri-rpc.js";
 import {
   applyRendererEnvelope,
   createRendererState,
@@ -20,7 +21,15 @@ const session = computed(() => state.value.playback.session);
 const active = computed(() => session.value?.host === "detached" && state.value.playback.player.source !== null);
 
 onMounted(() => {
-  void request("state", () => api.getState());
+  if (isTauriRuntime()) {
+    void requestPlayerWindow({ action: "snapshot", value: {} }).then((snapshot) => {
+      const value = snapshot.state as { player?: RendererState["playback"]["player"]; session?: RendererState["playback"]["session"] };
+      if (value.player) state.value.playback.player = value.player;
+      state.value.playback.session = value.session ?? null;
+    }).catch(() => undefined);
+  } else {
+    void request("state", () => api.getState());
+  }
 });
 
 onBeforeUnmount(() => {
@@ -41,11 +50,19 @@ async function request(operation: string, call: () => ReturnType<RendererApi["ge
 }
 
 function returnToMain(): void {
-  void request("attach", () => api.post("/api/player/attach"));
+  if (isTauriRuntime()) {
+    void requestPlayerWindow({ action: "attach", value: {} }).then(() => undefined).catch(() => undefined);
+  } else {
+    void request("attach", () => api.post("/api/player/attach"));
+  }
 }
 
 function stop(): void {
-  void request("stop", () => api.post("/api/player/stop"));
+  if (isTauriRuntime()) {
+    void requestPlayerWindow({ action: "stop", value: {} }).then(() => undefined).catch(() => undefined);
+  } else {
+    void request("stop", () => api.post("/api/player/stop"));
+  }
 }
 
 function sync(value: PlayerMediaSync): void {
@@ -62,8 +79,12 @@ async function flushSync(): Promise<void> {
   latestSync = null;
   if (!value) return;
   try {
-    const envelope = await api.post("/api/player/sync", value);
-    if (envelope.state) state.value = applyRendererEnvelope(state.value, envelope);
+    if (isTauriRuntime()) {
+      await requestPlayerWindow({ action: "sync", value: value as unknown as Record<string, unknown> });
+    } else {
+      const envelope = await api.post("/api/player/sync", value);
+      if (envelope.state) state.value = applyRendererEnvelope(state.value, envelope);
+    }
   } catch {
     // The next media event will retry with a fresh snapshot.
   }

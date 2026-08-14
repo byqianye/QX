@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "v1",
+  "evidenceType": "tauri-packaged-import-smoke",
+  "verified": true,
+  "executable": "src-tauri/target/release/qx-yingshi.exe",
+  "installer": "src-tauri/target/release/bundle/nsis/QX影视_0.9.0_x64-setup.exe",
+  "buildVerification": {
+    "installerBytes": 5054773,
+    "installerMiB": 4.82,
+    "coreInstallerContainsQuickJs": false,
+    "quickJsPackage": "src-tauri/quickjs-sidecar/target/release/qx-quickjs-sidecar.exe"
+  },
+  "steps": [
+    "launch packaged qx-yingshi.exe",
+    "import inline JSON config with one csp_Jianpian site",
+    "render one-site configuration summary",
+    "confirm source trust dialog",
+    "open home and render returned Jianpian items",
+    "open a returned Jianpian detail and start the Tauri playback proxy"
+  ],
+  "observed": {
+    "importSummary": "站点 1 个，Spider：有",
+    "homeItemsRendered": true,
+    "detailRendered": true,
+    "playbackProxyStarted": true,
+    "source": "inline:tauri",
+    "nativeSource": "csp_Jianpian"
+  },
+  "limitations": {
+    "cleanWin11": false,
+    "isolatedDataRoot": false,
+    "hls20s": false,
+    "authenticode": false,
+    "signedComponentRelease": false
+  }
+}

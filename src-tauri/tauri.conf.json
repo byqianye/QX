@@ -4,9 +4,9 @@
   "version": "0.9.0",
   "identifier": "com.qx.yingshi.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run tauri:prepare-sidecar:dev && npm run dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm run renderer:build",
+    "beforeBuildCommand": "npm run tauri:prepare-sidecar && npm run renderer:build",
     "frontendDist": "../dist/renderer"
   },
   "app": {
@@ -22,7 +22,8 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* https:; img-src 'self' data: blob: http: https:; media-src 'self' data: blob: http: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self' blob:; object-src 'none'"
+      "assetProtocol": { "enable": true, "scope": ["**"] },
+      "csp": "default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* https:; img-src 'self' data: blob: http: https: asset:; media-src 'self' data: blob: http: https: asset:; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self' blob:; object-src 'none'"
     }
   },
   "bundle": {

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "v1",
+  "evidenceType": "tauri-g110-failover-e2e",
+  "verified": true,
+  "realHttpMedia": true,
+  "fixtureOnlyForCatalog": true,
+  "observedAt": "2026-08-14T11:33:40+08:00",
+  "package": "src-tauri/target/x86_64-pc-windows-msvc/release/qx-yingshi.exe",
+  "fixture": {
+    "site": "local HTTP CMS fixture",
+    "title": "G110 Real DASH Quality Fixture",
+    "failedCandidate": "https://storage.googleapis.com/shaka-demo-assets/angel-one/missing-g110.mpd",
+    "realCandidate": "https://storage.googleapis.com/shaka-demo-assets/angel-one/dash.mpd"
+  },
+  "observations": {
+    "failedCandidateStartupTimeout": true,
+    "fallbackPrompt": "真实候选 · 第一集",
+    "fallbackApprovalObserved": true,
+    "lineAfterApproval": "真实候选",
+    "proxyLabelAfterApproval": "Tauri playback proxy",
+    "durationSeconds": 60,
+    "firstFrameAfterNativeGesture": true,
+    "progressAfterNativeGestureSeconds": 11,
+    "userGestureRequired": true,
+    "notes": "The local CMS fixture only returned the catalog and the two candidate URLs. The real DASH manifest and media were fetched through the packaged Tauri playback proxy. The window showed the failed-candidate prompt, switched to the real candidate after approval, and then advanced from 0:00 to 0:11 after the native video play gesture. This records the real failover transition and playback path; it is not signed Release evidence."
+  }
+}

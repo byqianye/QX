@@ -22,6 +22,7 @@ import { EMPTY_PUSH_UI_STATE } from "../../src/push/push-types.js";
 import type { PushUiState } from "../../src/push/push-types.js";
 import { EMPTY_CAST_UI_STATE } from "../../src/cast/cast-types.js";
 import type { CastUiState } from "../../src/cast/cast-types.js";
+import type { ComponentManagerSnapshot } from "./contracts.js";
 
 export type ImportStatus =
   | "empty"
@@ -216,7 +217,12 @@ export interface PlayerSource {
   parse: number;
   url: string;
   headers: Record<string, string>;
+  backend?: "embedded" | "mpv";
   mediaType?: "hls" | "dash" | "mp4" | "flv" | "web" | "unknown";
+  drm?: {
+    clearKeys?: Record<string, string>;
+    servers?: Record<string, string>;
+  };
   playUrl?: string;
   jx?: number;
   format?: string;
@@ -328,6 +334,7 @@ export interface ApiSpiderState {
   playbackDiagnostics?: PlaybackAttemptDiagnostics | null;
   playerHost?: PlayerHostMode;
   playbackSession?: RendererPlaybackSession | null;
+  componentManager?: ComponentManagerSnapshot | null;
   playbackHealth?: PlaybackHealthSnapshot;
   fallback?: PlaybackFallbackState;
   history?: HistoryUiState;
@@ -428,32 +435,32 @@ export function applyRendererEnvelope(
   current: RendererState,
   envelope: RendererEnvelope,
 ): RendererState {
-  const importState = envelope.import ? cloneImportState(envelope.import) : current.import;
+  const importState = envelope.import ? stateStage("import", () => cloneImportState(envelope.import!)) : current.import;
   const state = envelope.state;
   const live = envelope.live
-    ? cloneLiveUiState(envelope.live)
+    ? stateStage("live", () => cloneLiveUiState(envelope.live!))
     : state?.live
-      ? cloneLiveUiState(state.live)
+      ? stateStage("live", () => cloneLiveUiState(state.live!))
       : current.live;
   const localMedia = envelope.localMedia
-    ? cloneLocalMediaState(envelope.localMedia)
+    ? stateStage("local-media", () => cloneLocalMediaState(envelope.localMedia!))
     : state?.localMedia
-      ? cloneLocalMediaState(state.localMedia)
+      ? stateStage("local-media", () => cloneLocalMediaState(state.localMedia!))
       : current.localMedia;
   const downloads = envelope.downloads
-    ? cloneDownloadState(envelope.downloads)
+    ? stateStage("downloads", () => cloneDownloadState(envelope.downloads!))
     : state?.downloads
-      ? cloneDownloadState(state.downloads)
+      ? stateStage("downloads", () => cloneDownloadState(state.downloads!))
       : current.downloads;
   const push = envelope.push
-    ? clonePushState(envelope.push)
+    ? stateStage("push", () => clonePushState(envelope.push!))
     : state?.push
-      ? clonePushState(state.push)
+      ? stateStage("push", () => clonePushState(state.push!))
       : current.push;
   const cast = envelope.cast
-    ? cloneCastState(envelope.cast)
+    ? stateStage("cast", () => cloneCastState(envelope.cast!))
     : state?.cast
-      ? cloneCastState(state.cast)
+      ? stateStage("cast", () => cloneCastState(state.cast!))
       : current.cast;
   const envelopeError = envelope.error
     ? { code: envelope.errorCode ?? "RENDERER_REQUEST_ERROR", message: envelope.error }
@@ -489,7 +496,7 @@ export function applyRendererEnvelope(
     browse: {
       page: state.page,
       loading: state.loading,
-      items: state.items.map((item) => ({ ...item })),
+      items: stateStage("browse-items", () => state.items.map((item) => ({ ...item }))),
     },
     detail: {
       detail: state.detail ? { ...state.detail } : null,
@@ -508,16 +515,16 @@ export function applyRendererEnvelope(
       health: clonePlaybackHealth(state.playbackHealth ?? current.playback.health),
       fallback: clonePlaybackFallback(state.fallback ?? current.playback.fallback),
     },
-    history: cloneHistoryState(state.history ?? current.history),
+    history: stateStage("history", () => cloneHistoryState(state.history ?? current.history)),
     historyResume: state.historyResume ? { ...state.historyResume } : null,
-    favorites: cloneFavoritesState(state.favorites ?? current.favorites),
+    favorites: stateStage("favorites", () => cloneFavoritesState(state.favorites ?? current.favorites)),
     favoriteDetail: state.favoriteDetail ? { ...state.favoriteDetail } : null,
-    follow: cloneFollowState(state.follow ?? current.follow),
+    follow: stateStage("follow", () => cloneFollowState(state.follow ?? current.follow)),
     followDetail: state.followDetail ? { ...state.followDetail } : null,
-    cache: cloneCacheState(state.cache ?? current.cache),
+    cache: stateStage("cache", () => cloneCacheState(state.cache ?? current.cache)),
     storage: cloneStorageState(state.storage ?? current.storage),
     backup: cloneBackupState(state.backup ?? current.backup),
-    danmaku: cloneDanmakuState(state.danmaku ?? current.danmaku),
+    danmaku: stateStage("danmaku", () => cloneDanmakuState(state.danmaku ?? current.danmaku)),
     localMedia,
     downloads,
     push,
@@ -527,15 +534,27 @@ export function applyRendererEnvelope(
   };
 }
 
+function stateStage<T>(stage: string, callback: () => T): T {
+  try {
+    return callback();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`TAURI_STATE_INVALID:${stage}:${message}`);
+  }
+}
+
 function cloneLiveUiState(value: LiveUiState): LiveUiState {
+  const catalog = value.catalog ?? EMPTY_LIVE_UI_STATE.catalog;
+  const epg = value.epg ?? EMPTY_LIVE_UI_STATE.epg;
+  const failover = value.failover ?? EMPTY_LIVE_UI_STATE.failover;
   return {
-    sources: value.sources.map((source) => ({ ...source })),
+    sources: listOrEmpty(value.sources).map((source) => ({ ...source })),
     preview: value.preview
       ? {
           ...value.preview,
           source: { ...value.preview.source },
-          channelNames: [...value.preview.channelNames],
-          issues: value.preview.issues.map((issue) => ({ ...issue })),
+          channelNames: [...listOrEmpty(value.preview.channelNames)],
+          issues: listOrEmpty(value.preview.issues).map((issue) => ({ ...issue })),
           stats: {
             ...value.preview.stats,
             protocolCounts: { ...value.preview.stats.protocolCounts },
@@ -545,10 +564,10 @@ function cloneLiveUiState(value: LiveUiState): LiveUiState {
     loading: value.loading,
     error: value.error ? { ...value.error } : null,
     catalog: {
-      groups: value.catalog.groups.map((group) => ({ ...group })),
-      channels: value.catalog.channels.map((channel) => ({
+      groups: listOrEmpty(catalog.groups).map((group) => ({ ...group })),
+      channels: listOrEmpty(catalog.channels).map((channel) => ({
         ...channel,
-        streams: channel.streams.map((stream) => ({
+        streams: listOrEmpty(channel.streams).map((stream) => ({
           ...stream,
           health: stream.health
             ? {
@@ -569,7 +588,7 @@ function cloneLiveUiState(value: LiveUiState): LiveUiState {
         currentProgramme: channel.currentProgramme ? { ...channel.currentProgramme } : null,
         nextProgramme: channel.nextProgramme ? { ...channel.nextProgramme } : null,
       })),
-      recent: value.catalog.recent.map((recent) => ({ ...recent })),
+      recent: listOrEmpty(catalog.recent).map((recent) => ({ ...recent })),
     },
     session: value.session
       ? { ...value.session, error: value.session.error ? { ...value.session.error } : null }
@@ -605,47 +624,51 @@ function cloneLiveUiState(value: LiveUiState): LiveUiState {
       next: value.failover.next ? { ...value.failover.next } : null,
     },
     epg: {
-      sources: value.epg.sources.map((source) => ({ ...source })),
-      preview: value.epg.preview
+      sources: listOrEmpty(epg.sources).map((source) => ({ ...source })),
+      preview: epg.preview
         ? {
-            ...value.epg.preview,
-            source: { ...value.epg.preview.source },
-            channelNames: [...value.epg.preview.channelNames],
-            issues: value.epg.preview.issues.map((issue) => ({ ...issue })),
-            stats: { ...value.epg.preview.stats },
+            ...epg.preview,
+            source: { ...epg.preview.source },
+            channelNames: [...listOrEmpty(epg.preview.channelNames)],
+            issues: listOrEmpty(epg.preview.issues).map((issue) => ({ ...issue })),
+            stats: { ...epg.preview.stats },
           }
         : null,
-      loading: value.epg.loading,
-      error: value.epg.error ? { ...value.epg.error } : null,
-      retention: { ...value.epg.retention },
-      mappings: value.epg.mappings.map((mapping) => ({
+      loading: epg.loading,
+      error: epg.error ? { ...epg.error } : null,
+      retention: { ...epg.retention },
+      mappings: listOrEmpty(epg.mappings).map((mapping) => ({
         ...mapping,
-        aliases: [...mapping.aliases],
-        candidates: mapping.candidates.map((candidate) => ({ ...candidate })),
+        aliases: [...listOrEmpty(mapping.aliases)],
+        candidates: listOrEmpty(mapping.candidates).map((candidate) => ({ ...candidate })),
         mapping: mapping.mapping ? { ...mapping.mapping } : null,
       })),
-      timeline: value.epg.timeline
+      timeline: epg.timeline
         ? {
-            ...value.epg.timeline,
-            items: value.epg.timeline.items.map((item) => ({ ...item })),
+            ...epg.timeline,
+            items: listOrEmpty(epg.timeline.items).map((item) => ({ ...item })),
           }
         : null,
     },
-    smartChannels: value.smartChannels.map((channel) => ({
+    smartChannels: listOrEmpty(value.smartChannels).map((channel) => ({
       ...channel,
-      members: channel.members.map((member) => ({ ...member })),
+      members: listOrEmpty(channel.members).map((member) => ({ ...member })),
       epg: {
         ...channel.epg,
         currentProgramme: channel.epg.currentProgramme ? { ...channel.epg.currentProgramme } : null,
         nextProgramme: channel.epg.nextProgramme ? { ...channel.epg.nextProgramme } : null,
       },
     })),
-    smartSuggestions: value.smartSuggestions.map((suggestion) => ({
+    smartSuggestions: listOrEmpty(value.smartSuggestions).map((suggestion) => ({
       ...suggestion,
-      memberIds: [...suggestion.memberIds],
+      memberIds: [...listOrEmpty(suggestion.memberIds)],
     })),
     activeSmartChannel: value.activeSmartChannel ? { ...value.activeSmartChannel } : null,
   };
+}
+
+function listOrEmpty<T>(value: readonly T[] | null | undefined): readonly T[] {
+  return Array.isArray(value) ? value : [];
 }
 
 function clonePushState(value: PushUiState): PushUiState {
@@ -850,10 +873,10 @@ function cloneBackupState(state: BackupUiState): BackupUiState {
 function cloneLocalMediaState(state: LocalMediaUiState): LocalMediaUiState {
   return {
     ready: state.ready,
-    folders: state.folders.map((folder) => ({ ...folder })),
-    items: state.items.map((item) => ({
+    folders: listOrEmpty(state.folders).map((folder) => ({ ...folder })),
+    items: listOrEmpty(state.items).map((item) => ({
       ...item,
-      subtitleTracks: item.subtitleTracks.map((track) => ({ ...track })),
+      subtitleTracks: listOrEmpty(item.subtitleTracks).map((track) => ({ ...track })),
     })),
     activeItemId: state.activeItemId,
     scan: { ...state.scan },
@@ -864,8 +887,8 @@ function cloneLocalMediaState(state: LocalMediaUiState): LocalMediaUiState {
 
 function cloneDownloadState(state: DownloadUiState): DownloadUiState {
   return {
-    tasks: state.tasks.map((task) => ({ ...task })),
-    targetDirectories: state.targetDirectories.map((directory) => ({ ...directory })),
+    tasks: listOrEmpty(state.tasks).map((task) => ({ ...task })),
+    targetDirectories: listOrEmpty(state.targetDirectories).map((directory) => ({ ...directory })),
     backend: state.backend,
     aria2Available: state.aria2Available,
     error: state.error ? { ...state.error } : null,

@@ -21,7 +21,10 @@ const env = {
   ...process.env,
   Path: `${cargoBin}${delimiter}${process.env.Path ?? ""}`,
 };
-const manifest = join(process.cwd(), "src-tauri", "Cargo.toml");
+const manifests = [
+  join(process.cwd(), "src-tauri", "Cargo.toml"),
+  join(process.cwd(), "src-tauri", "quickjs-sidecar", "Cargo.toml"),
+];
 
 const rustc = process.env.RUSTC ?? join(cargoBin, process.platform === "win32" ? "rustc.exe" : "rustc");
 const version = spawnSync(rustc, ["--version"], { encoding: "utf8", env, windowsHide: true });
@@ -30,15 +33,17 @@ if (version.error || version.status !== 0) {
   process.exit(1);
 }
 
-for (const args of [
-  ["fmt", "--manifest-path", manifest, "--", "--check"],
-  ["check", "--manifest-path", manifest],
-  ["test", "--manifest-path", manifest],
-]) {
-  const result = spawnSync(cargo, args, { stdio: "inherit", env, windowsHide: true });
-  if (result.error) {
-    console.error(result.error.message);
-    process.exit(1);
+for (const manifest of manifests) {
+  for (const args of [
+    ["fmt", "--manifest-path", manifest, "--", "--check"],
+    ["check", "--manifest-path", manifest],
+    ["test", "--manifest-path", manifest],
+  ]) {
+    const result = spawnSync(cargo, args, { stdio: "inherit", env, windowsHide: true });
+    if (result.error) {
+      console.error(result.error.message);
+      process.exit(1);
+    }
+    if (result.status !== 0) process.exit(result.status ?? 1);
   }
-  if (result.status !== 0) process.exit(result.status ?? 1);
 }

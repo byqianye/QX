@@ -102,7 +102,7 @@ export interface WebControlDownloadTask {
 
 export interface WebControlDownloads {
   tasks: readonly WebControlDownloadTask[];
-  backend: "fake" | "aria2" | "unavailable";
+  backend: "fake" | "aria2" | "native-http" | "unavailable";
   available: boolean;
   error: { code: string; message: string } | null;
 }

@@ -1,0 +1,21 @@
+[package]
+name = "qx-quickjs-sidecar"
+version = "0.9.0"
+description = "Verified optional QuickJS sidecar for QX影视"
+authors = ["QX影视"]
+edition = "2021"
+rust-version = "1.77"
+
+[[bin]]
+name = "qx-quickjs-sidecar"
+path = "../src/quickjs_sidecar.rs"
+
+[dependencies]
+base64 = "0.22"
+md-5 = "0.10"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
+rquickjs = { version = "0.12.2", default-features = false, features = ["std", "loader"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha1 = "0.10"
+sha2 = "0.10"

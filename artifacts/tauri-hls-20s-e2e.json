@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "v1",
+  "evidenceType": "tauri-hls-20s-e2e",
+  "verified": true,
+  "realHttp": true,
+  "durationSeconds": 38,
+  "observedAt": "2026-08-14T04:32:12.1611375+08:00",
+  "package": "src-tauri/target/release/qx-yingshi.exe",
+  "source": {
+    "site": "Jianpian",
+    "title": "流浪地球",
+    "manifestHost": "mv.cuitonghai.com",
+    "segmentHost": "video.luojiangping.com"
+  },
+  "observations": {
+    "nativeSearchAndDetail": true,
+    "tauriPlaybackProxy": true,
+    "firstFrameObserved": true,
+    "progressBeforeSeconds": 6,
+    "progressAfterSeconds": 38,
+    "durationSeconds": 7510,
+    "userGestureRequired": true,
+    "mockUsed": false,
+    "notes": "Packaged Tauri UI imported the real Jianpian source, searched 流浪地球, opened detail, started the proxy, displayed a real video frame, then continued from 0:06 to 0:38 while the pause control remained active. The source manifest and a cross-origin MPEG-TS segment were also fetched through the Rust proxy canary."
+  }
+}

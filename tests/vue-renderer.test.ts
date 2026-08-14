@@ -7,6 +7,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { h, nextTick, ref } from "vue";
 import Hls from "hls.js";
+import type { ManifestParsedData } from "hls.js";
 
 import type { DesktopSpiderSessionPort, DesktopSpiderView } from "../src/desktop/spider-ui.js";
 import {
@@ -28,6 +29,7 @@ import MediaCard from "../renderer/src/MediaCard.vue";
 import DetailDrawer from "../renderer/src/DetailDrawer.vue";
 import ConfirmDialog from "../renderer/src/ConfirmDialog.vue";
 import PlaybackSelector from "../renderer/src/PlaybackSelector.vue";
+import PlayerControls from "../renderer/src/PlayerControls.vue";
 import PlayerWindow from "../renderer/src/PlayerWindow.vue";
 import SpiderView from "../renderer/src/SpiderView.vue";
 import SourceSwitcher from "../renderer/src/SourceSwitcher.vue";
@@ -37,6 +39,65 @@ import LiveSourcesView from "../renderer/src/LiveSourcesView.vue";
 import { EMPTY_LIVE_UI_STATE, type LiveUiState } from "../src/live/live-types.js";
 import { EMPTY_DANMAKU_UI_STATE } from "../src/danmaku/danmaku-types.js";
 import type { CastUiState } from "../src/cast/cast-types.js";
+
+const shakaMocks = vi.hoisted(() => ({
+  installAll: vi.fn(),
+  isBrowserSupported: vi.fn(() => true),
+  load: vi.fn(async () => undefined),
+  getVariantTracks: vi.fn(() => [] as Array<{ id: number; height: number; bandwidth: number }>),
+  getTextTracks: vi.fn(() => [] as Array<{ id: number; language: string; label: string | null; forced: boolean; active: boolean; kind: string | null }>),
+  configure: vi.fn(),
+  selectVariantTrack: vi.fn(),
+  selectTextTrack: vi.fn(),
+  destroy: vi.fn(async () => undefined),
+}));
+
+vi.mock("shaka-player", () => {
+  class MockPlayer {
+    public static isBrowserSupported(): boolean {
+      return shakaMocks.isBrowserSupported();
+    }
+
+    public constructor(_element: HTMLVideoElement) {}
+
+    public addEventListener(): void {}
+
+    public load(...args: Parameters<typeof shakaMocks.load>): ReturnType<typeof shakaMocks.load> {
+      return shakaMocks.load(...args);
+    }
+
+    public getVariantTracks(): ReturnType<typeof shakaMocks.getVariantTracks> {
+      return shakaMocks.getVariantTracks();
+    }
+
+    public getTextTracks(): ReturnType<typeof shakaMocks.getTextTracks> {
+      return shakaMocks.getTextTracks();
+    }
+
+    public configure(...args: Parameters<typeof shakaMocks.configure>): ReturnType<typeof shakaMocks.configure> {
+      return shakaMocks.configure(...args);
+    }
+
+    public selectVariantTrack(...args: Parameters<typeof shakaMocks.selectVariantTrack>): ReturnType<typeof shakaMocks.selectVariantTrack> {
+      return shakaMocks.selectVariantTrack(...args);
+    }
+
+    public selectTextTrack(...args: Parameters<typeof shakaMocks.selectTextTrack>): ReturnType<typeof shakaMocks.selectTextTrack> {
+      return shakaMocks.selectTextTrack(...args);
+    }
+
+    public destroy(...args: Parameters<typeof shakaMocks.destroy>): ReturnType<typeof shakaMocks.destroy> {
+      return shakaMocks.destroy(...args);
+    }
+  }
+
+  return {
+    default: {
+      polyfill: { installAll: shakaMocks.installAll },
+      Player: MockPlayer,
+    },
+  };
+});
 
 describe("Vue renderer", () => {
   const servers: DesktopSpiderUiServer[] = [];
@@ -135,6 +196,17 @@ describe("Vue renderer", () => {
       retryable: false,
     });
     expect(codedError.error.error?.diagnosticId).toMatch(/^diag-/);
+  });
+
+  it("normalizes sparse Tauri desktop list snapshots", () => {
+    const envelope = readyEnvelope();
+    envelope.state = {
+      ...envelope.state!,
+      localMedia: { folders: [], items: [{ id: "local-1" }] } as unknown as NonNullable<RendererEnvelope["state"]>["localMedia"],
+      downloads: {} as NonNullable<RendererEnvelope["state"]>["downloads"],
+    } as unknown as NonNullable<RendererEnvelope["state"]>;
+
+    expect(() => applyRendererEnvelope(createRendererState(), envelope)).not.toThrow();
   });
 
   it("renders the local media page and emits opaque media actions", async () => {
@@ -644,6 +716,29 @@ describe("Vue renderer", () => {
     selector.unmount();
   });
 
+  it("uses the live line index when the parent selection has not caught up", () => {
+    const selector = mount(PlaybackSelector, {
+      props: {
+        catalog: {
+          lines: [
+            { index: 0, name: "primary", episodes: [{ index: 0, name: "episode one", id: "episode-1" }] },
+            { index: 1, name: "backup", episodes: [{ index: 0, name: "movie", id: "direct-mp4" }] },
+          ],
+        },
+        selection: { lineIndex: 0, episodeIndex: 0 },
+        lineIndex: 1,
+        order: "forward",
+        retryable: false,
+      },
+    });
+
+    expect(selector.find('[data-testid="current-line"]').text()).toContain("backup");
+    expect(selector.find('[data-action="playback-line"][data-line-index="1"]').attributes("aria-selected")).toBe("true");
+    expect(selector.find('[data-play-id="direct-mp4"]').isVisible()).toBe(true);
+    expect(selector.find('[data-play-id="episode-1"]').isVisible()).toBe(false);
+    selector.unmount();
+  });
+
   it("loads a playback source when the player was mounted before source resolution", async () => {
     vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
     vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
@@ -681,6 +776,34 @@ describe("Vue renderer", () => {
     player.unmount();
   });
 
+  it("clears a stale startup error when the media element starts playing", async () => {
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "canPlayType").mockReturnValue("");
+    const player = mount(EmbeddedPlayer, {
+      props: {
+        state: {
+          status: "error",
+          source: { parse: 0, url: "http://127.0.0.1/video.mp4", headers: {} },
+          currentTime: 0,
+          duration: 0,
+          volume: 1,
+          muted: false,
+          fullscreen: false,
+          error: { code: "PLAYBACK_STARTUP_TIMEOUT", message: "起播超时" },
+        },
+      },
+    });
+
+    const video = player.get<HTMLVideoElement>("[data-testid=embedded-player]");
+    video.element.dispatchEvent(new Event("playing"));
+    await nextTick();
+
+    expect(player.get('[data-testid="player-status"]').text()).toContain("播放中");
+    expect(player.find('[data-testid="player-error"]').exists()).toBe(false);
+    player.unmount();
+  });
+
   it("uses Hls.js for HLS sources when native canPlayType reports maybe", async () => {
     vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
     vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
@@ -711,6 +834,145 @@ describe("Vue renderer", () => {
     expect(video.element.crossOrigin).toBe("anonymous");
     expect(video.element.getAttribute("src")).toBeNull();
     player.unmount();
+  });
+
+  it("switches Hls.js variants and returns to automatic quality selection", async () => {
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "canPlayType").mockReturnValue("maybe");
+    vi.spyOn(Hls, "isSupported").mockReturnValue(true);
+    vi.spyOn(Hls.prototype, "destroy").mockImplementation(() => undefined);
+    vi.spyOn(Hls.prototype, "loadSource").mockImplementation(function (this: Hls) {
+      Object.defineProperty(this, "levels", {
+        configurable: true,
+        value: [
+          { height: 360, bitrate: 600_000 },
+          { height: 720, bitrate: 1_800_000 },
+        ],
+      });
+      this.emit(Hls.Events.MANIFEST_PARSED, Hls.Events.MANIFEST_PARSED, {
+        levels: this.levels,
+      } as ManifestParsedData);
+    });
+    const currentLevel = vi.spyOn(Hls.prototype, "currentLevel", "set");
+    const player = mount(EmbeddedPlayer, {
+      props: {
+        state: {
+          status: "loading",
+          source: { parse: 0, url: "http://127.0.0.1:43123/video.m3u8", headers: {}, mediaType: "hls" },
+          currentTime: 0,
+          duration: 0,
+          volume: 1,
+          muted: false,
+          fullscreen: false,
+          error: null,
+        },
+      },
+    });
+    await nextTick();
+    await flushPromises();
+
+    const quality = player.get<HTMLSelectElement>('[data-action="player-quality"]');
+    expect([...quality.element.options].map((option) => option.value)).toEqual(["auto", "0", "1"]);
+    await quality.setValue("1");
+    expect(currentLevel).toHaveBeenLastCalledWith(1);
+    await quality.setValue("auto");
+    expect(currentLevel).toHaveBeenLastCalledWith(-1);
+    player.unmount();
+  });
+
+  it("switches Shaka variants and toggles ABR for automatic quality", async () => {
+    shakaMocks.getVariantTracks.mockReturnValue([
+      { id: 10, height: 360, bandwidth: 600_000 },
+      { id: 20, height: 720, bandwidth: 1_800_000 },
+    ]);
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    const player = mount(EmbeddedPlayer, {
+      props: {
+        state: {
+          status: "loading",
+          source: { parse: 0, url: "http://127.0.0.1:43123/video.mpd", headers: {}, mediaType: "dash" },
+          currentTime: 0,
+          duration: 0,
+          volume: 1,
+          muted: false,
+          fullscreen: false,
+          error: null,
+        },
+      },
+    });
+    await nextTick();
+    await flushPromises();
+
+    const quality = player.get<HTMLSelectElement>('[data-action="player-quality"]');
+    expect([...quality.element.options].map((option) => option.value)).toEqual(["auto", "10", "20"]);
+    await quality.setValue("20");
+    expect(shakaMocks.configure).toHaveBeenCalledWith({ abr: { enabled: false } });
+    expect(shakaMocks.selectVariantTrack).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 20 }),
+      true,
+    );
+    await quality.setValue("auto");
+    expect(shakaMocks.configure).toHaveBeenLastCalledWith({ abr: { enabled: true } });
+    player.unmount();
+  });
+
+  it("exposes Shaka text tracks and delegates subtitle selection to Shaka", async () => {
+    shakaMocks.getVariantTracks.mockReturnValue([]);
+    shakaMocks.getTextTracks.mockReturnValue([
+      { id: 31, language: "en", label: "English", forced: false, active: false, kind: "subtitles" },
+      { id: 32, language: "fr", label: "Français", forced: false, active: false, kind: "subtitles" },
+    ]);
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    const player = mount(EmbeddedPlayer, {
+      props: {
+        state: {
+          status: "loading",
+          source: { parse: 0, url: "http://127.0.0.1:43123/video.mpd", headers: {}, mediaType: "dash" },
+          currentTime: 0,
+          duration: 0,
+          volume: 1,
+          muted: false,
+          fullscreen: false,
+          error: null,
+        },
+      },
+    });
+    await nextTick();
+    await flushPromises();
+
+    const subtitles = player.get<HTMLSelectElement>('[data-action="subtitle-track"]');
+    expect([...subtitles.element.options].map((option) => option.textContent)).toEqual(["关闭", "English", "Français"]);
+    await subtitles.setValue("shaka-32");
+    expect(shakaMocks.selectTextTrack).toHaveBeenCalledWith(expect.objectContaining({ id: 32, language: "fr" }));
+    await subtitles.setValue("");
+    expect(shakaMocks.selectTextTrack).toHaveBeenLastCalledWith(undefined);
+    player.unmount();
+  });
+
+  it("exposes an automatic quality option and emits a selected quality", async () => {
+    const controls = mount(PlayerControls, {
+      props: {
+        currentTime: 0,
+        duration: 60,
+        volume: 1,
+        muted: false,
+        qualityId: "auto",
+        qualityOptions: [
+          { id: "auto", label: "自动" },
+          { id: "0", label: "360p" },
+          { id: "1", label: "720p" },
+        ],
+      },
+    });
+
+    const quality = controls.get<HTMLSelectElement>('[data-action="player-quality"]');
+    expect(quality.element.value).toBe("auto");
+    await quality.setValue("1");
+    expect(controls.emitted("quality")).toEqual([["1"]]);
+    controls.unmount();
   });
 
   it("moves the single player host without leaving an embedded video behind", async () => {

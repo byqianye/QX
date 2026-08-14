@@ -8,7 +8,7 @@ export type DownloadStatus =
   | "cancelled"
   | "removed";
 
-export type DownloadBackendKind = "fake" | "aria2" | "unavailable";
+export type DownloadBackendKind = "fake" | "aria2" | "native-http" | "unavailable";
 
 export interface DownloadTargetDirectory {
   id: string;

@@ -55,8 +55,10 @@ export interface AppSnapshot {
 
 export interface ConfigCatalogPayload {
   source: string;
-  sourceKind: "url" | "file" | "json";
+  sourceKind: "url" | "file" | "json" | "multi";
   raw: string;
+  fetchRemote?: boolean;
+  timeoutMs?: number;
 }
 
 export interface ConfigCatalogSnapshot {
@@ -67,6 +69,16 @@ export interface ConfigCatalogSnapshot {
   siteCount: number;
   usedCache: boolean;
   validVersionCount: number;
+  warningCode?: "CONFIG_HTTP_UNAUTHENTICATED";
+  sites: ConfigSiteSummary[];
+}
+
+export interface ConfigSiteSummary {
+  key: string;
+  name: string;
+  api: string;
+  siteType: 0 | 1 | 3 | 4;
+  ext?: string;
 }
 
 export type SourceSessionAction = "open" | "call" | "cancel" | "close" | "snapshot";
@@ -77,9 +89,9 @@ export interface SourceSessionPayload {
   sourceId?: string;
   siteKey?: string;
   api?: string;
-  siteType?: 0 | 1 | 4;
+  siteType?: 0 | 1 | 3 | 4;
   ext?: string;
-  method?: "home" | "category" | "search" | "detail";
+  method?: "init" | "home" | "homeVideo" | "category" | "search" | "detail" | "player" | "playback";
   params?: Record<string, unknown>;
   timeoutMs?: number;
   headers?: Record<string, string>;
@@ -94,7 +106,7 @@ export interface SourceCapabilities {
   localProxy: boolean;
   filters: boolean;
   pagination: boolean;
-  engine: "http";
+  engine: "http" | "native" | "quickjs";
 }
 
 export interface SourceSessionSnapshot {
@@ -102,7 +114,7 @@ export interface SourceSessionSnapshot {
   sourceId: string;
   siteKey?: string;
   api: string;
-  siteType: 0 | 1 | 4;
+  siteType: 0 | 1 | 3 | 4;
   state: "ready" | "closed";
   availabilityReason?: string;
   capabilities: SourceCapabilities;
@@ -115,10 +127,31 @@ export interface SourceSessionResult {
   cancelled: boolean;
 }
 
+export interface PlaybackSourceResolveSite {
+  key: string;
+  name: string;
+  api: string;
+  siteType: 0 | 1 | 3 | 4;
+  ext?: string;
+}
+
+export interface PlaybackSourceResolvePayload {
+  query: string;
+  currentSiteKey: string;
+  currentVod: Record<string, unknown>;
+  currentCatalog?: unknown;
+  sourceId: string;
+  sessionId: string;
+  sites: PlaybackSourceResolveSite[];
+}
+
 export interface RuntimeCapabilityPayload {
   api: string;
+  ext?: string;
   scriptBytes?: number;
   allowedOrigins?: string[];
+  artifactName?: string;
+  artifactBase64?: string;
 }
 
 export interface RuntimeCapabilitySnapshot {
@@ -132,6 +165,17 @@ export interface RuntimeCapabilitySnapshot {
     detail: boolean;
     player: boolean;
   };
+  assetClassification?: "png_disguised_dex" | "android_dex_asset" | "png_asset_unconfirmed" | "artifact_unclassified" | "artifact_invalid_base64";
+}
+
+export interface QuickJsSidecarPayload {
+  action: "load" | "capabilities" | "call" | "close";
+  sessionId: string;
+  script?: string;
+  moduleSources?: Record<string, string>;
+  allowedOrigins?: string[];
+  name?: string;
+  args?: unknown[];
 }
 
 export interface PlaybackProxyPayload {
@@ -149,8 +193,47 @@ export interface PlaybackProxySnapshot {
   reasonCode?: string;
 }
 
+export interface WebviewSnifferPayload {
+  action: "sniff" | "cancel" | "snapshot";
+  sessionId: string;
+  sourceId?: string;
+  playbackSessionId?: string;
+  initialUrl?: string;
+  headers?: Record<string, string>;
+  allowedOrigins?: string[];
+  maxRedirects?: number;
+  maxPages?: number;
+  maxResources?: number;
+  maxTotalMs?: number;
+  maxIdleMs?: number;
+}
+
+export interface WebviewSnifferSnapshot {
+  schemaVersion: string;
+  sessionId: string;
+  state: "found" | "running" | "idle" | "cancelling";
+  media?: Record<string, unknown> | null;
+  candidateCount: number;
+  rejectedCount: number;
+  dataDirectoryRemoved: boolean;
+  platform: string;
+}
+
+export interface MpvPayload {
+  action: "start" | "command" | "close";
+  sessionId: string;
+  source?: string;
+  command?: unknown[];
+}
+
+export interface MpvSnapshot {
+  sessionId: string;
+  state: "ready" | "closed";
+  reasonCode?: string;
+}
+
 export interface BusinessDataPayload {
-  action: "read" | "upsert" | "backup";
+  action: "read" | "upsert" | "backup" | "remove" | "list" | "restore";
   entity: string;
   id: string;
   sourceId?: string;
@@ -163,6 +246,63 @@ export interface BusinessDataSnapshot {
   id: string;
   found: boolean;
   value?: Record<string, unknown>;
+  recordCount?: number;
+}
+
+export interface BusinessFeaturePayload {
+  action: string;
+  feature: "history" | "favorites" | "follow";
+  id?: string;
+  sourceId?: string;
+  value: Record<string, unknown>;
+}
+
+export interface BusinessFeatureSnapshot {
+  schemaVersion: "v1";
+  feature: BusinessFeaturePayload["feature"];
+  state: Record<string, unknown>;
+}
+
+export interface LivePayload {
+  action: string;
+  id?: string;
+  value: Record<string, unknown>;
+}
+
+export interface LiveSnapshot {
+  schemaVersion: "v1";
+  state: Record<string, unknown>;
+}
+
+export interface EpgPayload {
+  action: string;
+  id?: string;
+  value: Record<string, unknown>;
+}
+
+export interface EpgSnapshot {
+  schemaVersion: "v1";
+  state: Record<string, unknown>;
+}
+
+export interface DesktopServicePayload {
+  action: string;
+  value: Record<string, unknown>;
+}
+
+export interface DesktopServiceSnapshot {
+  schemaVersion: "v1";
+  state: Record<string, unknown>;
+}
+
+export interface PlayerWindowPayload {
+  action: "open" | "snapshot" | "sync" | "attach" | "stop" | "close";
+  value: Record<string, unknown>;
+}
+
+export interface PlayerWindowSnapshot {
+  schemaVersion: "v1";
+  state: Record<string, unknown>;
 }
 
 export type ComponentManagerAction = "verify" | "install" | "rollback" | "uninstall";

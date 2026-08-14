@@ -1,0 +1,24 @@
+{
+  "componentInstall": {
+    "componentId": "mpv",
+    "reasonCode": null,
+    "state": "active",
+    "verified": true,
+    "version": "0.41.0"
+  },
+  "evidenceType": "tauri-mpv-runtime-canary",
+  "mpvClose": "Ok(MpvSnapshot { session_id: \"canary-mpv-a9da80a1-382d-45a5-87c7-8874944297c6\", state: \"closed\", reason_code: None })",
+  "mpvCommand": "Some(Ok(MpvSnapshot { session_id: \"canary-mpv-a9da80a1-382d-45a5-87c7-8874944297c6\", state: \"ready\", reason_code: None }))",
+  "mpvStart": "Ok(MpvSnapshot { session_id: \"canary-mpv-a9da80a1-382d-45a5-87c7-8874944297c6\", state: \"ready\", reason_code: None })",
+  "notes": "Requires a real signed mpv component URL and a real HTTPS media URL; this is not a mock IPC process.",
+  "schemaVersion": "v1",
+  "verified": true,
+  "executable": "C:\\Users\\qiany\\Documents\\ChatGPT\\QX影视\\src-tauri\\target\\release\\qx-yingshi.exe",
+  "process": {
+    "exitCode": 0,
+    "signal": null,
+    "noNewRuntimeProcesses": true
+  },
+  "stdout": "",
+  "stderr": "[0814/063512.843:ERROR:ui\\gfx\\win\\window_impl.cc:172] Failed to unregister class Chrome_WidgetWin_0. Error = 1412\r\n"
+}

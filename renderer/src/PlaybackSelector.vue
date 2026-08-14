@@ -8,6 +8,7 @@ import type { PlaybackCatalog, PlaybackSelection } from "./state.js";
 const props = defineProps<{
   catalog: PlaybackCatalog;
   selection: PlaybackSelection | null;
+  lineIndex?: number;
   order: "forward" | "reverse";
   retryable: boolean;
 }>();
@@ -20,7 +21,7 @@ const emit = defineEmits<{
 }>();
 
 const selectedLine = computed(() => {
-  const selected = props.selection?.lineIndex ?? props.catalog.lines[0]?.index ?? 0;
+  const selected = props.lineIndex ?? props.selection?.lineIndex ?? props.catalog.lines[0]?.index ?? 0;
   return props.catalog.lines.find((line) => line.index === selected) ?? props.catalog.lines[0] ?? null;
 });
 

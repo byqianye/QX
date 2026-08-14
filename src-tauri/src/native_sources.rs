@@ -38,14 +38,14 @@ pub fn capabilities(api: &str) -> Option<super::source_session::SourceCapabiliti
             engine: "native".to_string(),
         }),
         "csp_jianpian" => Some(super::source_session::SourceCapabilities {
-            home: false,
-            category: false,
-            search: false,
-            detail: false,
-            playback: false,
+            home: true,
+            category: true,
+            search: true,
+            detail: true,
+            playback: true,
             local_proxy: false,
-            filters: false,
-            pagination: false,
+            filters: true,
+            pagination: true,
             engine: "native".to_string(),
         }),
         _ => None,
@@ -56,16 +56,23 @@ pub async fn call(
     api: &str,
     method: &str,
     params: Option<&Value>,
+    ext: &str,
     headers: &HeaderMap,
     timeout: Duration,
     cancelled: Arc<AtomicBool>,
 ) -> Result<Value, NativeSourceError> {
     match api.to_ascii_lowercase().as_str() {
         "csp_douban" => call_douban(method, params, headers, timeout, cancelled).await,
-        "csp_jianpian" => Err(NativeSourceError::Unsupported(
-            "csp_Jianpian requires a native port or approved Android DEX runtime; no generic DEX compatibility is claimed"
-                .to_string(),
-        )),
+        "csp_jianpian" => super::jianpian::call(method, params, ext, headers, timeout, cancelled)
+            .await
+            .map_err(|error| match error {
+                super::jianpian::JianpianError::Unsupported(message) => {
+                    NativeSourceError::Unsupported(message)
+                }
+                super::jianpian::JianpianError::Request(message) => {
+                    NativeSourceError::Request(message)
+                }
+            }),
         _ => Err(NativeSourceError::Unsupported(format!(
             "native source is unavailable: {api}"
         ))),

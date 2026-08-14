@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "v1",
+  "evidenceType": "tauri-dash-e2e",
+  "verified": true,
+  "realHttp": true,
+  "mockUsed": false,
+  "observedAt": "2026-08-14T05:08:28.3553646+08:00",
+  "package": "src-tauri/target/release/qx-yingshi.exe",
+  "source": {
+    "site": "local HTTP CMS fixture",
+    "title": "Angel One DASH",
+    "manifestHost": "storage.googleapis.com",
+    "manifestPath": "/shaka-demo-assets/angel-one/dash.mpd"
+  },
+  "observations": {
+    "tauriPlaybackProxy": true,
+    "dashManifestMimeNormalized": true,
+    "segmentTemplateExpanded": true,
+    "firstFrameObserved": true,
+    "progressBeforeSeconds": 0,
+    "progressAfterSeconds": 4,
+    "durationSeconds": 60,
+    "userGestureRequired": true,
+    "clearKey": false,
+    "notes": "The packaged Tauri UI used a local HTTP CMS fixture only to return the real public DASH MPD. The Rust proxy rewrote the MPD and preserved the SegmentTemplate token; after a native video play gesture, WebView2 displayed real video and advanced from 0:00 to 0:04. This proves the non-DRM DASH proxy/player path, not ClearKey EME acceptance."
+  }
+}

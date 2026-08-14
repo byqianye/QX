@@ -745,6 +745,7 @@ function navigationFromPage(page: string): RendererNavigation {
               v-if="props.state.detail.playbackCatalog"
               :catalog="props.state.detail.playbackCatalog"
               :selection="props.state.detail.playbackSelection"
+              :line-index="props.lineIndex"
               :order="props.order"
               :retryable="retryable"
               @line="emit('line', $event)"

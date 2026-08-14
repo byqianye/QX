@@ -1,0 +1,77 @@
+{
+  "schemaVersion": "v1",
+  "evidenceType": "tauri-clean-win11-e2e",
+  "verified": true,
+  "cleanInstall": true,
+  "platform": "win32-x64",
+  "generatedBy": "scripts/tauri-clean-win11-e2e.ts",
+  "installer": "C:\\Users\\qiany\\Documents\\ChatGPT\\QX影视\\src-tauri\\target\\x86_64-pc-windows-msvc\\release\\bundle\\nsis\\QX影视_0.9.0_x64-setup.exe",
+  "installDirectory": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-clean-runner-process-audit-20260814-4\\Temp\\qx-tauri-clean-win11-VesbVZ\\installed",
+  "dataDirectory": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-clean-runner-process-audit-20260814-4\\Temp\\qx-tauri-clean-win11-VesbVZ\\data",
+  "observations": {
+    "hostPreflight": {
+      "verified": true,
+      "windowsCaption": "Microsoft Windows 11 רҵ����վ��",
+      "windowsBuild": 26200,
+      "existingQxPaths": [],
+      "uninstallRegistryMatches": [],
+      "existingQxProcesses": []
+    },
+    "installerExitCode": 0,
+    "executable": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-clean-runner-process-audit-20260814-4\\Temp\\qx-tauri-clean-win11-VesbVZ\\installed\\qx-yingshi.exe",
+    "dataDirectoryUsed": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-clean-runner-process-audit-20260814-4\\Temp\\qx-tauri-clean-win11-VesbVZ\\data",
+    "databaseCreated": true,
+    "restartExitCode": 0,
+    "restartDatabasePresent": true,
+    "restartExitedGracefully": true,
+    "noNewRuntimeProcessesAfterRestart": true,
+    "isolatedDataDirectory": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-clean-runner-process-audit-20260814-4\\Temp\\qx-tauri-clean-win11-VesbVZ\\isolated-data",
+    "isolatedDatabaseCreated": true,
+    "isolatedLaunchExitCode": 0,
+    "isolatedLaunchExitedGracefully": true,
+    "noNewRuntimeProcessesAfterIsolation": true,
+    "dataRootIsolation": true,
+    "appExitCode": 0,
+    "appExitedGracefully": true,
+    "noNewRuntimeProcessesAfterLaunch": true,
+    "webviewProfileRemoved": true,
+    "uninstaller": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-clean-runner-process-audit-20260814-4\\Temp\\qx-tauri-clean-win11-VesbVZ\\installed\\uninstall.exe",
+    "uninstallExitCode": 0,
+    "installDirectoryRemoved": true,
+    "noNewRuntimeProcessesAfterUninstall": true,
+    "runnerWorkspaceRemoved": true,
+    "runnerWorkspaceCleanupFailed": false
+  },
+  "process": {
+    "installer": "C:\\Users\\qiany\\Documents\\ChatGPT\\QX影视\\src-tauri\\target\\x86_64-pc-windows-msvc\\release\\bundle\\nsis\\QX影视_0.9.0_x64-setup.exe",
+    "launch": {
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": "[0814/124433.197:ERROR:ui\\gfx\\win\\window_impl.cc:172] Failed to unregister class Chrome_WidgetWin_0. Error = 1412\r\n"
+    },
+    "restart": {
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": "[0814/124437.692:ERROR:ui\\gfx\\win\\window_impl.cc:172] Failed to unregister class Chrome_WidgetWin_0. Error = 1412\r\n"
+    },
+    "isolatedLaunch": {
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": "[0814/124442.184:ERROR:ui\\gfx\\win\\window_impl.cc:172] Failed to unregister class Chrome_WidgetWin_0. Error = 1412\r\n"
+    },
+    "uninstall": {
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": ""
+    }
+  },
+  "notes": "Generated only by a real per-user Tauri NSIS install and uninstall using isolated application/data roots on an interactive Win11 x64 host. The runner tracks Tauri, WebView2, QuickJS, mpv, Electron, Node, Java, Python, aria2, and Android/ADB process images and refuses to write evidence unless every check passes."
+}

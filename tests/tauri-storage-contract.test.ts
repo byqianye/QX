@@ -23,6 +23,7 @@ describe("Tauri storage contract", () => {
         siteCount: 1,
         usedCache: false,
         validVersionCount: 1,
+        sites: [{ key: "fixture", name: "Fixture", api: "csp_Jianpian", siteType: 3 }],
       } satisfies ConfigCatalogSnapshot,
     };
 

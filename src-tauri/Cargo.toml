@@ -16,7 +16,7 @@ name = "qx-yingshi"
 path = "src/main.rs"
 
 [build-dependencies]
-tauri-build = { version = "2" }
+tauri-build = { version = "2", features = [] }
 
 [dependencies]
 aes = "0.8"
@@ -24,11 +24,20 @@ base64 = "0.22"
 cbc = { version = "0.1", features = ["alloc"] }
 ed25519-dalek = "2"
 rusqlite = { version = "0.37", features = ["bundled"] }
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
+rfd = "0.15"
+md-5 = "0.10"
 quick-xml = "0.41"
+rquickjs = { version = "0.12.2", default-features = false, features = ["std", "loader"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-tauri = { version = "2.8.0" }
-tokio = { version = "1", features = ["macros", "sync", "time"] }
+sha1 = "0.10"
+tauri = { version = "2.8.0", features = ["protocol-asset"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "sync", "time"] }
 uuid = { version = "1", features = ["v4"] }
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38.2"
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com"] }

@@ -22,6 +22,15 @@ import type { DanmakuUiState } from "../../src/danmaku/danmaku-types.js";
 
 const PLAYBACK_STARTUP_TIMEOUT_MS = 10_000;
 
+interface QualityOption {
+  id: string;
+  label: string;
+}
+
+type ShakaPlayer = import("shaka-player").default.Player;
+type ShakaVariantTrack = ReturnType<ShakaPlayer["getVariantTracks"]>[number];
+type ShakaTextTrack = ReturnType<ShakaPlayer["getTextTracks"]>[number];
+
 const windowWithHls = window as Window & {
   Hls?: typeof Hls;
 };
@@ -42,6 +51,11 @@ const currentTime = ref(props.state.currentTime);
 const duration = ref(props.state.duration);
 const muted = ref(props.state.muted);
 let hls: Hls | null = null;
+let shakaPlayer: ShakaPlayer | null = null;
+const qualityOptions = ref<QualityOption[]>([]);
+const selectedQualityId = ref("auto");
+let shakaTracks = new Map<string, ShakaVariantTrack>();
+let shakaTextTracks = new Map<string, ShakaTextTrack>();
 const cleanups: Array<() => void> = [];
 let positionRestored = false;
 let resumeRequested = false;
@@ -64,7 +78,7 @@ let startupTimer: ReturnType<typeof setTimeout> | undefined;
 let firstFrameReported = false;
 
 watch(() => props.state.source?.url, () => {
-  void nextTick(loadSource);
+  void nextTick(() => loadSource());
 }, { flush: "post" });
 
 watch(
@@ -98,7 +112,7 @@ watch(() => props.state.error?.code, (code) => {
 });
 
 onMounted(() => {
-  loadSource();
+  void loadSource();
 });
 
 onBeforeUnmount(() => {
@@ -106,6 +120,9 @@ onBeforeUnmount(() => {
   clearStartupTimer();
   cleanups.splice(0).forEach((cleanup) => cleanup());
   destroyHls();
+  destroyShaka();
+  clearQualityOptions();
+  shakaTextTracks.clear();
   clearSubtitleResources();
   localSubtitleBytes.clear();
   if (video.value) {
@@ -121,6 +138,9 @@ function loadSource(): void {
   cleanups.splice(0).forEach((cleanup) => cleanup());
   clearStartupTimer();
   destroyHls();
+  destroyShaka();
+  clearQualityOptions();
+  shakaTextTracks.clear();
   clearSubtitleResources();
   positionRestored = false;
   resumeRequested = false;
@@ -148,8 +168,18 @@ function loadSource(): void {
     localError.value = "起播超时";
     emitSync("error", { type: "startup-timeout", reason: "起播超时" });
   }, PLAYBACK_STARTUP_TIMEOUT_MS);
-  if ((source.mediaType === "hls" || isHls(source.url)) && Hls.isSupported()) {
+  if (source.mediaType === "dash" || isDash(source.url) || source.drm) {
+    void loadWithShaka(element, source);
+  } else if ((source.mediaType === "hls" || isHls(source.url)) && Hls.isSupported()) {
     hls = new Hls({ enableWorker: false });
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      if (!hls) return;
+      const levels = hls.levels.map((level, index) => ({
+        id: String(index),
+        label: qualityLabel(level.height, level.bitrate, index),
+      }));
+      setQualityOptions(levels);
+    });
     hls.on(Hls.Events.ERROR, (_event, data) => {
       const status = typeof data.response?.code === "number" ? data.response.code : undefined;
       if (status !== undefined) emitSync(localStatus.value, { type: "http-status", status });
@@ -199,6 +229,8 @@ function loadSource(): void {
   });
   listen(element, "playing", () => {
     localStatus.value = "playing";
+    localError.value = null;
+    localErrorCode = null;
     clearStartupTimer();
     const event: PlaybackMediaEvent | undefined = firstFrameReported ? undefined : { type: "first-frame" };
     firstFrameReported = true;
@@ -256,6 +288,8 @@ function toggleMute(): void {
 function stopPlayback(): void {
   clearStartupTimer();
   destroyHls();
+  destroyShaka();
+  clearQualityOptions();
   clearSubtitleResources();
   if (video.value) {
     video.value.pause();
@@ -302,9 +336,142 @@ function destroyHls(): void {
   hls = null;
 }
 
+function clearQualityOptions(): void {
+  qualityOptions.value = [];
+  selectedQualityId.value = "auto";
+  shakaTracks.clear();
+}
+
+function setQualityOptions(options: QualityOption[]): void {
+  const unique = new Map<string, QualityOption>();
+  for (const option of options) unique.set(option.id, option);
+  const entries = [...unique.values()];
+  qualityOptions.value = entries.length > 1
+    ? [{ id: "auto", label: "自动" }, ...entries]
+    : [];
+  selectedQualityId.value = "auto";
+}
+
+function qualityLabel(height: number | undefined, bitrate: number | undefined, index: number): string {
+  const resolution = Number.isFinite(height) && height && height > 0 ? `${height}p` : `档位 ${index + 1}`;
+  const rate = Number.isFinite(bitrate) && bitrate && bitrate > 0 ? ` · ${Math.round(bitrate / 1000)} kbps` : "";
+  return `${resolution}${rate}`;
+}
+
+function destroyShaka(): void {
+  const player = shakaPlayer;
+  shakaPlayer = null;
+  if (player) void player.destroy();
+}
+
+async function loadWithShaka(element: HTMLVideoElement, source: NonNullable<PlayerState["source"]>): Promise<void> {
+  let shakaErrorCode: number | null = null;
+  try {
+    const shaka = (await import("shaka-player")).default;
+    shaka.polyfill.installAll();
+    if (!shaka.Player.isBrowserSupported()) {
+      throw new Error("SHAKA_BROWSER_UNSUPPORTED");
+    }
+    const player = new shaka.Player(element);
+    shakaPlayer = player;
+    player.addEventListener("error", (event: Event) => {
+      const detail = (event as CustomEvent<{ code?: unknown }>).detail;
+      localStatus.value = "error";
+      localErrorCode = "SHAKA_ERROR";
+      if (detail && typeof detail.code === "number") {
+        shakaErrorCode = detail.code;
+        localErrorCode = `SHAKA_ERROR_${detail.code}`;
+        localError.value = `SHAKA_ERROR_${detail.code}`;
+      } else {
+        localError.value = "SHAKA_ERROR";
+      }
+      emitSync("error", { type: "fatal-error", code: localErrorCode });
+    });
+    if (source.drm) {
+      player.configure({
+        drm: {
+          clearKeys: source.drm.clearKeys ?? {},
+          servers: source.drm.servers ?? {},
+        },
+      });
+    }
+    await player.load(source.url);
+    const tracks = player.getVariantTracks();
+    shakaTracks = new Map(tracks.map((track) => [String(track.id), track]));
+    setQualityOptions(tracks.map((track) => ({
+      id: String(track.id),
+      label: qualityLabel(track.height, track.bandwidth, track.id),
+    })));
+    const textTracks = player.getTextTracks().filter((track) => track.kind !== "metadata");
+    shakaTextTracks = new Map(textTracks.map((track) => [`shaka-${track.id}`, track]));
+    if (textTracks.length > 0) {
+      const existing = subtitleTracks.value.filter((track) => !track.id.startsWith("shaka-"));
+      subtitleTracks.value = [
+        ...existing,
+        ...textTracks.map((track) => ({
+          id: `shaka-${track.id}`,
+          label: track.label || track.language || `Text ${track.id}`,
+          language: track.language || "und",
+          format: "vtt" as const,
+          default: track.active,
+          forced: track.forced,
+          source: "source" as const,
+        })),
+      ];
+      const active = textTracks.find((track) => track.active);
+      selectedSubtitleId.value = active ? `shaka-${active.id}` : null;
+      subtitleEnabled.value = active !== undefined;
+    }
+    if (shakaPlayer === player) resumeIfNeeded();
+  } catch (error) {
+    if (shakaPlayer) destroyShaka();
+    const caughtErrorCode = error && typeof error === "object" && "code" in error
+      && typeof (error as { code?: unknown }).code === "number"
+      ? (error as { code: number }).code
+      : null;
+    if (shakaErrorCode === null && caughtErrorCode !== null) shakaErrorCode = caughtErrorCode;
+    localStatus.value = "error";
+    localErrorCode = shakaErrorCode !== null
+      ? `SHAKA_ERROR_${shakaErrorCode}`
+      : error instanceof Error && error.message === "SHAKA_BROWSER_UNSUPPORTED"
+      ? "SHAKA_BROWSER_UNSUPPORTED"
+      : "SHAKA_LOAD_FAILED";
+    localError.value = shakaErrorCode !== null
+      ? `SHAKA_ERROR_${shakaErrorCode}`
+      : error instanceof Error ? error.message : "Shaka playback failed";
+    emitSync("error", { type: "fatal-error", code: localErrorCode });
+  }
+}
+
+function selectQuality(id: string): void {
+  if (hls) {
+    if (id === "auto") {
+      hls.currentLevel = -1;
+    } else {
+      const level = Number(id);
+      if (!Number.isInteger(level) || level < 0 || level >= hls.levels.length) return;
+      hls.currentLevel = level;
+    }
+    selectedQualityId.value = id;
+    return;
+  }
+  if (shakaPlayer) {
+    if (id === "auto") {
+      shakaPlayer.configure({ abr: { enabled: true } });
+    } else {
+      const track = shakaTracks.get(id);
+      if (!track) return;
+      shakaPlayer.configure({ abr: { enabled: false } });
+      shakaPlayer.selectVariantTrack(track, true);
+    }
+    selectedQualityId.value = id;
+  }
+}
+
 function resetSubtitleCatalog(): void {
   clearSubtitleResources();
   localSubtitleBytes.clear();
+  shakaTextTracks.clear();
   subtitleTracks.value = [...(props.state.source?.subtitles ?? [])];
   const defaultTrack = subtitleTracks.value.find((track) => track.default)
     ?? subtitleTracks.value.find((track) => track.forced);
@@ -325,11 +492,21 @@ function clearSubtitleResources(): void {
 function selectSubtitle(trackId: string | null): void {
   selectedSubtitleId.value = trackId;
   subtitleEnabled.value = trackId !== null;
+  if (shakaPlayer && (trackId === null || shakaTextTracks.has(trackId))) {
+    shakaPlayer.selectTextTrack(trackId === null ? undefined : shakaTextTracks.get(trackId));
+    subtitleLoading.value = false;
+    subtitleError.value = null;
+    return;
+  }
   void loadSelectedSubtitle();
 }
 
 function toggleSubtitle(enabled: boolean): void {
   subtitleEnabled.value = enabled;
+  if (shakaPlayer && selectedSubtitleId.value && shakaTextTracks.has(selectedSubtitleId.value)) {
+    shakaPlayer.selectTextTrack(enabled ? shakaTextTracks.get(selectedSubtitleId.value) : undefined);
+    return;
+  }
   syncNativeTrackModes();
   if (enabled && selectedSubtitleId.value) void loadSelectedSubtitle();
 }
@@ -463,6 +640,10 @@ function isHls(url: string): boolean {
   return /\.m3u8(?:$|[?#])/i.test(url);
 }
 
+function isDash(url: string): boolean {
+  return /\.mpd(?:$|[?#])/i.test(url);
+}
+
 function play(): void { void video.value?.play(); }
 function pause(): void { video.value?.pause(); }
 function fullscreen(): void { void video.value?.requestFullscreen?.(); }
@@ -565,6 +746,9 @@ function parserStatusLabel(
         @seek="setSeek"
         @volume="setVolume"
         @mute="toggleMute"
+        :quality-options="qualityOptions"
+        :quality-id="selectedQualityId"
+        @quality="selectQuality"
         @fullscreen="fullscreen"
       />
     </template>

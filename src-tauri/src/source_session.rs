@@ -131,8 +131,10 @@ impl SourceSessionState {
                 engine: "http".to_string(),
             }
         };
-        let availability_reason = if api.eq_ignore_ascii_case("csp_Jianpian") {
-            Some("native_jianpian_port_pending".to_string())
+        let availability_reason = if api.eq_ignore_ascii_case("csp_Jianpian")
+            && payload.ext.as_deref().unwrap_or_default().trim().is_empty()
+        {
+            Some("native_jianpian_ext_required".to_string())
         } else {
             None
         };
@@ -209,6 +211,7 @@ impl SourceSessionState {
                 &session.snapshot.api,
                 &method,
                 payload.params.as_ref(),
+                &session.ext,
                 &to_header_map(&session.headers)?,
                 session.timeout,
                 session.cancelled.clone(),
@@ -577,7 +580,7 @@ mod tests {
     }
 
     #[test]
-    fn exposes_native_douban_and_explicit_jianpian_unavailable_reason() {
+    fn exposes_native_douban_and_jianpian_capabilities_without_claiming_android() {
         let state = SourceSessionState::default();
         let douban = SourceSessionPayload {
             action: "open".to_string(),
@@ -600,13 +603,12 @@ mod tests {
         let jianpian = SourceSessionPayload {
             session_id: "jianpian".to_string(),
             api: Some("csp_Jianpian".to_string()),
+            ext: Some("https://api.ztcgi.com".to_string()),
             ..douban
         };
         let snapshot = state.open(&jianpian).expect("Jianpian boundary opens");
-        assert_eq!(
-            snapshot.availability_reason.as_deref(),
-            Some("native_jianpian_port_pending")
-        );
-        assert!(!snapshot.capabilities.search);
+        assert!(snapshot.availability_reason.is_none());
+        assert!(snapshot.capabilities.search);
+        assert!(snapshot.capabilities.playback);
     }
 }

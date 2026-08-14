@@ -1,0 +1,76 @@
+{
+  "schemaVersion": "v1",
+  "evidenceType": "tauri-upgrade-win11-e2e",
+  "verified": true,
+  "cleanInstall": true,
+  "platform": "win32-x64",
+  "generatedBy": "scripts/tauri-upgrade-win11-e2e.ts",
+  "oldVersion": "0.8.0",
+  "newVersion": "0.9.0",
+  "oldInstaller": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-tauri-upgrade-current-preserve-20260814-1\\old-installer.exe",
+  "newInstaller": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-tauri-upgrade-current-preserve-20260814-1\\current-installer.exe",
+  "installDirectory": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-tauri-upgrade-win11-g5Fk1y\\installed",
+  "dataDirectory": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-tauri-upgrade-win11-g5Fk1y\\data",
+  "observations": {
+    "oldInstallerExitCode": 0,
+    "oldExecutable": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-tauri-upgrade-win11-g5Fk1y\\installed\\qx-yingshi.exe",
+    "oldLaunchExitCode": 0,
+    "oldDatabaseCreated": true,
+    "markerBeforeUpgrade": "created-by-tauri-0.8.0\n",
+    "newInstallerExitCode": 0,
+    "newExecutable": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-tauri-upgrade-win11-g5Fk1y\\installed\\qx-yingshi.exe",
+    "newLaunchExitCode": 0,
+    "newDatabasePresent": true,
+    "markerPreserved": true,
+    "noNewRuntimeProcessesAfterOld": true,
+    "noNewRuntimeProcessesAfterUpgrade": true,
+    "uninstaller": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-tauri-upgrade-win11-g5Fk1y\\installed\\uninstall.exe",
+    "uninstallExitCode": 0,
+    "installDirectoryRemoved": true,
+    "noNewRuntimeProcessesAfterUninstall": true,
+    "runnerWorkspaceRemoved": true,
+    "runnerWorkspaceCleanupFailed": false
+  },
+  "hashes": {
+    "oldInstallerSha256": "884d1058a4360283bcd743edfaa44063235ccc61ff89f6a174e3bef56e6f6bd4",
+    "newInstallerSha256": "fa356c6381712fd4aca7cf107ba064c9227ae8212027873e5e0543469e5fda81"
+  },
+  "process": {
+    "oldInstall": {
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": ""
+    },
+    "oldLaunch": {
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": "[0814/125245.325:ERROR:ui\\gfx\\win\\window_impl.cc:172] Failed to unregister class Chrome_WidgetWin_0. Error = 1412\r\n"
+    },
+    "newInstall": {
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": ""
+    },
+    "newLaunch": {
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": "[0814/125250.291:ERROR:ui\\gfx\\win\\window_impl.cc:172] Failed to unregister class Chrome_WidgetWin_0. Error = 1412\r\n"
+    },
+    "uninstall": {
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": ""
+    }
+  },
+  "notes": "Generated only by installing a real older Tauri NSIS package, writing a marker through the Tauri data-root override, upgrading in place with the newer Tauri NSIS package, verifying the marker/database, then uninstalling. The runner tracks Tauri, WebView2, QuickJS, mpv, Electron, Node, Java, Python, aria2, and Android/ADB process images and writes evidence only after its workspace is removed."
+}

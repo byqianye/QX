@@ -1,15 +1,20 @@
 use std::fs;
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
+use zip::ZipArchive;
 
 const EXPECTED_TARGET: &str = "x86_64-pc-windows-msvc";
 const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 const MAX_ARTIFACT_BYTES: usize = 128 * 1024 * 1024;
+const COMPONENT_PUBLIC_KEY_ENV: &str = "QX_COMPONENT_PUBLIC_KEY_BASE64";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,6 +53,8 @@ pub struct ComponentEntry {
     pub target: String,
     pub sha256: String,
     pub url: String,
+    #[serde(default)]
+    pub payload_path: Option<String>,
 }
 
 #[derive(Debug)]
@@ -131,6 +138,7 @@ fn verify_manifest(
         })?,
         "public key",
     )?;
+    verify_trusted_public_key(&public_key)?;
     let verifying_key = VerifyingKey::from_bytes(&public_key).map_err(|error| {
         ComponentManagerError::Untrusted(format!("invalid public key: {error}"))
     })?;
@@ -146,6 +154,26 @@ fn verify_manifest(
     Ok(manifest)
 }
 
+fn verify_trusted_public_key(public_key: &[u8; 32]) -> Result<(), ComponentManagerError> {
+    match option_env!("QX_COMPONENT_PUBLIC_KEY_BASE64") {
+        Some(expected) => {
+            let expected = decode_fixed::<32>(expected, "configured public key")?;
+            if expected != *public_key {
+                return Err(ComponentManagerError::Untrusted(
+                    "component public key does not match the release trust anchor".to_string(),
+                ));
+            }
+        }
+        None if cfg!(debug_assertions) => {}
+        None => {
+            return Err(ComponentManagerError::Untrusted(format!(
+                "release component trust anchor is not configured; set {COMPONENT_PUBLIC_KEY_ENV} at build time"
+            )))
+        }
+    }
+    Ok(())
+}
+
 fn validate_manifest(manifest: &ComponentManifest) -> Result<(), ComponentManagerError> {
     if manifest.version != 1 || manifest.components.is_empty() {
         return Err(ComponentManagerError::Invalid(
@@ -158,6 +186,10 @@ fn validate_manifest(manifest: &ComponentManifest) -> Result<(), ComponentManage
             || component.target != EXPECTED_TARGET
             || !is_sha256(&component.sha256)
             || !is_https_url(&component.url)
+            || component
+                .payload_path
+                .as_deref()
+                .is_some_and(|path| !is_safe_payload_path(path))
         {
             return Err(ComponentManagerError::Invalid(format!(
                 "component entry is invalid: {}",
@@ -189,9 +221,48 @@ fn install(
         .ok_or_else(|| {
             ComponentManagerError::Invalid("component is not in the manifest".to_string())
         })?;
-    let artifact = STANDARD
-        .decode(payload.artifact_base64.as_deref().unwrap_or_default())
-        .map_err(|error| ComponentManagerError::Invalid(format!("invalid artifact: {error}")))?;
+    let artifact = if let Some(encoded) = payload.artifact_base64.as_deref() {
+        STANDARD
+            .decode(encoded)
+            .map_err(|error| ComponentManagerError::Invalid(format!("invalid artifact: {error}")))?
+    } else {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(60))
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if attempt.previous().len() >= 3 {
+                    return attempt.stop();
+                }
+                if attempt.url().scheme() != "https" {
+                    return attempt.stop();
+                }
+                attempt.follow()
+            }))
+            .user_agent("QX-Yingshi/1.0 component-manager")
+            .build()
+            .map_err(|error| ComponentManagerError::Storage(error.to_string()))?;
+        let response = client
+            .get(&component.url)
+            .send()
+            .map_err(|error| ComponentManagerError::Storage(error.to_string()))?;
+        if !response.status().is_success() {
+            return Err(ComponentManagerError::Storage(format!(
+                "component download returned HTTP {}",
+                response.status().as_u16()
+            )));
+        }
+        if response
+            .content_length()
+            .is_some_and(|size| size > MAX_ARTIFACT_BYTES as u64)
+        {
+            return Err(ComponentManagerError::Invalid(
+                "component artifact is too large".to_string(),
+            ));
+        }
+        response
+            .bytes()
+            .map_err(|error| ComponentManagerError::Storage(error.to_string()))?
+            .to_vec()
+    };
     if artifact.is_empty() || artifact.len() > MAX_ARTIFACT_BYTES {
         return Err(ComponentManagerError::Invalid(
             "component artifact is empty or too large".to_string(),
@@ -203,6 +274,7 @@ fn install(
         ));
     }
 
+    let component_payload = materialize_payload(&artifact, component)?;
     let component_root = safe_component_root(root, component_id)?;
     let staging_root = root.join("staging");
     fs::create_dir_all(&staging_root)
@@ -210,7 +282,10 @@ fn install(
     let staging = staging_root.join(format!("{}-{}", component_id, Uuid::new_v4()));
     fs::create_dir_all(&staging)
         .map_err(|error| ComponentManagerError::Storage(error.to_string()))?;
-    fs::write(staging.join("payload"), &artifact)
+    if component.payload_path.is_some() {
+        extract_archive_files(&staging, &artifact)?;
+    }
+    fs::write(staging.join("payload"), &component_payload)
         .map_err(|error| ComponentManagerError::Storage(error.to_string()))?;
     fs::write(
         staging.join("manifest.json"),
@@ -354,6 +429,88 @@ fn is_https_url(value: &str) -> bool {
     value.starts_with("https://") && !value.contains(['\r', '\n'])
 }
 
+fn is_safe_payload_path(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 256
+        && !value.contains(['\\', ':', '\r', '\n'])
+        && !value.starts_with('/')
+        && value
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
+fn materialize_payload(
+    artifact: &[u8],
+    component: &ComponentEntry,
+) -> Result<Vec<u8>, ComponentManagerError> {
+    let Some(payload_path) = component.payload_path.as_deref() else {
+        if artifact.starts_with(b"PK\x03\x04") {
+            return Err(ComponentManagerError::Invalid(
+                "component archive requires payloadPath".to_string(),
+            ));
+        }
+        return Ok(artifact.to_vec());
+    };
+
+    let mut archive = ZipArchive::new(Cursor::new(artifact)).map_err(|error| {
+        ComponentManagerError::Invalid(format!("component archive is invalid: {error}"))
+    })?;
+    let mut file = archive.by_name(payload_path).map_err(|error| {
+        ComponentManagerError::Invalid(format!("component payload is missing: {error}"))
+    })?;
+    if file.is_dir() || file.size() == 0 || file.size() > MAX_ARTIFACT_BYTES as u64 {
+        return Err(ComponentManagerError::Invalid(
+            "component payload is empty or too large".to_string(),
+        ));
+    }
+    let mut payload = Vec::with_capacity(file.size() as usize);
+    file.read_to_end(&mut payload)
+        .map_err(|error| ComponentManagerError::Storage(error.to_string()))?;
+    Ok(payload)
+}
+
+fn extract_archive_files(staging: &Path, artifact: &[u8]) -> Result<(), ComponentManagerError> {
+    let mut archive = ZipArchive::new(Cursor::new(artifact)).map_err(|error| {
+        ComponentManagerError::Invalid(format!("component archive is invalid: {error}"))
+    })?;
+    let mut total_bytes = 0_u64;
+    for index in 0..archive.len() {
+        let mut file = archive.by_index(index).map_err(|error| {
+            ComponentManagerError::Invalid(format!("component archive entry is invalid: {error}"))
+        })?;
+        if file.is_dir() {
+            continue;
+        }
+        let name = file.name().to_string();
+        if !is_safe_payload_path(&name) {
+            return Err(ComponentManagerError::Invalid(
+                "component archive contains an unsafe path".to_string(),
+            ));
+        }
+        if name.to_ascii_lowercase().ends_with(".pdb") {
+            continue;
+        }
+        let size = file.size();
+        total_bytes = total_bytes.saturating_add(size);
+        if size > MAX_ARTIFACT_BYTES as u64 || total_bytes > MAX_ARTIFACT_BYTES as u64 {
+            return Err(ComponentManagerError::Invalid(
+                "component archive payload is empty or too large".to_string(),
+            ));
+        }
+        let destination = staging.join(&name);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| ComponentManagerError::Storage(error.to_string()))?;
+        }
+        let mut bytes = Vec::with_capacity(size as usize);
+        file.read_to_end(&mut bytes)
+            .map_err(|error| ComponentManagerError::Storage(error.to_string()))?;
+        fs::write(destination, bytes)
+            .map_err(|error| ComponentManagerError::Storage(error.to_string()))?;
+    }
+    Ok(())
+}
+
 fn sha256(value: &[u8]) -> String {
     Sha256::digest(value)
         .iter()
@@ -368,6 +525,7 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use serde_json::json;
     use std::fs;
+    use std::io::{Cursor, Write};
     use std::path::PathBuf;
 
     fn signed_payload(id: &str, version: &str, artifact: &[u8]) -> ComponentManagerPayload {
@@ -449,5 +607,51 @@ mod tests {
         payload.running = Some(true);
         let error = handle(&root, &payload).expect_err("running install rejected");
         assert!(error.message().contains("running"));
+    }
+
+    #[test]
+    fn extracts_a_signed_zip_component_to_the_active_payload() {
+        let mut archive = Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut archive);
+            writer
+                .start_file("mpv.exe", zip::write::FileOptions::default())
+                .expect("zip entry");
+            writer
+                .write_all(b"MZ-real-mpv-fixture")
+                .expect("zip payload");
+            writer.finish().expect("zip finish");
+        }
+        let artifact = archive.into_inner();
+        let manifest = json!({
+            "version": 1,
+            "components": [{
+                "id": "mpv",
+                "version": "1",
+                "target": "x86_64-pc-windows-msvc",
+                "sha256": sha256(&artifact),
+                "url": "https://github.com/example/qx/releases/download/v1/mpv.zip",
+                "payloadPath": "mpv.exe"
+            }]
+        })
+        .to_string();
+        let signing_key = SigningKey::from_bytes(&[8_u8; 32]);
+        let signature = signing_key.sign(manifest.as_bytes());
+        let payload = ComponentManagerPayload {
+            action: "install".to_string(),
+            component_id: Some("mpv".to_string()),
+            manifest_json: Some(manifest),
+            signature_base64: Some(STANDARD.encode(signature.to_bytes())),
+            public_key_base64: Some(STANDARD.encode(signing_key.verifying_key().to_bytes())),
+            artifact_base64: Some(STANDARD.encode(&artifact)),
+            running: Some(false),
+        };
+        let root = test_root("zip-payload");
+        handle(&root, &payload).expect("zip component installs");
+        assert_eq!(
+            fs::read(root.join("components/mpv/active/payload")).expect("active payload"),
+            b"MZ-real-mpv-fixture"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 }

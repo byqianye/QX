@@ -43,3 +43,10 @@ Stage 1 标签：`stage1-g106-final` → `5de04df`
 - `npm run electron:smoke`：PASS，旧 Electron 构建与 smoke 保持可运行。
 
 本轮未迁移旧 Electron 业务实现，也未读取或修改旧应用数据目录。`AppSnapshot` 已建立独立 Tauri `AppLocalData` 与 `qx-v1.sqlite3` 路径；业务模块迁移属于后续 Goal。
+
+## Current verification addendum
+
+- The Tauri backend is now present under `src-tauri/src`, with the versioned RPC envelope carrying `version`, `requestId`, `sessionId`, and `sequence`.
+- `src-tauri/tauri.conf.json` keeps identifier `com.qx.yingshi.desktop`, NSIS packaging, and the WebView2 download bootstrapper; the latest unsigned NSIS build is 5,131,144 bytes and contains no QuickJS/mpv sidecar entry.
+- G109–G111 add the later native-source, playback, and Rust-business slices without changing the legacy Electron data roots. The legacy implementation remains intentionally preserved until the final clean-install, rollback, and signed-release gates pass.
+- `tmp/`, build outputs, archives, logs, and runtime data remain outside the committed Goal evidence scope.

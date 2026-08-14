@@ -11,5 +11,6 @@ describe("G112 release gate", () => {
     const override = spawnSync(process.execPath, [tsx, script, "--allow-incomplete"], { encoding: "utf8" });
     expect(override.status).toBe(0);
     expect(`${override.stdout}\n${override.stderr}`).toContain("incomplete override");
+    expect(`${blocked.stdout}\n${blocked.stderr}`).toContain("G112-REPORT.md is not complete");
   }, 30_000);
 });

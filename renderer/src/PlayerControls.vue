@@ -4,6 +4,8 @@ const props = defineProps<{
   duration: number;
   volume: number;
   muted: boolean;
+  qualityOptions?: readonly { id: string; label: string }[];
+  qualityId?: string;
   detachable?: boolean;
 }>();
 const emit = defineEmits<{
@@ -15,6 +17,7 @@ const emit = defineEmits<{
   seek: [value: number];
   volume: [value: number];
   mute: [];
+  quality: [value: string];
   fullscreen: [];
   detach: [];
 }>();
@@ -34,6 +37,12 @@ function seek(event: Event): void {
 function volume(event: Event): void {
   const value = numberValue(event);
   if (value !== null) emit("volume", value);
+}
+
+function quality(event: Event): void {
+  const target = event.target;
+  if (!(target instanceof HTMLSelectElement)) return;
+  emit("quality", target.value);
 }
 
 function formatTime(value: number): string {
@@ -56,6 +65,11 @@ function formatTime(value: number): string {
     <span data-testid="player-time">{{ formatTime(props.currentTime) }} / {{ formatTime(props.duration) }}</span>
     <label>音量
       <input data-action="player-volume" type="range" min="0" max="1" step="0.01" :value="props.volume" @input="volume">
+    </label>
+    <label v-if="(props.qualityOptions?.length ?? 0) > 1">清晰度
+      <select data-action="player-quality" aria-label="清晰度" :value="props.qualityId ?? 'auto'" @change="quality">
+        <option v-for="option in props.qualityOptions" :key="option.id" :value="option.id">{{ option.label }}</option>
+      </select>
     </label>
     <button data-action="player-mute" type="button" @click="emit('mute')">{{ props.muted ? "取消静音" : "静音" }}</button>
     <button data-action="player-fullscreen" type="button" @click="emit('fullscreen')">全屏</button>

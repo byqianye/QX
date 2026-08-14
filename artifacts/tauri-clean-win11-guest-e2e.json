@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "v1",
+  "evidenceType": "tauri-clean-win11-e2e",
+  "verified": true,
+  "cleanInstall": true,
+  "platform": "win32-x64",
+  "generatedBy": "scripts/tauri-clean-win11-e2e.ts",
+  "installer": "C:\\Users\\qiany\\qx-e2e-clean\\setup.exe",
+  "installDirectory": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-clean-interactive-profile\\Temp\\qx-tauri-clean-win11-Mm5R3q\\installed",
+  "dataDirectory": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-clean-interactive-profile\\Temp\\qx-tauri-clean-win11-Mm5R3q\\data",
+  "observations": {
+    "hostPreflight": {
+      "verified": true,
+      "windowsCaption": "Microsoft Windows 11 רҵ��",
+      "windowsBuild": 26100,
+      "existingQxPaths": [],
+      "uninstallRegistryMatches": [],
+      "existingQxProcesses": []
+    },
+    "installerExitCode": 0,
+    "executable": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-clean-interactive-profile\\Temp\\qx-tauri-clean-win11-Mm5R3q\\installed\\qx-yingshi.exe",
+    "dataDirectoryUsed": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-clean-interactive-profile\\Temp\\qx-tauri-clean-win11-Mm5R3q\\data",
+    "databaseCreated": true,
+    "appExitCode": 0,
+    "appExitedGracefully": true,
+    "noNewRuntimeProcessesAfterLaunch": true,
+    "webviewProfileRemoved": true,
+    "uninstaller": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-clean-interactive-profile\\Temp\\qx-tauri-clean-win11-Mm5R3q\\installed\\uninstall.exe",
+    "uninstallExitCode": 0,
+    "installDirectoryRemoved": true,
+    "noNewRuntimeProcessesAfterUninstall": true
+  },
+  "process": {
+    "installer": "C:\\Users\\qiany\\qx-e2e-clean\\setup.exe",
+    "launch": {
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": "[0814/095528.373:ERROR:ui\\gfx\\win\\window_impl.cc:172] Failed to unregister class Chrome_WidgetWin_0. Error = 1412\r\n"
+    },
+    "uninstall": {
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": ""
+    }
+  },
+  "notes": "Generated only by a real per-user Tauri NSIS install and uninstall on a clean Win11 x64 host. The runner refuses to write evidence unless every check passes."
+}

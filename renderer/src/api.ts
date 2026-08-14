@@ -1,11 +1,17 @@
 import type { RendererEnvelope } from "./state.js";
+import { isTauriRuntime } from "./tauri-rpc.js";
+import { TauriRendererApi } from "./tauri-renderer-api.js";
 
 export class RendererApi {
+  private readonly tauri = isTauriRuntime() ? new TauriRendererApi() : null;
+
   public async getState(): Promise<RendererEnvelope> {
+    if (this.tauri) return this.tauri.getState();
     return this.request("/api/state");
   }
 
   public async post(path: string, body: Record<string, unknown> = {}): Promise<RendererEnvelope> {
+    if (this.tauri) return this.tauri.post(path, body);
     return this.request(path, body);
   }
 

@@ -1,0 +1,158 @@
+name: Signed Tauri release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      QX_COMPONENT_PUBLIC_KEY_BASE64: ${{ secrets.QX_COMPONENT_PUBLIC_KEY_BASE64 }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable-x86_64-pc-windows-msvc
+
+      - name: Install JavaScript dependencies
+        shell: pwsh
+        run: npm ci
+
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          $version = node -e "console.log(JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version)"
+          if ($env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Tag $env:GITHUB_REF_NAME does not match package version $version"
+          }
+
+      - name: Run release checks
+        shell: pwsh
+        run: |
+          npm run check:tauri
+          npm run audit:tauri:no-remnant
+
+      - name: Build Windows x64 NSIS package
+        shell: pwsh
+        run: npm run build:windows:x64
+
+      - name: Locate unsigned installer
+        id: package
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -LiteralPath "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" -Filter *.exe -File | Select-Object -First 1
+          if ($null -eq $installer) {
+            throw "The Tauri NSIS installer was not produced"
+          }
+          "installer=$($installer.FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Prepare signed QuickJS component manifest
+        id: components
+        shell: pwsh
+        env:
+          QX_COMPONENT_PRIVATE_KEY_BASE64: ${{ secrets.QX_COMPONENT_PRIVATE_KEY_BASE64 }}
+        run: |
+          $staging = Join-Path $env:RUNNER_TEMP "qx-release-staging"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          $privateKey = Join-Path $env:RUNNER_TEMP "qx-components-ed25519.key"
+          [IO.File]::WriteAllBytes($privateKey, [Convert]::FromBase64String($env:QX_COMPONENT_PRIVATE_KEY_BASE64))
+
+          $sidecar = Join-Path $env:GITHUB_WORKSPACE "src-tauri/quickjs-sidecar/target/release/qx-quickjs-sidecar.exe"
+          if (-not (Test-Path -LiteralPath $sidecar)) {
+            throw "The release QuickJS sidecar was not produced"
+          }
+
+          $componentUrl = "https://github.com/$($env:GITHUB_REPOSITORY)/releases/download/$($env:GITHUB_REF_NAME)/qx-quickjs-sidecar.exe"
+          $spec = @{ components = @(@{
+                id = "quickjs"
+                version = $env:GITHUB_REF_NAME.TrimStart("v")
+                artifact = $sidecar
+                url = $componentUrl
+              }) } | ConvertTo-Json -Depth 4
+          $specPath = Join-Path $env:RUNNER_TEMP "components-spec.json"
+          Set-Content -LiteralPath $specPath -Value $spec -Encoding utf8
+
+          npm run tauri:component-manifest -- --private-key $privateKey --components $specPath --output-dir $staging
+          "staging=$staging" >> $env:GITHUB_OUTPUT
+          "sidecar=$sidecar" >> $env:GITHUB_OUTPUT
+
+      - name: Upload unsigned installer for signing
+        id: upload-unsigned-installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: qx-unsigned-installer
+          path: ${{ steps.package.outputs.installer }}
+          archive: false
+
+      - name: Submit installer to SignPath
+        id: sign
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ secrets.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned-installer.outputs.artifact-id }}
+          github-token: ${{ github.token }}
+          wait-for-completion: true
+          output-artifact-directory: ${{ runner.temp }}/qx-signed
+
+      - name: Collect release evidence
+        shell: pwsh
+        env:
+          STAGING: ${{ steps.components.outputs.staging }}
+          SIDECAR: ${{ steps.components.outputs.sidecar }}
+          SIGNED_DIR: ${{ runner.temp }}/qx-signed
+        run: |
+          $signedInstaller = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Filter *.exe -File -Recurse | Select-Object -First 1
+          if ($null -eq $signedInstaller) {
+            throw "SignPath did not return a signed installer"
+          }
+
+          $manifestUrl = "https://github.com/$($env:GITHUB_REPOSITORY)/releases/download/$($env:GITHUB_REF_NAME)/components-v1.json"
+          $componentUrl = "https://github.com/$($env:GITHUB_REPOSITORY)/releases/download/$($env:GITHUB_REF_NAME)/qx-quickjs-sidecar.exe"
+          npm run tauri:release-evidence -- `
+            --installer $signedInstaller.FullName `
+            --component-manifest (Join-Path $env:STAGING "components-v1.json") `
+            --component-signature (Join-Path $env:STAGING "components-v1.sig.b64") `
+            --component-public-key (Join-Path $env:STAGING "components-v1.pub.b64") `
+            --component-artifact $env:SIDECAR `
+            --component-id quickjs `
+            --manifest-url $manifestUrl `
+            --artifact-url $componentUrl
+
+      - name: Publish signed GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STAGING: ${{ steps.components.outputs.staging }}
+          SIDECAR: ${{ steps.components.outputs.sidecar }}
+          SIGNED_DIR: ${{ runner.temp }}/qx-signed
+        run: |
+          $signedInstaller = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Filter *.exe -File -Recurse | Select-Object -First 1
+          $assets = @(
+            "$($signedInstaller.FullName)#QX-Yingshi-$($env:GITHUB_REF_NAME.TrimStart('v'))-x64-setup.exe",
+            "$($env:SIDECAR)#qx-quickjs-sidecar.exe",
+            "$(Join-Path $env:STAGING 'components-v1.json')#components-v1.json",
+            "$(Join-Path $env:STAGING 'components-v1.sig.b64')#components-v1.sig.b64",
+            "$(Join-Path $env:STAGING 'components-v1.pub.b64')#components-v1.pub.b64",
+            "artifacts/tauri-components-release.json",
+            "artifacts/tauri-signature.json"
+          )
+          gh release create $env:GITHUB_REF_NAME @assets --verify-tag --repo $env:GITHUB_REPOSITORY --title "QX Yingshi $($env:GITHUB_REF_NAME)" --generate-notes

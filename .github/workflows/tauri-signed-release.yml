@@ -68,6 +68,8 @@ jobs:
         env:
           QX_COMPONENT_PRIVATE_KEY_BASE64: ${{ secrets.QX_COMPONENT_PRIVATE_KEY_BASE64 }}
         run: |
+          $tag = $env:GITHUB_REF_NAME
+          $version = $tag.TrimStart("v")
           $staging = Join-Path $env:RUNNER_TEMP "qx-release-staging"
           New-Item -ItemType Directory -Force -Path $staging | Out-Null
           $privateKey = Join-Path $env:RUNNER_TEMP "qx-components-ed25519.key"
@@ -81,7 +83,7 @@ jobs:
           $componentUrl = "https://github.com/$($env:GITHUB_REPOSITORY)/releases/download/$($env:GITHUB_REF_NAME)/qx-quickjs-sidecar.exe"
           $spec = @{ components = @(@{
                 id = "quickjs"
-                version = $env:GITHUB_REF_NAME.TrimStart("v")
+                version = $version
                 artifact = $sidecar
                 url = $componentUrl
               }) } | ConvertTo-Json -Depth 4
@@ -145,9 +147,11 @@ jobs:
           SIDECAR: ${{ steps.components.outputs.sidecar }}
           SIGNED_DIR: ${{ runner.temp }}/qx-signed
         run: |
+          $tag = $env:GITHUB_REF_NAME
+          $version = $tag.TrimStart('v')
           $signedInstaller = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Filter *.exe -File -Recurse | Select-Object -First 1
           $assets = @(
-            "$($signedInstaller.FullName)#QX-Yingshi-$($env:GITHUB_REF_NAME.TrimStart('v'))-x64-setup.exe",
+            "$($signedInstaller.FullName)#QX-Yingshi-$version-x64-setup.exe",
             "$($env:SIDECAR)#qx-quickjs-sidecar.exe",
             "$(Join-Path $env:STAGING 'components-v1.json')#components-v1.json",
             "$(Join-Path $env:STAGING 'components-v1.sig.b64')#components-v1.sig.b64",
@@ -156,3 +160,23 @@ jobs:
             "artifacts/tauri-signature.json"
           )
           gh release create $env:GITHUB_REF_NAME @assets --verify-tag --repo $env:GITHUB_REPOSITORY --title "QX Yingshi $($env:GITHUB_REF_NAME)" --generate-notes
+
+      - name: Verify published Release downloads
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNED_DIR: ${{ runner.temp }}/qx-signed
+        run: |
+          $signedInstaller = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Filter *.exe -File -Recurse | Select-Object -First 1
+          $baseUrl = "https://github.com/$($env:GITHUB_REPOSITORY)/releases/download/$($env:GITHUB_REF_NAME)"
+          npm run tauri:release-download-canary -- `
+            --installer $signedInstaller.FullName `
+            --manifest-url "$baseUrl/components-v1.json" `
+            --signature-url "$baseUrl/components-v1.sig.b64" `
+            --artifact-url "$baseUrl/qx-quickjs-sidecar.exe" `
+            --component-id quickjs `
+            --public-key-base64 $env:QX_COMPONENT_PUBLIC_KEY_BASE64
+          gh release upload $env:GITHUB_REF_NAME `
+            artifacts/tauri-components-release.json `
+            artifacts/tauri-signature.json `
+            --clobber --repo $env:GITHUB_REPOSITORY

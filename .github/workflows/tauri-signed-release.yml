@@ -11,7 +11,10 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
+    # The release gate includes a real clean Windows 11 install. GitHub's
+    # windows-latest image is Windows Server, so this job must run on the
+    # dedicated clean Win11 runner registered with this label.
+    runs-on: [self-hosted, windows, x64, qx-clean-win11]
     env:
       QX_COMPONENT_PUBLIC_KEY_BASE64: ${{ secrets.QX_COMPONENT_PUBLIC_KEY_BASE64 }}
       QX_COMPONENT_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/components-v1.json
@@ -64,6 +67,46 @@ jobs:
             throw "The Tauri NSIS installer was not produced"
           }
           "installer=$($installer.FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Build previous-version compatibility installer
+        id: previous
+        shell: pwsh
+        env:
+          QX_COMPONENT_PUBLIC_KEY_BASE64: ${{ secrets.QX_COMPONENT_PUBLIC_KEY_BASE64 }}
+          QX_COMPONENT_MANIFEST_URL: https://example.invalid/qx/previous/components-v1.json
+          QX_COMPONENT_SIGNATURE_URL: https://example.invalid/qx/previous/components-v1.sig.b64
+        run: |
+          $oldRoot = Join-Path $env:RUNNER_TEMP "qx-previous-version-source"
+          $oldInstaller = Join-Path $env:RUNNER_TEMP "QX-Yingshi_0.8.0_x64-setup.exe"
+          git worktree add --detach $oldRoot $env:GITHUB_SHA
+          try {
+            Push-Location $oldRoot
+            npm version 0.8.0 --no-git-tag-version --ignore-scripts | Out-Host
+            $versionFiles = @(
+              "src-tauri/tauri.conf.json",
+              "src-tauri/Cargo.toml",
+              "src-tauri/Cargo.lock",
+              "src-tauri/quickjs-sidecar/Cargo.toml",
+              "src-tauri/quickjs-sidecar/Cargo.lock"
+            )
+            foreach ($file in $versionFiles) {
+              $path = Join-Path $oldRoot $file
+              if (Test-Path -LiteralPath $path) {
+                $text = Get-Content -LiteralPath $path -Raw
+                $text = $text.Replace("0.9.0-rc.1", "0.8.0")
+                Set-Content -LiteralPath $path -Value $text -Encoding utf8
+              }
+            }
+            npm ci
+            npm run build:windows:x64
+            $built = Get-ChildItem -LiteralPath (Join-Path $oldRoot "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis") -Filter *.exe -File | Select-Object -First 1
+            if ($null -eq $built) { throw "The previous-version compatibility installer was not produced" }
+            Copy-Item -LiteralPath $built.FullName -Destination $oldInstaller -Force
+            "installer=$oldInstaller" >> $env:GITHUB_OUTPUT
+          } finally {
+            Pop-Location
+            git worktree remove --force $oldRoot
+          }
 
       - name: Prepare signed media component manifest
         id: components
@@ -180,6 +223,50 @@ jobs:
           }
           $env:QX_TAURI_NSIS = $signedInstaller.FullName
           npm run tauri:e2e:clean-win11
+
+      - name: Run real Jianpian HLS 20-second E2E
+        shell: pwsh
+        env:
+          SIGNED_DIR: ${{ runner.temp }}/qx-signed
+        run: |
+          $signedInstaller = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Filter *.exe -File -Recurse | Select-Object -First 1
+          if ($null -eq $signedInstaller) { throw "SignPath did not return a signed installer" }
+          $installDirectory = Join-Path $env:RUNNER_TEMP "qx-hls-installed"
+          New-Item -ItemType Directory -Force -Path $installDirectory | Out-Null
+          & $signedInstaller.FullName "/S" "/D=$installDirectory"
+          if ($LASTEXITCODE -ne 0) { throw "Signed installer exited with code $LASTEXITCODE" }
+          try {
+            $executable = Get-ChildItem -LiteralPath $installDirectory -Filter "qx-yingshi.exe" -File -Recurse | Select-Object -First 1
+            if ($null -eq $executable) { throw "Installed Tauri executable was not found" }
+            npx --no-install tsx scripts/tauri-cdp-canary.ts `
+              --exe $executable.FullName `
+              --installer $signedInstaller.FullName `
+              --config-url "http://xn--z7x900a.net/" `
+              --site-key "荐片" `
+              --search-key "流浪地球" `
+              --playback `
+              --output artifacts/tauri-hls-20s-e2e.json
+            if ($LASTEXITCODE -ne 0) { throw "Real Jianpian HLS canary exited with code $LASTEXITCODE" }
+          } finally {
+            $uninstaller = Get-ChildItem -LiteralPath $installDirectory -Filter "uninstall.exe" -File -Recurse | Select-Object -First 1
+            if ($null -ne $uninstaller) { & $uninstaller.FullName "/S" | Out-Null }
+            Remove-Item -LiteralPath $installDirectory -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Run fresh-user upgrade E2E
+        shell: pwsh
+        env:
+          OLD_INSTALLER: ${{ steps.previous.outputs.installer }}
+          SIGNED_DIR: ${{ runner.temp }}/qx-signed
+        run: |
+          $signedInstaller = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Filter *.exe -File -Recurse | Select-Object -First 1
+          if ($null -eq $signedInstaller) { throw "SignPath did not return a signed installer" }
+          $env:QX_TAURI_UPGRADE_E2E = "1"
+          $env:QX_TAURI_OLD_NSIS = $env:OLD_INSTALLER
+          $env:QX_TAURI_NEW_NSIS = $signedInstaller.FullName
+          $env:QX_TAURI_OLD_VERSION = "0.8.0"
+          $env:QX_TAURI_NEW_VERSION = "0.9.0-rc.1"
+          npm run tauri:e2e:upgrade-win11
 
       - name: Finalize G112 report after verified release evidence
         shell: pwsh

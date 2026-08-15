@@ -66,3 +66,19 @@ npm run g112:release-gate
 ```
 
 只有当 `g112:release-gate` 返回 `PASS`，且 Release 中同时存在签名安装包、组件清单、组件签名、公钥和两个证据 JSON，才算正式发布完成。任何 `NotSigned`、缺失证据或旧安装包哈希都必须让发布失败。
+
+## 5. 干净 Win11 runner
+
+`windows-latest` 是 Windows Server，不满足本项目的 clean Win11 验收。发布工作流使用自托管标签：
+
+```text
+self-hosted, windows, x64, qx-clean-win11
+```
+
+将已打开的 Win11 虚拟机注册为该仓库的自托管 runner，并在创建标签前确认：
+
+1. 卸载旧版 QX，保留用户数据目录，不把旧数据当成“干净安装”证据；
+2. runner 服务可以正常上线，Node.js、Rust、7-Zip 和 WebView2 已可用；
+3. 不让公开 Pull Request 使用这个 runner；发布工作流只响应维护者推送的版本标签。
+
+发布工作流会在同一台 Win11 runner 上重新生成当前签名包的 clean-install、真实 Jianpian HLS 20 秒和 fresh-user upgrade 证据，然后才运行严格门禁。

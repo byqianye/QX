@@ -11,6 +11,7 @@ const requestDesktopService = vi.fn();
 const requestLive = vi.fn();
 const requestEpg = vi.fn();
 const requestSourceSession = vi.fn();
+const requestPlaybackFallback = vi.fn();
 const requestPlaybackProxy = vi.fn();
 const requestPlaybackSources = vi.fn();
 const requestWebviewSniffer = vi.fn();
@@ -31,6 +32,7 @@ vi.mock("../renderer/src/tauri-rpc.js", () => ({
   requestLive,
   requestEpg,
   requestSourceSession,
+  requestPlaybackFallback,
   requestPlaybackProxy,
   requestPlaybackSources,
   requestWebviewSniffer,
@@ -41,6 +43,57 @@ vi.mock("../renderer/src/tauri-rpc.js", () => ({
 
 describe("Tauri renderer vertical slice", () => {
   beforeEach(() => {
+    const fallbackSessions = new Map<string, any>();
+    requestPlaybackFallback.mockImplementation(async (payload: any) => {
+      if (payload.action === "begin") {
+        const state = {
+          mode: payload.mode ?? "prompt", status: "idle", trigger: null, reason: null,
+          current: null, next: null, attempts: 0, maxAttempts: payload.maxAttempts ?? 4,
+          tried: [], startedAt: 1_000, deadlineAt: 46_000,
+          candidates: payload.candidates ?? [],
+        };
+        fallbackSessions.set(payload.sessionId, state);
+        return { state, decision: { kind: "none" } };
+      }
+      const state = fallbackSessions.get(payload.sessionId);
+      if (!state) return { state: null, decision: { kind: "none" } };
+      if (payload.action === "set-mode") {
+        state.mode = payload.mode;
+        state.status = payload.mode === "off" ? "disabled" : state.status === "disabled" ? "idle" : state.status;
+      } else if (payload.action === "trigger") {
+        if (!["user-pause", "seek", "single-buffer", "short-fluctuation"].includes(payload.trigger)) {
+          state.trigger = payload.trigger;
+          state.reason = payload.reason;
+          const next = state.candidates.find((candidate: any) => !state.tried.includes(candidate.id));
+          if (state.mode === "off") state.status = "disabled";
+          else if (state.mode === "prompt" && next) { state.status = "prompt"; state.next = next; }
+          else if (next) {
+            state.status = "trying"; state.current = next; state.next = null;
+            state.tried.push(next.id); state.attempts += 1;
+          } else { state.status = "stopped"; }
+        }
+      } else if (payload.action === "approve") {
+        const next = state.candidates.find((candidate: any) => !state.tried.includes(candidate.id));
+        if (state.status === "prompt" && next) {
+          state.status = "trying"; state.current = next; state.next = null;
+          state.tried.push(next.id); state.attempts += 1;
+          return { state, decision: { kind: "attempt", candidate: next } };
+        }
+        return { state, decision: { kind: "none", reason: "no-prompt" } };
+      } else if (payload.action === "finish") {
+        state.status = payload.success ? "recovered" : "idle";
+        state.current = null; state.next = null;
+      } else if (payload.action === "stop") {
+        state.status = "stopped"; state.reason = payload.reason; state.current = null; state.next = null;
+      } else if (payload.action === "cancel") {
+        state.status = "cancelled"; state.reason = payload.reason ?? "user cancelled"; state.current = null; state.next = null;
+      } else if (payload.action === "clear") {
+        fallbackSessions.delete(payload.sessionId);
+        return { state, decision: { kind: "none" } };
+      }
+      const candidate = state.status === "prompt" ? state.next : state.status === "trying" ? state.current : undefined;
+      return { state, decision: { kind: state.status === "prompt" ? "prompt" : "none", ...(candidate ? { candidate } : {}) } };
+    });
     requestLive.mockResolvedValue({
       schemaVersion: "v1",
       state: {
@@ -757,12 +810,23 @@ describe("Tauri renderer vertical slice", () => {
       attempts: 0,
       next: expect.objectContaining({ id: "alternate:movie-1" }),
     });
+    expect(requestPlaybackFallback).toHaveBeenCalledWith(expect.objectContaining({
+      action: "begin",
+      mode: "prompt",
+      maxAttempts: 3,
+      totalTimeoutMs: 45_000,
+    }));
+    expect(requestPlaybackFallback).toHaveBeenCalledWith(expect.objectContaining({
+      action: "trigger",
+      trigger: "player-fatal",
+    }));
     const fallback = await api.post("/api/player/fallback/approve");
     expect(fallback.state?.fallback).toMatchObject({
       status: "trying",
       attempts: 1,
       current: expect.objectContaining({ id: "alternate:movie-1" }),
     });
+    expect(requestPlaybackFallback).toHaveBeenCalledWith(expect.objectContaining({ action: "approve" }));
     expect(requestPlaybackProxy).toHaveBeenCalledWith(expect.objectContaining({ action: "close" }));
     expect(requestPlaybackProxy.mock.calls.filter(([payload]) => payload.action === "start")).toHaveLength(2);
     const exhausted = await api.post("/api/player/sync", {

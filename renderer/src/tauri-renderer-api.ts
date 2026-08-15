@@ -10,6 +10,7 @@ import {
   requestEpg,
   requestLive,
   requestMpv,
+  requestPlaybackFallback,
   requestPlaybackProxy,
   requestPlaybackSources,
   requestPlayerWindow,
@@ -31,17 +32,16 @@ import type {
   EpgSnapshot,
   LiveSnapshot,
   PlaybackProxyPayload,
+  PlaybackFallbackCandidate,
+  PlaybackFallbackPayload,
+  PlaybackFallbackSnapshot,
+  PlaybackFallbackState,
   PlaybackSourceResolvePayload,
   WebviewSnifferPayload,
   SourceCapabilities,
   SourceSessionPayload,
   SourceSessionResult,
 } from "./contracts.js";
-import {
-  PlaybackFallbackCoordinator,
-  type FallbackCandidate,
-  type PlaybackFallbackState,
-} from "../../src/health/playback-health.js";
 import type {
   PlayableCandidate,
   PlaybackSourceResolution,
@@ -94,7 +94,7 @@ interface TauriRuntimeState {
   persistence: RendererPersistenceState;
   featureState: Partial<ApiSpiderState>;
   componentManager: ComponentManagerSnapshot | null;
-  fallbackCoordinator: PlaybackFallbackCoordinator | null;
+  fallbackSessionId: string | null;
   fallbackResolution: PlaybackSourceResolution | null;
   playbackFallbackRequests: Map<string, { lineIndex: number; episodeIndex: number }>;
 }
@@ -348,7 +348,7 @@ export class TauriRendererApi {
       liveProxySessionId: null,
       playerDetached: false,
       componentManager: null,
-      fallbackCoordinator: null,
+      fallbackSessionId: null,
       fallbackResolution: null,
       playbackFallbackRequests: new Map(),
     };
@@ -369,7 +369,7 @@ export class TauriRendererApi {
     if (!targetVersionHash) throw new Error("TAURI_CONFIG_VERSION_HASH_EMPTY");
     if (runtime.playerSource) await this.stopPlayer();
     else {
-      runtime.fallbackCoordinator = null;
+      runtime.fallbackSessionId = null;
       runtime.fallbackResolution = null;
       this.clearFallbackState();
     }
@@ -408,7 +408,7 @@ export class TauriRendererApi {
     runtime.liveProxySessionId = null;
     runtime.playerDetached = false;
     runtime.featureState = { ...runtime.featureState, playbackSources: null };
-    runtime.fallbackCoordinator = null;
+    runtime.fallbackSessionId = null;
     runtime.fallbackResolution = null;
     runtime.playbackFallbackRequests.clear();
     const history = await requestConfigCatalogMaintenance({ action: "history", source: runtime.source });
@@ -553,7 +553,7 @@ export class TauriRendererApi {
     const runtime = this.requireRuntime();
     if (runtime.playerSource) await this.stopPlayer();
     else {
-      runtime.fallbackCoordinator = null;
+      runtime.fallbackSessionId = null;
       runtime.fallbackResolution = null;
       this.clearFallbackState();
     }
@@ -686,7 +686,7 @@ export class TauriRendererApi {
     runtime.page = "detail";
     if (!preserveFallback) {
       runtime.playbackFallbackRequests.clear();
-      runtime.fallbackCoordinator = null;
+      runtime.fallbackSessionId = null;
       runtime.fallbackResolution = null;
       this.clearFallbackState();
     }
@@ -726,7 +726,7 @@ export class TauriRendererApi {
       sessionId: runtime.sessionId,
       sites: configuredSites,
     } satisfies PlaybackSourceResolvePayload);
-    runtime.fallbackCoordinator = null;
+    runtime.fallbackSessionId = null;
     runtime.fallbackResolution = null;
     runtime.playbackFallbackRequests.clear();
     this.clearFallbackState();
@@ -750,7 +750,7 @@ export class TauriRendererApi {
     }
     await this.detail(vodId, preserveFallback);
     runtime.fallbackResolution = resolution;
-    if (!preserveFallback) this.beginFallback(resolution, candidate);
+    if (!preserveFallback) await this.beginFallback(resolution, candidate);
     runtime.featureState = { ...runtime.featureState, playbackSources: null };
     return this.envelope();
   }
@@ -761,7 +761,7 @@ export class TauriRendererApi {
 
     if (runtime.playerSource) await this.stopPlayer(preserveFallback);
     else if (!preserveFallback) {
-      runtime.fallbackCoordinator = null;
+      runtime.fallbackSessionId = null;
       runtime.fallbackResolution = null;
       runtime.playbackFallbackRequests.clear();
       this.clearFallbackState();
@@ -779,7 +779,7 @@ export class TauriRendererApi {
     runtime.playbackSelection = null;
     runtime.playbackFallbackRequests.clear();
     if (!preserveFallback) {
-      runtime.fallbackCoordinator = null;
+      runtime.fallbackSessionId = null;
       runtime.fallbackResolution = null;
       this.clearFallbackState();
     }
@@ -794,7 +794,7 @@ export class TauriRendererApi {
     const line = runtime.playbackCatalog?.lines.find((candidate) => candidate.index === lineIndex);
     const episode = line?.episodes[episodeIndex];
     if (!line || !episode) throw new Error("TAURI_PLAYBACK_EPISODE_NOT_FOUND");
-    if (!runtime.fallbackCoordinator) this.beginPlaybackFallback(lineIndex, episodeIndex);
+    if (!runtime.fallbackSessionId) await this.beginPlaybackFallback(lineIndex, episodeIndex);
     const selectedApi = runtime.selectedSite?.api ?? "";
     const directCmsEpisode = /^https?:\/\//iu.test(selectedApi) && /^https?:\/\//iu.test(episode.id);
     const raw = directCmsEpisode
@@ -889,7 +889,10 @@ export class TauriRendererApi {
       runtime.playerSource = null;
       runtime.playerDetached = false;
       if (!preserveFallback) {
-        runtime.fallbackCoordinator = null;
+        if (runtime.fallbackSessionId) {
+          await requestPlaybackFallback({ action: "clear", sessionId: runtime.fallbackSessionId }).catch(() => undefined);
+        }
+        runtime.fallbackSessionId = null;
         runtime.fallbackResolution = null;
         runtime.playbackFallbackRequests.clear();
         this.clearFallbackState();
@@ -924,14 +927,14 @@ export class TauriRendererApi {
   private async syncPlayer(body: Record<string, unknown>): Promise<RendererEnvelope> {
     const runtime = this.requireRuntime();
     const playbackError = body.status === "error";
-    if (playbackError && !runtime.fallbackCoordinator && runtime.playbackSelection) {
-      this.beginPlaybackFallback(runtime.playbackSelection.lineIndex, runtime.playbackSelection.episodeIndex);
+    if (playbackError && !runtime.fallbackSessionId && runtime.playbackSelection) {
+      await this.beginPlaybackFallback(runtime.playbackSelection.lineIndex, runtime.playbackSelection.episodeIndex);
     }
     try {
       await this.desktopAction("player-sync", body);
       await this.desktopAction("danmaku-sync", body);
     } catch (error) {
-      if (!runtime.fallbackCoordinator) throw error;
+      if (!runtime.fallbackSessionId) throw error;
     }
     if (runtime.playerSource) {
       runtime.playerSource = { ...runtime.playerSource };
@@ -965,8 +968,9 @@ export class TauriRendererApi {
         }
       }
     }
-    if (body.status === "playing" && runtime.fallbackCoordinator?.state.status === "trying") {
-      this.setFallbackState(runtime.fallbackCoordinator.finishAttempt(true));
+    const fallbackState = runtime.featureState.fallback;
+    if (body.status === "playing" && runtime.fallbackSessionId && fallbackState?.status === "trying") {
+      await this.fallbackAction({ action: "finish", sessionId: runtime.fallbackSessionId, success: true });
     } else if (body.status === "error") {
       await this.handlePlaybackFailure(body);
     }
@@ -977,8 +981,8 @@ export class TauriRendererApi {
     const runtime = this.requireRuntime();
     const mode = stringValue(body.mode);
     await this.desktopAction("player-fallback-mode", body);
-    if (runtime.fallbackCoordinator && (mode === "off" || mode === "prompt" || mode === "auto")) {
-      this.setFallbackState(runtime.fallbackCoordinator.setMode(mode));
+    if (runtime.fallbackSessionId && (mode === "off" || mode === "prompt" || mode === "auto")) {
+      await this.fallbackAction({ action: "set-mode", sessionId: runtime.fallbackSessionId, mode });
     }
     return this.envelope();
   }
@@ -986,9 +990,9 @@ export class TauriRendererApi {
   private async approveFallback(): Promise<RendererEnvelope> {
     const runtime = this.requireRuntime();
     await this.desktopAction("player-fallback-approve", {});
-    const decision = runtime.fallbackCoordinator?.approveNext();
-    if (!decision || decision.kind !== "attempt") {
-      if (runtime.fallbackCoordinator) this.setFallbackState(runtime.fallbackCoordinator.state);
+    if (!runtime.fallbackSessionId) return this.envelope();
+    const decision = (await this.fallbackAction({ action: "approve", sessionId: runtime.fallbackSessionId })).decision;
+    if (decision.kind !== "attempt" || !decision.candidate) {
       return this.envelope();
     }
     return runtime.fallbackResolution
@@ -999,44 +1003,50 @@ export class TauriRendererApi {
   private async cancelFallback(): Promise<RendererEnvelope> {
     const runtime = this.requireRuntime();
     await this.desktopAction("player-fallback-cancel", {});
-    if (runtime.fallbackCoordinator) this.setFallbackState(runtime.fallbackCoordinator.cancel());
+    if (runtime.fallbackSessionId) {
+      await this.fallbackAction({ action: "cancel", sessionId: runtime.fallbackSessionId });
+    }
     return this.envelope();
   }
 
-  private beginFallback(resolution: PlaybackSourceResolution, selected: PlayableCandidate): void {
+  private async beginFallback(resolution: PlaybackSourceResolution, selected: PlayableCandidate): Promise<void> {
     const runtime = this.requireRuntime();
     const candidates = resolution.candidates
       .filter((candidate) => candidate.playable && candidateCandidateId(candidate) !== candidateCandidateId(selected))
       .map(fallbackCandidate);
-    runtime.fallbackCoordinator = new PlaybackFallbackCoordinator({
+    runtime.fallbackSessionId = runtime.sessionId;
+    await this.fallbackAction({
+      action: "begin",
+      sessionId: runtime.fallbackSessionId,
+      candidates,
       mode: "prompt",
       maxAttempts: 3,
       totalTimeoutMs: 45_000,
     });
-    runtime.fallbackCoordinator.begin(candidates);
-    this.setFallbackState(runtime.fallbackCoordinator.state);
   }
 
   private async handlePlaybackFailure(body: Record<string, unknown>): Promise<void> {
     const runtime = this.requireRuntime();
-    const coordinator = runtime.fallbackCoordinator;
-    if (!coordinator) return;
-    if (coordinator.state.status === "trying") coordinator.finishAttempt(false);
-    const decision = coordinator.trigger(
-      "player-fatal",
-      stringValue(body.error ?? body.reason ?? body.event) || "player playback failed",
-    );
-    this.setFallbackState(coordinator.state);
-    if (decision.kind === "attempt") {
-      if (runtime.fallbackResolution) await this.attemptFallback(decision.candidate);
-      else await this.attemptPlaybackFallback(decision.candidate);
+    if (!runtime.fallbackSessionId) return;
+    if (runtime.featureState.fallback?.status === "trying") {
+      await this.fallbackAction({ action: "finish", sessionId: runtime.fallbackSessionId, success: false });
+    }
+    const snapshot = await this.fallbackAction({
+      action: "trigger",
+      sessionId: runtime.fallbackSessionId,
+      trigger: "player-fatal",
+      reason: stringValue(body.error ?? body.reason ?? body.event) || "player playback failed",
+    });
+    if (snapshot.decision.kind === "attempt" && snapshot.decision.candidate) {
+      if (runtime.fallbackResolution) await this.attemptFallback(snapshot.decision.candidate);
+      else await this.attemptPlaybackFallback(snapshot.decision.candidate);
     }
   }
 
-  private beginPlaybackFallback(lineIndex: number, episodeIndex: number): void {
+  private async beginPlaybackFallback(lineIndex: number, episodeIndex: number): Promise<void> {
     const runtime = this.requireRuntime();
     const requests = new Map<string, { lineIndex: number; episodeIndex: number }>();
-    const candidates: FallbackCandidate[] = [];
+    const candidates: PlaybackFallbackCandidate[] = [];
     for (const line of runtime.playbackCatalog?.lines ?? []) {
       for (const episode of line.episodes) {
         if (line.index === lineIndex && episode.index === episodeIndex) continue;
@@ -1052,44 +1062,48 @@ export class TauriRendererApi {
       }
     }
     runtime.playbackFallbackRequests = requests;
-    runtime.fallbackCoordinator = new PlaybackFallbackCoordinator({
+    runtime.fallbackSessionId = runtime.sessionId;
+    await this.fallbackAction({
+      action: "begin",
+      sessionId: runtime.fallbackSessionId,
+      candidates,
       mode: "prompt",
       maxAttempts: 3,
       totalTimeoutMs: 45_000,
     });
-    runtime.fallbackCoordinator.begin(candidates);
-    this.setFallbackState(runtime.fallbackCoordinator.state);
   }
 
-  private async attemptPlaybackFallback(candidate: FallbackCandidate): Promise<RendererEnvelope> {
+  private async attemptPlaybackFallback(candidate: PlaybackFallbackCandidate): Promise<RendererEnvelope> {
     const runtime = this.requireRuntime();
     const request = runtime.playbackFallbackRequests.get(candidate.id);
     if (!request) {
-      runtime.fallbackCoordinator?.stop("fallback candidate is unavailable");
-      this.setFallbackState(runtime.fallbackCoordinator?.state ?? null);
+      if (runtime.fallbackSessionId) {
+        await this.fallbackAction({ action: "stop", sessionId: runtime.fallbackSessionId, reason: "fallback candidate is unavailable" });
+      }
       return this.envelope();
     }
     try {
       await this.stopPlayer(true);
       await this.play(request);
-      this.setFallbackState(runtime.fallbackCoordinator?.state ?? null);
       return this.envelope();
     } catch (error) {
-      runtime.fallbackCoordinator?.finishAttempt(false);
-      this.setFallbackState(runtime.fallbackCoordinator?.state ?? null);
+      if (runtime.fallbackSessionId) {
+        await this.fallbackAction({ action: "finish", sessionId: runtime.fallbackSessionId, success: false });
+      }
       throw error;
     }
   }
 
-  private async attemptFallback(candidate: FallbackCandidate): Promise<RendererEnvelope> {
+  private async attemptFallback(candidate: PlaybackFallbackCandidate): Promise<RendererEnvelope> {
     const runtime = this.requireRuntime();
     const resolution = runtime.fallbackResolution;
     const selected = resolution?.candidates.find(
       (item) => candidateCandidateId(item) === candidate.id,
     );
     if (!selected?.playable) {
-      runtime.fallbackCoordinator?.stop("fallback candidate is unavailable");
-      this.setFallbackState(runtime.fallbackCoordinator?.state ?? null);
+      if (runtime.fallbackSessionId) {
+        await this.fallbackAction({ action: "stop", sessionId: runtime.fallbackSessionId, reason: "fallback candidate is unavailable" });
+      }
       return this.envelope();
     }
     try {
@@ -1100,13 +1114,21 @@ export class TauriRendererApi {
         preserveFallback: true,
       });
       await this.play({ lineIndex: 0, episodeIndex: 0 });
-      this.setFallbackState(runtime.fallbackCoordinator?.state ?? null);
       return this.envelope();
     } catch (error) {
-      runtime.fallbackCoordinator?.finishAttempt(false);
-      this.setFallbackState(runtime.fallbackCoordinator?.state ?? null);
+      if (runtime.fallbackSessionId) {
+        await this.fallbackAction({ action: "finish", sessionId: runtime.fallbackSessionId, success: false });
+      }
       throw error;
     }
+  }
+
+  private async fallbackAction(
+    payload: Omit<PlaybackFallbackPayload, "sessionId"> & { sessionId: string },
+  ): Promise<PlaybackFallbackSnapshot> {
+    const snapshot = await requestPlaybackFallback(payload);
+    this.setFallbackState(snapshot.state);
+    return snapshot;
   }
 
   private setFallbackState(state: PlaybackFallbackState | null): void {
@@ -1263,7 +1285,7 @@ export class TauriRendererApi {
 
   private applyDesktopSnapshot(snapshot: { state: Record<string, unknown> }): void {
     const runtime = this.requireRuntime();
-    const localFallback = runtime.fallbackCoordinator?.state;
+    const localFallback = runtime.featureState.fallback;
     runtime.featureState = {
       ...runtime.featureState,
       ...(snapshot.state as Partial<ApiSpiderState>),
@@ -1911,7 +1933,7 @@ function candidateCandidateId(candidate: PlayableCandidate): string {
   return `${candidate.siteKey}:${vodId}`;
 }
 
-function fallbackCandidate(candidate: PlayableCandidate): FallbackCandidate {
+function fallbackCandidate(candidate: PlayableCandidate): PlaybackFallbackCandidate {
   const vodName = String(candidate.vod.vod_name ?? candidate.vod.name ?? "").trim();
   return {
     id: candidateCandidateId(candidate),

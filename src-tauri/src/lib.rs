@@ -15,6 +15,7 @@ mod jianpian;
 mod live_core;
 mod mpv_bridge;
 mod native_sources;
+mod playback_fallback;
 mod playback_proxy;
 mod playback_sources;
 mod player_window;
@@ -453,6 +454,60 @@ async fn backend_playback_sources(
         sequence: request.sequence,
         ok: true,
         payload: snapshot,
+    })
+}
+
+#[tauri::command]
+fn backend_playback_fallback(
+    state: tauri::State<'_, playback_fallback::PlaybackFallbackRegistry>,
+    request: BackendRequest,
+) -> Result<BackendResponse<playback_fallback::PlaybackFallbackResult>, BackendFailure> {
+    if request.version != BACKEND_RPC_VERSION {
+        return Err(failure(
+            &request,
+            BackendError {
+                category: BackendErrorCategory::InvalidConfig,
+                reason_code: "RPC_VERSION_UNSUPPORTED".to_string(),
+                retryable: false,
+                diagnostic_id: "rpc-invalid-version".to_string(),
+                safe_details: std::collections::BTreeMap::new(),
+            },
+        ));
+    }
+    let payload: playback_fallback::PlaybackFallbackPayload =
+        serde_json::from_value(request.payload.clone()).map_err(|error| {
+            failure(
+                &request,
+                BackendError {
+                    category: BackendErrorCategory::InvalidConfig,
+                    reason_code: "PLAYBACK_FALLBACK_PAYLOAD_INVALID".to_string(),
+                    retryable: false,
+                    diagnostic_id: "playback-fallback-payload-invalid".to_string(),
+                    safe_details: [("error".to_string(), error.to_string())]
+                        .into_iter()
+                        .collect(),
+                },
+            )
+        })?;
+    let result = state.handle(payload).map_err(|error| {
+        failure(
+            &request,
+            BackendError {
+                category: BackendErrorCategory::PlaybackFailed,
+                reason_code: "PLAYBACK_FALLBACK_ACTION_FAILED".to_string(),
+                retryable: false,
+                diagnostic_id: "playback-fallback-action-failed".to_string(),
+                safe_details: [("error".to_string(), error)].into_iter().collect(),
+            },
+        )
+    })?;
+    Ok(BackendResponse {
+        version: BACKEND_RPC_VERSION.to_string(),
+        request_id: request.request_id,
+        session_id: request.session_id,
+        sequence: request.sequence,
+        ok: true,
+        payload: result,
     })
 }
 
@@ -1532,6 +1587,7 @@ pub fn run() {
             backend_config_catalog,
             backend_source_session,
             backend_playback_sources,
+            backend_playback_fallback,
             backend_webview_sniffer,
             backend_runtime_capability,
             backend_playback_proxy,
@@ -1548,6 +1604,7 @@ pub fn run() {
             backend_quickjs_sidecar
         ])
         .manage(source_session::SourceSessionState::default())
+        .manage(playback_fallback::PlaybackFallbackRegistry::default())
         .manage(playback_proxy::PlaybackProxyState::default())
         .manage(mpv_bridge::MpvState::default())
         .manage(live_core::LiveCoreState::default())

@@ -290,6 +290,67 @@ Tauri 渲染器对应的业务入口是：
 
 服务会限制站点数最多 128 个，并跳过 QuickJS 隔离会话以外的跨源 QuickJS 调用。返回值包含 `query`、`searchedSites`、`successfulSites`、`failedSites`、`candidates` 和 `diagnostics`；候选通常包含站点、标准化后的 `vod`、播放线路、评分、是否可播放等字段。
 
+### 4.5a `backend_playback_fallback`
+
+该命令承载 Tauri 播放链路的回退策略状态，不由 renderer 维护协调器实例。`sessionId` 是播放业务会话 ID；同一回退流程的所有动作必须复用它。
+
+请求 payload：
+
+```json
+{
+  "action": "begin",
+  "sessionId": "playback-session-1",
+  "mode": "prompt",
+  "maxAttempts": 3,
+  "totalTimeoutMs": 45000,
+  "candidates": [
+    {
+      "id": "alternate:movie-1",
+      "label": "Alternate - Movie",
+      "kind": "same-content",
+      "sourceId": "alternate",
+      "lineKey": "0"
+    }
+  ]
+}
+```
+
+`action` 支持：
+
+| action | 作用 | 关键字段 |
+| --- | --- | --- |
+| `begin` | 创建或重置回退流程，并对候选去重、排序和限额 | `candidates`、`mode`、`maxAttempts`、`totalTimeoutMs` |
+| `snapshot` | 读取当前状态 | 无 |
+| `set-mode` | 设置 `off`、`prompt` 或 `auto` | `mode` |
+| `trigger` | 报告播放失败并返回 `none`、`prompt`、`attempt` 或 `stopped` 决策 | `trigger`、`reason` |
+| `approve` | 批准当前 `prompt` 的下一候选 | 无 |
+| `finish` | 结束当前尝试 | `success` |
+| `cancel` / `stop` | 取消或停止回退 | 可选 `reason` |
+| `clear` | 清理该播放会话的后端状态 | 无 |
+
+成功 payload：
+
+```json
+{
+  "state": {
+    "mode": "prompt",
+    "status": "prompt",
+    "trigger": "player-fatal",
+    "reason": "HLS_SEGMENT_FAILED",
+    "current": null,
+    "next": { "id": "alternate:movie-1", "label": "Alternate - Movie", "kind": "same-content" },
+    "attempts": 0,
+    "maxAttempts": 3,
+    "tried": [],
+    "startedAt": 1700000000000,
+    "deadlineAt": 1700000045000
+  },
+  "decision": { "kind": "prompt", "candidate": { "id": "alternate:movie-1", "label": "Alternate - Movie", "kind": "same-content" } }
+}
+```
+
+`user-pause`、`seek`、`single-buffer` 和 `short-fluctuation` 只返回忽略决策，不会推进回退。状态机会强制最大尝试次数和总超时；候选标签、ID 和原因会做长度及敏感路径清理。该接口只负责策略状态，不负责解析、WebView2 sniff、LocalProxy 或 mpv 的实际启动。
+
 ### 4.5 `backend_runtime_capability`
 
 请求字段：`api` 必填；`ext`、`scriptBytes`、`allowedOrigins`、`artifactName`、`artifactBase64` 可选。

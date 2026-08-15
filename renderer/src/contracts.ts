@@ -164,6 +164,79 @@ export interface PlaybackSourceResolvePayload {
   sites: PlaybackSourceResolveSite[];
 }
 
+export type PlaybackFallbackMode = "off" | "prompt" | "auto";
+
+export type PlaybackFallbackTrigger =
+  | "player-content-failure"
+  | "parse-failure"
+  | "proxy-fatal"
+  | "player-fatal"
+  | "startup-timeout"
+  | "segment-errors"
+  | "user-pause"
+  | "seek"
+  | "single-buffer"
+  | "short-fluctuation";
+
+export type PlaybackFallbackAction =
+  | "begin"
+  | "snapshot"
+  | "set-mode"
+  | "trigger"
+  | "approve"
+  | "finish"
+  | "cancel"
+  | "stop"
+  | "clear";
+
+export interface PlaybackFallbackCandidate {
+  id: string;
+  label: string;
+  kind: "retry-current" | "reparse-current" | "same-content" | "healthier";
+  healthScore?: number | null;
+  sourceId?: string;
+  lineKey?: string;
+  parseAttempt?: number;
+  errorCode?: string;
+}
+
+export interface PlaybackFallbackState {
+  mode: PlaybackFallbackMode;
+  status: "idle" | "prompt" | "trying" | "recovered" | "cancelled" | "stopped" | "disabled";
+  trigger: PlaybackFallbackTrigger | null;
+  reason: string | null;
+  current: PlaybackFallbackCandidate | null;
+  next: PlaybackFallbackCandidate | null;
+  attempts: number;
+  maxAttempts: number;
+  tried: string[];
+  startedAt: number | null;
+  deadlineAt: number | null;
+}
+
+export interface PlaybackFallbackPayload {
+  action: PlaybackFallbackAction;
+  sessionId: string;
+  candidates?: PlaybackFallbackCandidate[];
+  mode?: PlaybackFallbackMode;
+  trigger?: PlaybackFallbackTrigger;
+  reason?: string;
+  success?: boolean;
+  maxAttempts?: number;
+  totalTimeoutMs?: number;
+}
+
+export interface PlaybackFallbackDecision {
+  kind: "none" | "prompt" | "attempt" | "stopped";
+  candidate?: PlaybackFallbackCandidate;
+  reason?: string;
+}
+
+export interface PlaybackFallbackSnapshot {
+  state: PlaybackFallbackState;
+  decision: PlaybackFallbackDecision;
+}
+
 export interface RuntimeCapabilityPayload {
   api: string;
   ext?: string;

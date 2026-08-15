@@ -1,11 +1,13 @@
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
+$root = $PSScriptRoot
 $installer = Join-Path $root "qx-test-installer.exe"
 $node = Join-Path $root "node.exe"
 $canary = Join-Path $root "scripts\tauri-cdp-canary.mjs"
 $artifacts = Join-Path $root "artifacts"
 $evidence = Join-Path $artifacts "tauri-hls-20s-local-e2e.json"
 $log = Join-Path $artifacts "tauri-hls-20s-local-e2e.log"
+$stdout = Join-Path $artifacts "tauri-hls-20s-local-e2e.stdout.log"
+$stderr = Join-Path $artifacts "tauri-hls-20s-local-e2e.stderr.log"
 $work = Join-Path $env:TEMP ("qx-jianpian-e2e-" + [Guid]::NewGuid().ToString("N"))
 $install = Join-Path $work "installed"
 $exitCode = 1
@@ -38,8 +40,11 @@ try {
         "--playback",
         "--output", "artifacts\tauri-hls-20s-local-e2e.json"
     )
-    & $node @arguments *> $log
-    $exitCode = $LASTEXITCODE
+    $canaryProcess = Start-Process -FilePath $node -ArgumentList $arguments -WorkingDirectory $root -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    $exitCode = $canaryProcess.ExitCode
+    $stdoutText = if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout -Raw } else { "" }
+    $stderrText = if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr -Raw } else { "" }
+    Set-Content -LiteralPath $log -Value ($stdoutText + "`r`n" + $stderrText) -Encoding utf8
 } catch {
     $exitCode = 1
     New-Item -ItemType Directory -Force -Path $artifacts | Out-Null

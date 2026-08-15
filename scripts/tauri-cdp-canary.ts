@@ -114,13 +114,29 @@ try {
       card.click();
       return card.getAttribute('data-od-id');
     })()`);
-    await waitForExpression(socket, `Boolean(document.querySelector('[data-testid="detail-drawer"]'))`, 120);
+    try {
+      await waitForExpression(socket, `Boolean(document.querySelector('[data-testid="detail-drawer"], [data-testid="core-media-detail-page"]'))`, 120);
+    } catch (error) {
+      const diagnostic = await evaluate(socket, `JSON.stringify({
+        currentUrl: location.href,
+        pending: document.querySelector('#vue-renderer')?.getAttribute('data-pending') ?? null,
+        renderer: document.querySelector('#vue-renderer')?.outerHTML.slice(0, 12000) ?? null,
+        errorPanel: document.querySelector('[data-testid="error"]')?.innerText ?? null,
+        diagnostics: [...document.querySelectorAll('[data-testid="diagnostic-panel"], [data-testid="error-diagnostic"]')]
+          .map((element) => element.innerText)
+          .join("\\n"),
+        card: [...document.querySelectorAll('[data-testid="vod-card"]')]
+          .find((candidate) => candidate.textContent?.includes(${JSON.stringify(searchKey)}))?.outerHTML.slice(0, 5000) ?? null,
+        bodyText: document.body.innerText.slice(0, 12000),
+      })`);
+      throw new Error(`${error instanceof Error ? error.message : String(error)}; diagnostic=${String(diagnostic)}`);
+    }
     await waitForExpression(socket, `(() => {
-      const button = document.querySelector('[data-action="play"]');
+      const button = document.querySelector('[data-action="play"], [data-action="core-detail-play"]');
       return button instanceof HTMLButtonElement && !button.disabled;
     })()`, 120);
     await evaluate(socket, `(() => {
-      const button = document.querySelector('[data-action="play"]');
+      const button = document.querySelector('[data-action="play"], [data-action="core-detail-play"]');
       if (!(button instanceof HTMLButtonElement)) throw new Error('play button missing');
       button.click();
       return true;

@@ -22,6 +22,12 @@ if not exist "%ROOT%scripts\tauri-clean-win11-e2e.mjs" (
   pause
   exit /b 4
 )
+if not exist "%ROOT%artifacts\" mkdir "%ROOT%artifacts"
+if not exist "%ROOT%artifacts\" (
+  echo E2E_ARTIFACTS_DIRECTORY_MISSING: %ROOT%artifacts
+  pause
+  exit /b 5
+)
 
 "%ROOT%node.exe" "%ROOT%scripts\tauri-clean-win11-e2e.mjs" > "%E2E_LOG%" 2>&1
 set "EXIT_CODE=%ERRORLEVEL%"

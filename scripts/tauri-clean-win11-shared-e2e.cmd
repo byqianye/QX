@@ -29,6 +29,7 @@ if not exist "%ROOT%artifacts\" (
   exit /b 5
 )
 
+echo STARTING_CLEAN_WIN11_E2E
 "%ROOT%node.exe" "%ROOT%scripts\tauri-clean-win11-e2e.mjs" > "%E2E_LOG%" 2>&1
 set "EXIT_CODE=%ERRORLEVEL%"
 
@@ -41,5 +42,6 @@ if "%EXIT_CODE%"=="0" (
 ) else (
   echo CLEAN_WIN11_E2E_FAILED: %EXIT_CODE%
 )
+if exist "%E2E_LOG%" type "%E2E_LOG%"
 pause
 exit /b %EXIT_CODE%

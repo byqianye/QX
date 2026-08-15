@@ -82,3 +82,12 @@ self-hosted, windows, x64, qx-clean-win11
 3. 不让公开 Pull Request 使用这个 runner；发布工作流只响应维护者推送的版本标签。
 
 发布工作流会在同一台 Win11 runner 上重新生成当前签名包的 clean-install、真实 Jianpian HLS 20 秒和 fresh-user upgrade 证据，然后才运行严格门禁。
+
+注册脚本位于 `scripts/setup-qx-clean-win11-runner.ps1`。在 GitHub 仓库 Settings → Actions → Runners → New self-hosted runner 取得短期 registration token，在虚拟机管理员 PowerShell 中执行：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+& .\setup-qx-clean-win11-runner.ps1 -RegistrationToken "<短期 token>"
+```
+
+脚本只注册 runner 和安装服务；它不会删除 QX 用户数据。注册成功后在 GitHub Runner 列表确认标签 `qx-clean-win11` 为 Idle，再配置 SignPath 的四个 Secrets，最后推送版本标签。

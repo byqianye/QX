@@ -5,6 +5,7 @@ set "ROOT=%~dp0"
 set "QX_TAURI_CLEAN_E2E=1"
 set "QX_TAURI_NSIS=%ROOT%qx-test-installer.exe"
 set "QX_TAURI_EVIDENCE_PATH=artifacts\tauri-clean-win11-local-e2e.json"
+set "E2E_LOG=%ROOT%artifacts\tauri-clean-win11-local-e2e.log"
 
 if not exist "%QX_TAURI_NSIS%" (
   echo TEST_INSTALLER_MISSING: %QX_TAURI_NSIS%
@@ -22,8 +23,12 @@ if not exist "%ROOT%scripts\tauri-clean-win11-e2e.mjs" (
   exit /b 4
 )
 
-"%ROOT%node.exe" "%ROOT%scripts\tauri-clean-win11-e2e.mjs"
+"%ROOT%node.exe" "%ROOT%scripts\tauri-clean-win11-e2e.mjs" > "%E2E_LOG%" 2>&1
 set "EXIT_CODE=%ERRORLEVEL%"
+
+if exist "%ROOT%artifacts\tauri-clean-win11-local-e2e.json" curl.exe --fail --silent --show-error -X POST --data-binary "@%ROOT%artifacts\tauri-clean-win11-local-e2e.json" "http://192.168.241.1:8766/upload/evidence.json"
+if exist "%E2E_LOG%" curl.exe --fail --silent --show-error -X POST --data-binary "@%E2E_LOG%" "http://192.168.241.1:8766/upload/log.txt"
+
 echo.
 if "%EXIT_CODE%"=="0" (
   echo CLEAN_WIN11_E2E_PASSED

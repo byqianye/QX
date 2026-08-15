@@ -14,10 +14,9 @@ import {
   requestPlaybackProxy,
   requestPlaybackSources,
   requestPlayerWindow,
-  requestQuickJsSidecar,
-  requestRuntimeCapability,
+  requestPlaybackStart,
+  requestQuickJsSession,
   requestSourceSession,
-  requestWebviewSniffer,
 } from "./tauri-rpc.js";
 import type {
   ConfigCatalogPayload,
@@ -31,13 +30,11 @@ import type {
   PushSnapshot,
   EpgSnapshot,
   LiveSnapshot,
-  PlaybackProxyPayload,
   PlaybackFallbackCandidate,
   PlaybackFallbackPayload,
   PlaybackFallbackSnapshot,
   PlaybackFallbackState,
   PlaybackSourceResolvePayload,
-  WebviewSnifferPayload,
   SourceCapabilities,
   SourceSessionPayload,
   SourceSessionResult,
@@ -610,42 +607,19 @@ export class TauriRendererApi {
 
   private async openQuickJsSession(site: TauriSite): Promise<void> {
     const runtime = this.requireRuntime();
-    const script = quickJsScript(site);
-    const allowedOrigins = quickJsAllowedOrigins(script, site.ext);
-    const scriptBytes = /^https?:\/\//iu.test(script)
-      ? undefined
-      : new TextEncoder().encode(script).byteLength;
-    const capability = await requestRuntimeCapability({
+    const open = await requestQuickJsSession({
+      action: "open",
+      sessionId: runtime.sessionId,
+      ...(runtime.sourceId === null ? {} : { sourceId: runtime.sourceId }),
+      siteKey: site.key,
       api: site.api,
+      siteType: site.siteType,
       ...(site.ext === undefined ? {} : { ext: site.ext }),
-      ...(scriptBytes === undefined ? {} : { scriptBytes }),
-      allowedOrigins,
     });
-    if (!capability.supported) throw new Error(capability.reasonCode);
-    await requestComponentManager({ action: "install-default", componentId: "quickjs" });
-    await requestQuickJsSidecar({
-      action: "load",
-      sessionId: runtime.sessionId,
-      script,
-      allowedOrigins,
-    });
-    const methods = record(await requestQuickJsSidecar({
-      action: "capabilities",
-      sessionId: runtime.sessionId,
-    }));
     runtime.quickJs = true;
-    runtime.quickJsMethods = Object.fromEntries(
-      Object.entries(methods).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"),
-    );
-    runtime.capabilities = quickJsCapabilities(runtime);
-    if (runtime.quickJsMethods.init) {
-      await requestQuickJsSidecar({
-        action: "call",
-        sessionId: runtime.sessionId,
-        name: "init",
-        args: [site.ext ?? ""],
-      });
-    }
+    runtime.sourceId = stableSourceId(open.session.sourceId, runtime.sessionId);
+    runtime.quickJsMethods = { ...open.methods };
+    runtime.capabilities = { ...open.session.capabilities };
     runtime.sessionReady = true;
     runtime.import = { ...runtime.import, status: "ready", trusted: true, sessionReady: true };
   }
@@ -794,83 +768,21 @@ export class TauriRendererApi {
     const episode = line?.episodes[episodeIndex];
     if (!line || !episode) throw new Error("TAURI_PLAYBACK_EPISODE_NOT_FOUND");
     if (!runtime.fallbackSessionId) await this.beginPlaybackFallback(lineIndex, episodeIndex);
-    const selectedApi = runtime.selectedSite?.api ?? "";
-    const directCmsEpisode = /^https?:\/\//iu.test(selectedApi) && /^https?:\/\//iu.test(episode.id);
-    const raw = directCmsEpisode
-      ? { parse: 0, url: episode.id, header: {} }
-      : record((await this.sourceRequest({
-        action: "call",
-        sessionId: runtime.sessionId,
-        method: "player",
-        params: { flag: line.name, id: episode.id, vipFlags: [] },
-      })).result);
-    const parse = numberValue(raw.parse, 0);
-    const subtitleValue = raw.subtitles
-      ?? raw.subtitleTracks
-      ?? raw.subtitle
-      ?? runtime.detail?.subtitles
-      ?? runtime.detail?.subtitleTracks;
-    const subtitles = Array.isArray(subtitleValue)
-      ? subtitleValue as NonNullable<PlayerSource["subtitles"]>
-      : [];
-    let url = stringValue(raw.url ?? raw.playUrl ?? raw.link);
-    let headers = headersValue(raw.header ?? raw.headers);
-    if (parse !== 0) {
-      const initialUrl = /^https?:\/\//iu.test(url) ? url : /^https?:\/\//iu.test(episode.id) ? episode.id : "";
-      if (!initialUrl) throw new Error("TAURI_PLAYBACK_SNIFFER_URL_INVALID");
-      const sniffPayload: WebviewSnifferPayload = {
-        action: "sniff",
-        sessionId: runtime.sessionId,
-        ...(runtime.sourceId ? { sourceId: runtime.sourceId } : {}),
-        playbackSessionId: runtime.sessionId,
-        initialUrl,
-        ...(Object.keys(headers).length === 0 ? {} : { headers }),
-        ...(Array.isArray(raw.allowedOrigins)
-          ? {
-              allowedOrigins: raw.allowedOrigins.filter(
-                (origin): origin is string => typeof origin === "string",
-              ),
-            }
-          : {}),
-      };
-      const sniffed = await requestWebviewSniffer(sniffPayload);
-      const media = record(sniffed.media);
-      url = stringValue(media.url);
-      headers = headersValue(media.headers);
-      if (!/^https?:\/\//iu.test(url)) throw new Error("TAURI_PLAYBACK_SNIFFER_MEDIA_INVALID");
-    }
-    if (!/^https?:\/\//iu.test(url)) throw new Error("TAURI_PLAYBACK_URL_INVALID");
-    const proxy = await requestPlaybackProxy({
-      action: "start",
+    const playback = await requestPlaybackStart({
       sessionId: runtime.sessionId,
-      url,
-      ...(Object.keys(headers).length === 0 ? {} : { headers }),
-    } satisfies PlaybackProxyPayload);
-    if (!proxy.proxyUrl) throw new Error("TAURI_PLAYBACK_PROXY_URL_MISSING");
-    const backend = raw.backend === "mpv" || stringValue(raw.format).toLowerCase() === "flv" ? "mpv" : "embedded";
-    if (backend === "mpv") {
-      try {
-        await requestComponentManager({ action: "install-default", componentId: "mpv" });
-        await requestMpv({ action: "start", sessionId: runtime.sessionId, source: proxy.proxyUrl });
-      } catch (error) {
-        await requestPlaybackProxy({ action: "close", sessionId: runtime.sessionId });
-        throw error;
-      }
-    }
+      ...(runtime.sourceId ? { sourceId: runtime.sourceId } : {}),
+      sourceApi: runtime.selectedSite?.api ?? "",
+      ...(runtime.selectedSite?.siteType === undefined ? {} : { siteType: runtime.selectedSite.siteType }),
+      ...(runtime.quickJs ? { engine: "quickjs" as const } : {}),
+      lineName: line.name,
+      episodeId: episode.id,
+      vipFlags: [],
+      fallbackSubtitles: runtime.detail?.subtitles ?? runtime.detail?.subtitleTracks,
+    });
     runtime.proxySessionId = runtime.sessionId;
     runtime.playbackSelection = { lineIndex, episodeIndex };
-    const drm = drmValue(raw.drm);
     runtime.playerSource = {
-      parse,
-      url: proxy.proxyUrl,
-      headers: {},
-      ...(backend === "mpv" ? { backend } : {}),
-      mediaType: proxy.mediaType === "hls" ? "hls" : proxy.mediaType === "dash" ? "dash" : "mp4",
-      ...(drm ? { drm } : {}),
-      ...(typeof raw.playUrl === "string" ? { playUrl: raw.playUrl } : {}),
-      ...(typeof raw.format === "string" ? { format: raw.format } : {}),
-      ...(typeof raw.flag === "string" ? { flag: raw.flag } : {}),
-      ...(subtitles.length > 0 ? { subtitles } : {}),
+      ...(playback.playerSource as unknown as PlayerSource),
     };
     return this.envelope();
   }
@@ -1613,39 +1525,24 @@ export class TauriRendererApi {
   }
 
   private async quickJsRequest(payload: SourceSessionPayload): Promise<SourceSessionResult> {
-    const runtime = this.requireRuntime();
-    if (payload.action !== "call") {
-      if (payload.action === "close") await this.closeQuickJs();
-      return {
-        session: quickJsSnapshot(runtime),
-        ...(payload.method === undefined ? {} : { method: payload.method }),
-        cancelled: payload.action === "cancel",
-      };
-    }
-    const requestedMethod = payload.method ?? "home";
-    const method = requestedMethod === "home" && !runtime.quickJsMethods.home && runtime.quickJsMethods.homeVod
-      ? "homeVod"
-      : requestedMethod;
-    if (!runtime.quickJsMethods[method]) throw new Error(`TAURI_QUICKJS_UNSUPPORTED_METHOD:${requestedMethod}`);
-    const result = await requestQuickJsSidecar({
-      action: "call",
-      sessionId: runtime.sessionId,
-      name: method,
-      args: quickJsArgs(method, payload.params),
+    return requestQuickJsSession({
+      action: payload.action,
+      sessionId: payload.sessionId,
+      ...(payload.sourceId === undefined ? {} : { sourceId: payload.sourceId }),
+      ...(payload.siteKey === undefined ? {} : { siteKey: payload.siteKey }),
+      ...(payload.api === undefined ? {} : { api: payload.api }),
+      ...(payload.siteType === undefined ? {} : { siteType: payload.siteType }),
+      ...(payload.ext === undefined ? {} : { ext: payload.ext }),
+      ...(payload.method === undefined ? {} : { method: payload.method }),
+      ...(payload.params === undefined ? {} : { params: payload.params }),
     });
-    return {
-      session: quickJsSnapshot(runtime),
-      method,
-      result,
-      cancelled: false,
-    };
   }
 
   private async closeQuickJs(): Promise<void> {
     const runtime = this.requireRuntime();
     if (!runtime.quickJs) return;
     try {
-      await requestQuickJsSidecar({ action: "close", sessionId: runtime.sessionId });
+      await requestQuickJsSession({ action: "close", sessionId: runtime.sessionId });
     } finally {
       runtime.quickJs = false;
       runtime.quickJsMethods = {};
@@ -1907,27 +1804,6 @@ function headersValue(value: unknown): Record<string, string> {
   return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
 }
 
-function drmValue(value: unknown): PlayerSource["drm"] | undefined {
-  if (!isRecord(value)) return undefined;
-  const clearKeys = Object.fromEntries(
-    Object.entries(headersValue(value.clearKeys)).map(([keyId, key]) => [
-      normalizeClearKeyHex(keyId),
-      normalizeClearKeyHex(key),
-    ]),
-  );
-  const servers = headersValue(value.servers);
-  if (Object.keys(clearKeys).length === 0 && Object.keys(servers).length === 0) return undefined;
-  return {
-    ...(Object.keys(clearKeys).length === 0 ? {} : { clearKeys }),
-    ...(Object.keys(servers).length === 0 ? {} : { servers }),
-  };
-}
-
-function normalizeClearKeyHex(value: string): string {
-  const compact = value.replaceAll("-", "").toLowerCase();
-  return /^[a-f0-9]{32}$/u.test(compact) ? compact : value;
-}
-
 function candidateCandidateId(candidate: PlayableCandidate): string {
   const vodId = String(candidate.vod.vod_id ?? candidate.vod.id ?? "").trim();
   return `${candidate.siteKey}:${vodId}`;
@@ -1967,80 +1843,6 @@ function inferSiteType(api: string): 0 | 1 | 3 | 4 {
 function isQuickJsSite(api: string): boolean {
   const value = api.trim().toLowerCase();
   return value.startsWith("js:") || /\.m?js(?:[?#].*)?$/iu.test(value);
-}
-
-function quickJsScript(site: TauriSite): string {
-  const api = site.api.trim();
-  if (api.toLowerCase().startsWith("js:")) return api.slice(3).trim();
-  if (/^https?:\/\//iu.test(api)) return api;
-  if (site.ext?.trim()) return site.ext.trim();
-  throw new Error("TAURI_QUICKJS_SCRIPT_REQUIRED");
-}
-
-function quickJsAllowedOrigins(script: string, ext?: string): string[] {
-  const origins = new Set<string>();
-  for (const value of [script, ext ?? ""]) {
-    for (const match of value.matchAll(/https?:\/\/[^\s"'\\]+/giu)) {
-      try {
-        origins.add(new URL(match[0]).origin);
-      } catch {
-        // Ignore URLs embedded in an opaque ext payload; the sidecar remains deny-by-default.
-      }
-    }
-  }
-  return [...origins];
-}
-
-function quickJsArgs(method: string, params: Record<string, unknown> | undefined): unknown[] {
-  const value = params ?? {};
-  switch (method) {
-    case "init":
-      return [stringValue(value.ext)];
-    case "home":
-    case "homeVod":
-      return [Boolean(value.filter)];
-    case "category":
-      return [
-        stringValue(value.typeId ?? value.type_id),
-        numberValue(value.page, 1),
-        Boolean(value.filter),
-        record(value.extend),
-      ];
-    case "search":
-      return [stringValue(value.key ?? value.wd), Boolean(value.quick), numberValue(value.page, 1)];
-    case "detail":
-      return [Array.isArray(value.ids) ? value.ids.map(String) : [stringValue(value.id)]];
-    case "player":
-      return [stringValue(value.flag), stringValue(value.id), Array.isArray(value.vipFlags) ? value.vipFlags.map(String) : []];
-    default:
-      return [];
-  }
-}
-
-function quickJsSnapshot(runtime: TauriRuntimeState): SourceSessionResult["session"] {
-  return {
-    sessionId: runtime.sessionId,
-    sourceId: runtime.sourceId ?? "",
-    ...(runtime.selectedSite?.key === undefined ? {} : { siteKey: runtime.selectedSite.key }),
-    api: runtime.selectedSite?.api ?? "",
-    siteType: runtime.selectedSite?.siteType ?? 3,
-    state: runtime.sessionReady ? "ready" : "closed",
-    capabilities: quickJsCapabilities(runtime),
-  };
-}
-
-function quickJsCapabilities(runtime: TauriRuntimeState): SourceCapabilities {
-  return {
-    home: Boolean(runtime.quickJsMethods.home || runtime.quickJsMethods.homeVod),
-    category: Boolean(runtime.quickJsMethods.category),
-    search: Boolean(runtime.quickJsMethods.search),
-    detail: Boolean(runtime.quickJsMethods.detail),
-    playback: Boolean(runtime.quickJsMethods.player),
-    localProxy: Boolean(runtime.quickJsMethods.localProxy),
-    filters: Boolean(runtime.quickJsMethods.category),
-    pagination: Boolean(runtime.quickJsMethods.category || runtime.quickJsMethods.search),
-    engine: "quickjs",
-  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -17,6 +17,8 @@ import {
   type RuntimeCapabilitySnapshot,
   type PlaybackProxyPayload,
   type PlaybackProxySnapshot,
+  type PlaybackStartPayload,
+  type PlaybackStartResult,
   type WebviewSnifferPayload,
   type WebviewSnifferSnapshot,
   type MpvPayload,
@@ -40,6 +42,8 @@ import {
   type ComponentManagerPayload,
   type ComponentManagerSnapshot,
   type QuickJsSidecarPayload,
+  type QuickJsSessionPayload,
+  type QuickJsSessionResult,
 } from "./contracts.js";
 import type { PlaybackSourceResolution } from "../../src/desktop/playback-source-resolver.js";
 
@@ -210,6 +214,20 @@ export async function requestQuickJsSidecar(payload: QuickJsSidecarPayload): Pro
   return response.payload;
 }
 
+export async function requestQuickJsSession(payload: QuickJsSessionPayload): Promise<QuickJsSessionResult> {
+  if (!isTauriRuntime()) throw new Error("Tauri RPC is unavailable outside the Tauri runtime");
+  const { invoke } = await import("@tauri-apps/api/core");
+  const request = createBackendRequest(payload, crypto.randomUUID(), sessionId, ++sequence);
+  const response = await invoke("backend_quickjs_session", { request });
+  if (isBackendFailure(response)) {
+    throw new Error(`${response.error.category}: ${response.error.reasonCode}`);
+  }
+  if (!isBackendResponse<QuickJsSessionResult>(response)) {
+    throw new Error(`Invalid Tauri response for ${BACKEND_RPC_VERSION}`);
+  }
+  return response.payload;
+}
+
 export async function requestPlaybackProxy(payload: PlaybackProxyPayload): Promise<PlaybackProxySnapshot> {
   if (!isTauriRuntime()) throw new Error("Tauri RPC is unavailable outside the Tauri runtime");
   const { invoke } = await import("@tauri-apps/api/core");
@@ -219,6 +237,20 @@ export async function requestPlaybackProxy(payload: PlaybackProxyPayload): Promi
     throw new Error(`${response.error.category}: ${response.error.reasonCode}`);
   }
   if (!isBackendResponse<PlaybackProxySnapshot>(response)) {
+    throw new Error(`Invalid Tauri response for ${BACKEND_RPC_VERSION}`);
+  }
+  return response.payload;
+}
+
+export async function requestPlaybackStart(payload: PlaybackStartPayload): Promise<PlaybackStartResult> {
+  if (!isTauriRuntime()) throw new Error("Tauri RPC is unavailable outside the Tauri runtime");
+  const { invoke } = await import("@tauri-apps/api/core");
+  const request = createBackendRequest(payload, crypto.randomUUID(), sessionId, ++sequence);
+  const response = await invoke("backend_playback_start", { request });
+  if (isBackendFailure(response)) {
+    throw new Error(`${response.error.category}: ${response.error.reasonCode}`);
+  }
+  if (!isBackendResponse<PlaybackStartResult>(response)) {
     throw new Error(`Invalid Tauri response for ${BACKEND_RPC_VERSION}`);
   }
   return response.payload;

@@ -270,6 +270,22 @@ export interface QuickJsSidecarPayload {
   args?: unknown[];
 }
 
+export interface QuickJsSessionPayload {
+  action: "open" | "call" | "cancel" | "close" | "snapshot";
+  sessionId: string;
+  sourceId?: string;
+  siteKey?: string;
+  api?: string;
+  siteType?: 0 | 1 | 3 | 4;
+  ext?: string;
+  method?: SourceSessionPayload["method"];
+  params?: Record<string, unknown>;
+}
+
+export interface QuickJsSessionResult extends SourceSessionResult {
+  methods: Record<string, boolean>;
+}
+
 export interface PlaybackProxyPayload {
   action: "start" | "close";
   sessionId: string;
@@ -283,6 +299,24 @@ export interface PlaybackProxySnapshot {
   mediaType?: "hls" | "dash" | "progressive";
   state: "ready" | "closed";
   reasonCode?: string;
+}
+
+export interface PlaybackStartPayload {
+  sessionId: string;
+  sourceId?: string;
+  sourceApi: string;
+  siteType?: 0 | 1 | 3 | 4;
+  engine?: "http" | "native" | "quickjs";
+  lineName: string;
+  episodeId: string;
+  vipFlags?: string[];
+  fallbackSubtitles?: unknown;
+}
+
+export interface PlaybackStartResult {
+  playerSource: Record<string, unknown>;
+  backend: "embedded" | "mpv";
+  proxy: PlaybackProxySnapshot;
 }
 
 export interface WebviewSnifferPayload {

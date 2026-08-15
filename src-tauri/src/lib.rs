@@ -18,9 +18,11 @@ mod native_sources;
 mod playback_fallback;
 mod playback_proxy;
 mod playback_sources;
+mod playback_start;
 mod player_window;
 mod push_core;
 mod quickjs_bridge;
+mod quickjs_session;
 mod runtime_capability;
 mod source_session;
 mod subtitles;
@@ -612,6 +614,86 @@ fn backend_runtime_capability(
         sequence: request.sequence,
         ok: true,
         payload: runtime_capability::probe(&payload),
+    })
+}
+
+#[tauri::command]
+async fn backend_playback_start(
+    app: AppHandle,
+    source_state: tauri::State<'_, source_session::SourceSessionState>,
+    quickjs_state: tauri::State<'_, quickjs_session::QuickJsSessionState>,
+    quickjs_sidecar: tauri::State<'_, quickjs_bridge::QuickJsSidecarState>,
+    sniffer_state: tauri::State<'_, webview_sniffer::WebviewSnifferState>,
+    proxy_state: tauri::State<'_, playback_proxy::PlaybackProxyState>,
+    mpv_state: tauri::State<'_, mpv_bridge::MpvState>,
+    request: BackendRequest,
+) -> Result<BackendResponse<playback_start::PlaybackStartResult>, BackendFailure> {
+    if request.version != BACKEND_RPC_VERSION {
+        return Err(failure(
+            &request,
+            BackendError {
+                category: BackendErrorCategory::InvalidConfig,
+                reason_code: "RPC_VERSION_UNSUPPORTED".to_string(),
+                retryable: false,
+                diagnostic_id: "rpc-invalid-version".to_string(),
+                safe_details: std::collections::BTreeMap::new(),
+            },
+        ));
+    }
+    let payload: playback_start::PlaybackStartPayload =
+        serde_json::from_value(request.payload.clone()).map_err(|error| {
+            failure(
+                &request,
+                BackendError {
+                    category: BackendErrorCategory::InvalidConfig,
+                    reason_code: "PLAYBACK_START_PAYLOAD_INVALID".to_string(),
+                    retryable: false,
+                    diagnostic_id: "playback-start-payload-invalid".to_string(),
+                    safe_details: [("message".to_string(), error.to_string())]
+                        .into_iter()
+                        .collect(),
+                },
+            )
+        })?;
+    let result = playback_start::start(
+        &app,
+        &source_state,
+        &quickjs_state,
+        &quickjs_sidecar,
+        &sniffer_state,
+        &proxy_state,
+        &mpv_state,
+        &payload,
+    )
+    .await
+    .map_err(|error| {
+        let (category, reason_code, retryable, message) = playback_start::error_fields(error);
+        let category = match category.as_str() {
+            "UnsupportedRuntime" => BackendErrorCategory::UnsupportedRuntime,
+            "SourceUnavailable" => BackendErrorCategory::SourceUnavailable,
+            "ComponentMissing" => BackendErrorCategory::ComponentMissing,
+            "ComponentUntrusted" => BackendErrorCategory::ComponentUntrusted,
+            "PlaybackFailed" => BackendErrorCategory::PlaybackFailed,
+            _ => BackendErrorCategory::InvalidConfig,
+        };
+        failure(
+            &request,
+            BackendError {
+                category,
+                reason_code,
+                retryable,
+                diagnostic_id: "playback-start-error".to_string(),
+                safe_details: [("message".to_string(), message)].into_iter().collect(),
+            },
+        )
+    })?;
+    Ok(BackendResponse {
+        version: BACKEND_RPC_VERSION.to_string(),
+        request_id: request.request_id,
+        session_id: request.session_id,
+        sequence: request.sequence,
+        ok: true,
+        payload: result,
     })
 }
 
@@ -1510,6 +1592,117 @@ fn backend_quickjs_sidecar(
     })
 }
 
+#[tauri::command]
+fn backend_quickjs_session(
+    app: AppHandle,
+    state: tauri::State<'_, quickjs_session::QuickJsSessionState>,
+    sidecar: tauri::State<'_, quickjs_bridge::QuickJsSidecarState>,
+    request: BackendRequest,
+) -> Result<BackendResponse<quickjs_session::QuickJsSessionResult>, BackendFailure> {
+    if request.version != BACKEND_RPC_VERSION {
+        return Err(failure(
+            &request,
+            BackendError {
+                category: BackendErrorCategory::InvalidConfig,
+                reason_code: "RPC_VERSION_UNSUPPORTED".to_string(),
+                retryable: false,
+                diagnostic_id: "rpc-invalid-version".to_string(),
+                safe_details: std::collections::BTreeMap::new(),
+            },
+        ));
+    }
+    let payload: quickjs_session::QuickJsSessionPayload =
+        serde_json::from_value(request.payload.clone()).map_err(|error| {
+            failure(
+                &request,
+                BackendError {
+                    category: BackendErrorCategory::InvalidConfig,
+                    reason_code: "QUICKJS_SESSION_PAYLOAD_INVALID".to_string(),
+                    retryable: false,
+                    diagnostic_id: "quickjs-session-payload-invalid".to_string(),
+                    safe_details: [("message".to_string(), error.to_string())]
+                        .into_iter()
+                        .collect(),
+                },
+            )
+        })?;
+    let result = state.handle(&app, &sidecar, &payload).map_err(|error| {
+        let (category, reason_code, retryable, message) = match error {
+            quickjs_session::QuickJsSessionError::Invalid(message) => (
+                BackendErrorCategory::InvalidConfig,
+                "QUICKJS_SESSION_INVALID".to_string(),
+                false,
+                message,
+            ),
+            quickjs_session::QuickJsSessionError::Unsupported { code, message } => (
+                BackendErrorCategory::UnsupportedRuntime,
+                code,
+                false,
+                message,
+            ),
+            quickjs_session::QuickJsSessionError::NotFound => (
+                BackendErrorCategory::SourceUnavailable,
+                "QUICKJS_SESSION_NOT_FOUND".to_string(),
+                false,
+                "QuickJS session was not found".to_string(),
+            ),
+            quickjs_session::QuickJsSessionError::Component(error) => (
+                match &error {
+                    component_manager::ComponentManagerError::Invalid(_) => {
+                        BackendErrorCategory::InvalidConfig
+                    }
+                    component_manager::ComponentManagerError::Untrusted(_) => {
+                        BackendErrorCategory::ComponentUntrusted
+                    }
+                    component_manager::ComponentManagerError::Storage(_) => {
+                        BackendErrorCategory::ComponentMissing
+                    }
+                },
+                error.reason_code().to_string(),
+                matches!(error, component_manager::ComponentManagerError::Storage(_)),
+                error.message(),
+            ),
+            quickjs_session::QuickJsSessionError::Sidecar(error) => {
+                let (reason_code, message, retryable) = quickjs_bridge::error_fields(error);
+                (
+                    if reason_code == "QUICKJS_INVALID_REQUEST" {
+                        BackendErrorCategory::InvalidConfig
+                    } else {
+                        BackendErrorCategory::SourceUnavailable
+                    },
+                    reason_code,
+                    retryable,
+                    message,
+                )
+            }
+            quickjs_session::QuickJsSessionError::Storage(message) => (
+                BackendErrorCategory::ComponentMissing,
+                "QUICKJS_SESSION_STORAGE_FAILED".to_string(),
+                true,
+                message,
+            ),
+        };
+        failure(
+            &request,
+            BackendError {
+                category,
+                reason_code,
+                retryable,
+                diagnostic_id: "quickjs-session-error".to_string(),
+                safe_details: [("message".to_string(), message)].into_iter().collect(),
+            },
+        )
+    })?;
+    Ok(BackendResponse {
+        version: BACKEND_RPC_VERSION.to_string(),
+        request_id: request.request_id,
+        session_id: request.session_id,
+        sequence: request.sequence,
+        ok: true,
+        payload: result,
+    })
+}
+
 fn source_session_failure(
     request: &BackendRequest,
     error: source_session::SourceSessionError,
@@ -1593,6 +1786,7 @@ pub fn run() {
             backend_config_catalog,
             backend_source_session,
             backend_playback_sources,
+            backend_playback_start,
             backend_playback_fallback,
             backend_webview_sniffer,
             backend_runtime_capability,
@@ -1607,7 +1801,8 @@ pub fn run() {
             backend_business_data,
             backend_business_features,
             backend_component_manager,
-            backend_quickjs_sidecar
+            backend_quickjs_sidecar,
+            backend_quickjs_session
         ])
         .manage(source_session::SourceSessionState::default())
         .manage(playback_fallback::PlaybackFallbackRegistry::default())
@@ -1619,6 +1814,7 @@ pub fn run() {
         .manage(push_core::PushState::default())
         .manage(player_window::PlayerWindowState::default())
         .manage(quickjs_bridge::QuickJsSidecarState::default())
+        .manage(quickjs_session::QuickJsSessionState::default())
         .manage(webview_sniffer::WebviewSnifferState::default())
         .run(tauri::generate_context!())
         .expect("error while running QX影视 Tauri application");

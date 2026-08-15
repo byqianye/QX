@@ -13,10 +13,12 @@ const requestEpg = vi.fn();
 const requestSourceSession = vi.fn();
 const requestPlaybackFallback = vi.fn();
 const requestPlaybackProxy = vi.fn();
+const requestPlaybackStart = vi.fn();
 const requestPlaybackSources = vi.fn();
 const requestWebviewSniffer = vi.fn();
 const requestRuntimeCapability = vi.fn();
 const requestQuickJsSidecar = vi.fn();
+const requestQuickJsSession = vi.fn();
 const requestPlayerWindow = vi.fn();
 
 vi.mock("../renderer/src/tauri-rpc.js", () => ({
@@ -34,10 +36,12 @@ vi.mock("../renderer/src/tauri-rpc.js", () => ({
   requestSourceSession,
   requestPlaybackFallback,
   requestPlaybackProxy,
+  requestPlaybackStart,
   requestPlaybackSources,
   requestWebviewSniffer,
   requestRuntimeCapability,
   requestQuickJsSidecar,
+  requestQuickJsSession,
   requestPlayerWindow,
 }));
 
@@ -143,6 +147,37 @@ describe("Tauri renderer vertical slice", () => {
       componentId: "mpv",
       version: "1",
       verified: true,
+    });
+    requestPlaybackStart.mockImplementation(async (payload: { sourceApi: string; episodeId: string; engine?: string; sessionId: string; lineName: string; vipFlags?: string[]; fallbackSubtitles?: unknown }) => {
+      const direct = /^https?:\/\//iu.test(payload.sourceApi) && /^https?:\/\//iu.test(payload.episodeId);
+      const sourceResult = direct
+        ? { parse: 0, url: payload.episodeId, header: {} }
+        : payload.engine === "quickjs"
+          ? (await requestQuickJsSession({ action: "call", sessionId: payload.sessionId, method: "player", params: { flag: payload.lineName, id: payload.episodeId, vipFlags: payload.vipFlags ?? [] } })).result
+          : (await requestSourceSession({ action: "call", sessionId: payload.sessionId, method: "player", params: { flag: payload.lineName, id: payload.episodeId, vipFlags: payload.vipFlags ?? [] } })).result;
+      const raw = sourceResult && typeof sourceResult === "object" && !Array.isArray(sourceResult)
+        ? { ...(sourceResult as Record<string, unknown>) }
+        : {};
+      let url = String(raw.url ?? raw.playUrl ?? raw.link ?? "");
+      if (Number(raw.parse ?? 0) !== 0) {
+        const sniffed = await requestWebviewSniffer({ action: "sniff", sessionId: payload.sessionId, initialUrl: url || payload.episodeId });
+        const media = sniffed.media && typeof sniffed.media === "object" ? sniffed.media as Record<string, unknown> : {};
+        url = String(media.url ?? "");
+      }
+      const mediaType = payload.sourceApi.includes("127.0.0.1") ? "dash" : "hls";
+      const drm = raw.drm && typeof raw.drm === "object" ? raw.drm as Record<string, unknown> : undefined;
+      return {
+        playerSource: {
+          parse: Number(raw.parse ?? 0),
+          url: payload.sourceApi.includes("127.0.0.1") ? "http://127.0.0.1:43123/__qx_playback/cms" : "http://127.0.0.1:43123/__qx_playback/token",
+          headers: {},
+          mediaType,
+          ...(drm ? { drm: { ...drm, clearKeys: Object.fromEntries(Object.entries((drm.clearKeys ?? {}) as Record<string, string>).map(([key, value]) => [key.replaceAll("-", "").toLowerCase(), String(value).replaceAll("-", "").toLowerCase()])) } } : {}),
+          ...(Array.isArray(raw.subtitles) ? { subtitles: raw.subtitles } : {}),
+        },
+        backend: "embedded",
+        proxy: { sessionId: payload.sessionId, proxyUrl: url, mediaType, state: "ready" },
+      };
     });
     requestPlayerWindow.mockResolvedValue({ state: {} });
     requestPlaybackSources.mockResolvedValue({
@@ -828,7 +863,7 @@ describe("Tauri renderer vertical slice", () => {
     });
     expect(requestPlaybackFallback).toHaveBeenCalledWith(expect.objectContaining({ action: "approve" }));
     expect(requestPlaybackProxy).toHaveBeenCalledWith(expect.objectContaining({ action: "close" }));
-    expect(requestPlaybackProxy.mock.calls.filter(([payload]) => payload.action === "start")).toHaveLength(2);
+    expect(requestPlaybackStart.mock.calls).toHaveLength(2);
     const exhausted = await api.post("/api/player/sync", {
       status: "error",
       error: "HLS_SEGMENT_FAILED",
@@ -839,7 +874,7 @@ describe("Tauri renderer vertical slice", () => {
       attempts: 1,
       tried: ["alternate:movie-1"],
     });
-    expect(requestPlaybackProxy).toHaveBeenCalledWith(expect.objectContaining({ action: "start" }));
+    expect(requestPlaybackStart).toHaveBeenCalledWith(expect.objectContaining({ episodeId: expect.any(String) }));
     parserMode = 1;
     const sniffedPlayer = await api.post("/api/player", { lineIndex: 0, episodeIndex: 0 });
     expect(sniffedPlayer.state?.player.source?.url).toContain("/__qx_playback/token");
@@ -1001,7 +1036,7 @@ describe("Tauri renderer vertical slice", () => {
     const player = await api.post("/api/player", { lineIndex: 0, episodeIndex: 0 });
 
     expect(player.state?.player.source?.url).toContain("/__qx_playback/cms");
-    expect(requestPlaybackProxy).toHaveBeenCalledWith(expect.objectContaining({ action: "start", url: mediaUrl }));
+    expect(requestPlaybackStart).toHaveBeenCalledWith(expect.objectContaining({ sourceApi: "http://127.0.0.1:59450/api.php", episodeId: mediaUrl }));
     expect(requestSourceSession.mock.calls.some(([payload]) => payload.method === "player")).toBe(false);
     requestDesktopService.mockResolvedValueOnce({
       schemaVersion: "v1",
@@ -1135,13 +1170,22 @@ describe("Tauri renderer vertical slice", () => {
           ? { favorites: { items: [], groups: [], defaultGroupId: "default" } }
           : { follow: { items: [], checking: false, updateCount: 0 } },
     }));
-    requestQuickJsSidecar.mockImplementation(async (payload: { action: string; name?: string }) => {
-      if (payload.action === "capabilities") return { init: true, home: true, detail: true, player: true };
-      if (payload.action === "load" || payload.action === "close") return { loaded: true };
-      if (payload.name === "home") return { list: [{ vod_id: "q-1" }] };
-      if (payload.name === "detail") return { list: [{ vod_id: "q-1", vod_play_from: "main", vod_play_url: "Episode$https://media.example.test/q.mp4" }] };
-      if (payload.name === "player") return { parse: 0, url: "https://media.example.test/q.mp4", header: {} };
-      return { initialized: true };
+    requestQuickJsSession.mockImplementation(async (payload: { action: string; method?: string }) => {
+      const methods = { init: true, home: true, detail: true, player: true };
+      const session = {
+        sessionId: "renderer-session",
+        sourceId: "renderer-session",
+        siteKey: "quickjs",
+        api: "js:fixture.mjs",
+        siteType: 3,
+        state: payload.action === "close" ? "closed" : "ready",
+        capabilities: { home: true, category: false, search: false, detail: true, playback: true, localProxy: false, filters: false, pagination: false, engine: "quickjs" },
+      };
+      if (payload.action === "open" || payload.action === "close") return { session, methods, method: null, result: null, cancelled: payload.action === "close" };
+      if (payload.method === "home") return { session, methods, method: "home", result: { list: [{ vod_id: "q-1" }] }, cancelled: false };
+      if (payload.method === "detail") return { session, methods, method: "detail", result: { list: [{ vod_id: "q-1", vod_play_from: "main", vod_play_url: "Episode$https://media.example.test/q.mp4" }] }, cancelled: false };
+      if (payload.method === "player") return { session, methods, method: "player", result: { parse: 0, url: "https://media.example.test/q.mp4", header: {} }, cancelled: false };
+      return { session, methods, method: payload.method ?? null, result: { initialized: true }, cancelled: false };
     });
     requestPlaybackProxy.mockResolvedValue({
       sessionId: "renderer-session",
@@ -1161,9 +1205,11 @@ describe("Tauri renderer vertical slice", () => {
     expect(detail.state?.playbackCatalog?.lines[0]?.episodes[0]?.id).toBe("https://media.example.test/q.mp4");
     const player = await api.post("/api/player", { lineIndex: 0, episodeIndex: 0 });
     expect(player.state?.player.source?.url).toContain("/__qx_playback/token");
-    expect(requestRuntimeCapability).toHaveBeenCalledWith(expect.objectContaining({ api: expect.stringContaining("js:") }));
-    expect(requestComponentManager).toHaveBeenCalledWith({ action: "install-default", componentId: "quickjs" });
-    expect(requestQuickJsSidecar).toHaveBeenCalledWith(expect.objectContaining({ action: "capabilities" }));
+    expect(requestQuickJsSession).toHaveBeenCalledWith(expect.objectContaining({ action: "open", api: expect.stringContaining("js:") }));
+    expect(requestQuickJsSession).toHaveBeenCalledWith(expect.objectContaining({ action: "call", method: "home" }));
+    expect(requestQuickJsSidecar).not.toHaveBeenCalled();
+    expect(requestRuntimeCapability).not.toHaveBeenCalled();
+    expect(requestComponentManager).not.toHaveBeenCalledWith({ action: "install-default", componentId: "quickjs" });
     expect(requestSourceSession).not.toHaveBeenCalled();
   });
 

@@ -393,6 +393,50 @@ runtime_capability(api=js:...) -> load -> capabilities -> call(init/home/detail/
 
 sidecar 的结果是原样 JSON payload，具体方法由脚本导出能力决定。sidecar 不可启动、会话不存在或脚本失败时分别映射为 `QUICKJS_SIDECAR_UNAVAILABLE` 或 sidecar 返回的错误码。该接口不等于已经完成完整 QuickJS 兼容性；实际能力取决于随应用提供且可启动的 sidecar 和脚本 API。
 
+### 4.6a `backend_quickjs_session`
+
+This is the renderer-facing QuickJS boundary. The renderer must use this command instead of sequencing `backend_runtime_capability`, component installation, and raw sidecar actions itself.
+
+Payload shape:
+
+```json
+{
+  "action": "open",
+  "sessionId": "quickjs-1",
+  "sourceId": "config-1",
+  "siteKey": "quickjs-site",
+  "api": "js:export default {}",
+  "siteType": 3,
+  "ext": ""
+}
+```
+
+Actions are `open`, `call`, `cancel`, `snapshot`, and `close`. `open` performs capability validation, verified QuickJS component activation, sidecar load, capability discovery, and `init` in Rust. `call` accepts the source method and params; Rust maps the stable `init/home/homeVod/category/search/detail/player` argument contract and returns the source result. The response includes `session`, `methods`, `method`, `result`, and `cancelled`.
+
+Remote scripts remain origin allow-listed and inline scripts remain size-bounded. A missing or untrusted component returns a component error; no unsigned development sidecar is silently selected by a release build.
+
+### 4.6b `backend_playback_start`
+
+This command is the single playback-start orchestration boundary. The renderer submits the playback intent and does not call the player source, WebView2 sniffer, local proxy, or mpv start commands for the same playback attempt.
+
+```json
+{
+  "sessionId": "playback-1",
+  "sourceId": "config-1",
+  "sourceApi": "csp_Jianpian",
+  "siteType": 3,
+  "engine": "native",
+  "lineName": "main",
+  "episodeId": "episode-1",
+  "vipFlags": [],
+  "fallbackSubtitles": []
+}
+```
+
+Rust performs the direct-CMS shortcut when applicable; otherwise it calls the active native/HTTP/QuickJS session, normalizes subtitles and ClearKey metadata, invokes WebView2 sniffing for nonzero parse results, starts the verified local proxy, starts verified mpv for `backend=mpv` or `format=flv`, and returns `{ playerSource, backend, proxy }`. If mpv startup fails after proxy creation, Rust closes the proxy before returning the error.
+
+The command does not claim that an online source, Shaka, ClearKey, mpv, or WebView2 runtime is available merely because the payload is accepted. Those capabilities still require their corresponding component and clean Win11 E2E evidence.
+
 ### 4.7 `backend_playback_proxy`
 
 请求：

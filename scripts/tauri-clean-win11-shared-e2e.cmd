@@ -1,9 +1,9 @@
 @echo off
-setlocal
+setlocal EnableExtensions
 
 set "ROOT=%~dp0"
 set "QX_TAURI_CLEAN_E2E=1"
-set "QX_TAURI_NSIS=%ROOT%QX影视_0.9.0-rc.1_x64-setup-test.exe"
+set "QX_TAURI_NSIS=%ROOT%qx-test-installer.exe"
 set "QX_TAURI_EVIDENCE_PATH=artifacts\tauri-clean-win11-local-e2e.json"
 
 if not exist "%QX_TAURI_NSIS%" (

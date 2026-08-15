@@ -270,6 +270,8 @@ Tauri 渲染器对应的业务入口是：
 
 生命周期：`open` → 一个或多个 `call` → `cancel` 或 `close`。`snapshot` 只读取状态。标准 HTTP 源由 Rust 发起请求；native 源由 `native_sources` 分发；QuickJS 源不应通过此命令调用，而应使用 QuickJS 接口。
 
+当 `action=call` 返回详情或播放器结果时，Rust 会在返回 renderer 前规范化 `subtitles`、`subtitleTracks` 或 `subtitle` 字段：只保留 `http(s)`、`blob:`、`data:` URL 或明确的 `localPath`，补齐 `id`、`label`、`language`、`format`、`default`、`forced`，去重并限制最多 32 条。ASS/SSA 只在此处做轨道元数据规范化；字幕内容解析仍由受控字幕处理链负责。
+
 ### 4.4 `backend_playback_sources`
 
 请求：

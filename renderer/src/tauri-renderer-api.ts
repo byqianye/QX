@@ -59,7 +59,6 @@ import {
   type RendererPersistenceState,
   type RendererState,
 } from "./state.js";
-import { normalizeSubtitleTracks } from "../../src/subtitles.js";
 type TauriAction = (body: Record<string, unknown>) => Promise<RendererEnvelope> | RendererEnvelope;
 
 interface TauriSite {
@@ -806,13 +805,14 @@ export class TauriRendererApi {
         params: { flag: line.name, id: episode.id, vipFlags: [] },
       })).result);
     const parse = numberValue(raw.parse, 0);
-    const subtitles = normalizeSubtitleTracks(
-      raw.subtitles
-        ?? raw.subtitleTracks
-        ?? raw.subtitle
-        ?? runtime.detail?.subtitles
-        ?? runtime.detail?.subtitleTracks,
-    );
+    const subtitleValue = raw.subtitles
+      ?? raw.subtitleTracks
+      ?? raw.subtitle
+      ?? runtime.detail?.subtitles
+      ?? runtime.detail?.subtitleTracks;
+    const subtitles = Array.isArray(subtitleValue)
+      ? subtitleValue as NonNullable<PlayerSource["subtitles"]>
+      : [];
     let url = stringValue(raw.url ?? raw.playUrl ?? raw.link);
     let headers = headersValue(raw.header ?? raw.headers);
     if (parse !== 0) {

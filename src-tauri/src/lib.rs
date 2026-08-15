@@ -23,6 +23,7 @@ mod push_core;
 mod quickjs_bridge;
 mod runtime_capability;
 mod source_session;
+mod subtitles;
 mod webview_sniffer;
 
 pub const BACKEND_RPC_VERSION: &str = "qx.backend.v1";
@@ -336,7 +337,7 @@ async fn backend_source_session(
                 },
             )
         })?;
-    let result = match payload.action.as_str() {
+    let mut result = match payload.action.as_str() {
         "open" => source_session::SourceSessionResult {
             session: state
                 .open(&payload)
@@ -391,6 +392,11 @@ async fn backend_source_session(
             ));
         }
     };
+    if payload.action == "call" {
+        if let Some(value) = result.result.as_mut() {
+            subtitles::normalize_result(value);
+        }
+    }
     Ok(BackendResponse {
         version: BACKEND_RPC_VERSION.to_string(),
         request_id: request.request_id,

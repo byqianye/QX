@@ -18,7 +18,11 @@ describe("Tauri Android Spider Runtime packaging", () => {
 
   it("runs the signed release gate on the dedicated clean Win11 runner and refreshes all installer evidence", () => {
     const workflow = readFileSync(new URL("../.github/workflows/tauri-signed-release.yml", import.meta.url), "utf8");
+    expect(workflow).toContain("build-and-sign:");
     expect(workflow).toContain("runs-on: [self-hosted, windows, x64, qx-clean-win11]");
+    expect(workflow).toContain("publish:");
+    expect(workflow).toContain("name: qx-release-candidate");
+    expect(workflow).toContain("name: qx-win11-evidence");
     expect(workflow).toContain("Run real Jianpian HLS 20-second E2E");
     expect(workflow).toContain("Run fresh-user upgrade E2E");
     expect(workflow).toContain("artifacts/tauri-hls-20s-e2e.json");

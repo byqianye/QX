@@ -26,10 +26,6 @@ if ($legacyPaths.Count -gt 0) {
   throw "Uninstall the old QX application first; user data is preserved and is not deleted: $($legacyPaths -join ', ')"
 }
 
-if ($null -eq (Get-Command 7z.exe -ErrorAction SilentlyContinue)) {
-  throw "7z.exe is required by the release workflow; install 7-Zip before registering this runner"
-}
-
 $release = Invoke-RestMethod -Uri "https://api.github.com/repos/actions/runner/releases/latest" -Headers @{ Accept = "application/vnd.github+json" }
 $asset = $release.assets | Where-Object { $_.name -match '^actions-runner-win-x64-.*\.zip$' } | Select-Object -First 1
 if ($null -eq $asset) { throw "The latest Windows x64 GitHub Actions runner archive was not found" }

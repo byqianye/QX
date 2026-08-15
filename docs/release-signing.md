@@ -77,8 +77,8 @@ self-hosted, windows, x64, qx-clean-win11
 
 将已打开的 Win11 虚拟机注册为该仓库的自托管 runner，并在创建标签前确认：
 
-1. 卸载旧版 QX，保留用户数据目录，不把旧数据当成“干净安装”证据；
-2. runner 服务可以正常上线，Node.js、Rust、7-Zip 和 WebView2 已可用；
+1. 卸载旧版 QX；如需保留用户数据，将数据目录备份到候选路径之外，或直接恢复一个全新 Win11 快照，不把旧数据当成“干净安装”证据；
+2. runner 服务可以正常上线，且虚拟机的 WebView2 Runtime 已可用（工作流会自行准备 Node.js）；
 3. 不让公开 Pull Request 使用这个 runner；发布工作流只响应维护者推送的版本标签。
 
 发布工作流会在同一台 Win11 runner 上重新生成当前签名包的 clean-install、真实 Jianpian HLS 20 秒和 fresh-user upgrade 证据，然后才运行严格门禁。

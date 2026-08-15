@@ -10,11 +10,11 @@ permissions:
   actions: read
 
 jobs:
-  release:
-    # The release gate includes a real clean Windows 11 install. GitHub's
-    # windows-latest image is Windows Server, so this job must run on the
-    # dedicated clean Win11 runner registered with this label.
-    runs-on: [self-hosted, windows, x64, qx-clean-win11]
+  build-and-sign:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      actions: read
     env:
       QX_COMPONENT_PUBLIC_KEY_BASE64: ${{ secrets.QX_COMPONENT_PUBLIC_KEY_BASE64 }}
       QX_COMPONENT_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/components-v1.json
@@ -211,26 +211,79 @@ jobs:
             --manifest-url $manifestUrl `
             --artifact-url "$($componentUrl),$($componentUrl.Replace('qx-quickjs-sidecar.exe','qx-mpv.exe'))"
 
+      - name: Stage signed release candidate
+        shell: pwsh
+        env:
+          STAGING: ${{ steps.components.outputs.staging }}
+          SIDECAR: ${{ steps.components.outputs.sidecar }}
+          MPV: ${{ steps.components.outputs.mpv }}
+          SIGNED_DIR: ${{ runner.temp }}/qx-signed
+          OLD_INSTALLER: ${{ steps.previous.outputs.installer }}
+        run: |
+          $signedInstaller = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Filter *.exe -File -Recurse | Select-Object -First 1
+          if ($null -eq $signedInstaller) { throw "SignPath did not return a signed installer" }
+          $candidate = Join-Path $env:RUNNER_TEMP "qx-release-candidate"
+          Remove-Item -LiteralPath $candidate -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path (Join-Path $candidate "signed"), (Join-Path $candidate "previous"), (Join-Path $candidate "assets"), (Join-Path $candidate "evidence") | Out-Null
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          Copy-Item -LiteralPath $signedInstaller.FullName -Destination (Join-Path $candidate "signed\QX-Yingshi-$version-x64-setup.exe")
+          Copy-Item -LiteralPath $env:OLD_INSTALLER -Destination (Join-Path $candidate "previous\QX-Yingshi-0.8.0-x64-setup.exe")
+          Copy-Item -LiteralPath $env:SIDECAR -Destination (Join-Path $candidate "assets\qx-quickjs-sidecar.exe")
+          Copy-Item -LiteralPath $env:MPV -Destination (Join-Path $candidate "assets\qx-mpv.exe")
+          Copy-Item -LiteralPath (Join-Path $env:STAGING "components-v1.json"), (Join-Path $env:STAGING "components-v1.sig.b64"), (Join-Path $env:STAGING "components-v1.pub.b64") -Destination (Join-Path $candidate "assets")
+          Copy-Item -LiteralPath "artifacts\tauri-components-release.json", "artifacts\tauri-signature.json" -Destination (Join-Path $candidate "evidence")
+
+      - name: Upload signed release candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: qx-release-candidate
+          path: ${{ runner.temp }}/qx-release-candidate
+          archive: false
+
+  clean-win11-e2e:
+    needs: build-and-sign
+    runs-on: [self-hosted, windows, x64, qx-clean-win11]
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        shell: pwsh
+        run: npm ci
+
+      - name: Download signed release candidate
+        uses: actions/download-artifact@v7
+        with:
+          name: qx-release-candidate
+          path: ${{ runner.temp }}/qx-release-candidate
+
       - name: Run clean Win11 E2E for signed installer
         shell: pwsh
         env:
-          SIGNED_DIR: ${{ runner.temp }}/qx-signed
+          CANDIDATE: ${{ runner.temp }}/qx-release-candidate
           QX_TAURI_CLEAN_E2E: "1"
         run: |
-          $signedInstaller = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Filter *.exe -File -Recurse | Select-Object -First 1
-          if ($null -eq $signedInstaller) {
-            throw "SignPath did not return a signed installer"
-          }
+          $signedInstaller = Get-ChildItem -LiteralPath (Join-Path $env:CANDIDATE "signed") -Filter *.exe -File | Select-Object -First 1
+          if ($null -eq $signedInstaller) { throw "Signed release candidate installer is missing" }
           $env:QX_TAURI_NSIS = $signedInstaller.FullName
           npm run tauri:e2e:clean-win11
 
       - name: Run real Jianpian HLS 20-second E2E
         shell: pwsh
         env:
-          SIGNED_DIR: ${{ runner.temp }}/qx-signed
+          CANDIDATE: ${{ runner.temp }}/qx-release-candidate
         run: |
-          $signedInstaller = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Filter *.exe -File -Recurse | Select-Object -First 1
-          if ($null -eq $signedInstaller) { throw "SignPath did not return a signed installer" }
+          $signedInstaller = Get-ChildItem -LiteralPath (Join-Path $env:CANDIDATE "signed") -Filter *.exe -File | Select-Object -First 1
+          if ($null -eq $signedInstaller) { throw "Signed release candidate installer is missing" }
           $installDirectory = Join-Path $env:RUNNER_TEMP "qx-hls-installed"
           New-Item -ItemType Directory -Force -Path $installDirectory | Out-Null
           & $signedInstaller.FullName "/S" "/D=$installDirectory"
@@ -256,39 +309,86 @@ jobs:
       - name: Run fresh-user upgrade E2E
         shell: pwsh
         env:
-          OLD_INSTALLER: ${{ steps.previous.outputs.installer }}
-          SIGNED_DIR: ${{ runner.temp }}/qx-signed
+          CANDIDATE: ${{ runner.temp }}/qx-release-candidate
+          QX_TAURI_UPGRADE_E2E: "1"
+          QX_TAURI_OLD_VERSION: "0.8.0"
+          QX_TAURI_NEW_VERSION: "0.9.0-rc.1"
         run: |
-          $signedInstaller = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Filter *.exe -File -Recurse | Select-Object -First 1
-          if ($null -eq $signedInstaller) { throw "SignPath did not return a signed installer" }
-          $env:QX_TAURI_UPGRADE_E2E = "1"
-          $env:QX_TAURI_OLD_NSIS = $env:OLD_INSTALLER
+          $oldInstaller = Get-ChildItem -LiteralPath (Join-Path $env:CANDIDATE "previous") -Filter *.exe -File | Select-Object -First 1
+          $signedInstaller = Get-ChildItem -LiteralPath (Join-Path $env:CANDIDATE "signed") -Filter *.exe -File | Select-Object -First 1
+          if ($null -eq $oldInstaller -or $null -eq $signedInstaller) { throw "Upgrade installers are missing" }
+          $env:QX_TAURI_OLD_NSIS = $oldInstaller.FullName
           $env:QX_TAURI_NEW_NSIS = $signedInstaller.FullName
-          $env:QX_TAURI_OLD_VERSION = "0.8.0"
-          $env:QX_TAURI_NEW_VERSION = "0.9.0-rc.1"
           npm run tauri:e2e:upgrade-win11
+
+      - name: Upload fresh Win11 evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: qx-win11-evidence
+          path: |
+            artifacts/tauri-clean-win11-e2e.json
+            artifacts/tauri-hls-20s-e2e.json
+            artifacts/tauri-upgrade-win11-e2e.json
+          archive: false
+
+  publish:
+    needs: clean-win11-e2e
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      actions: read
+    env:
+      QX_COMPONENT_PUBLIC_KEY_BASE64: ${{ secrets.QX_COMPONENT_PUBLIC_KEY_BASE64 }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        shell: pwsh
+        run: npm ci
+
+      - name: Download signed release candidate
+        uses: actions/download-artifact@v7
+        with:
+          name: qx-release-candidate
+          path: ${{ runner.temp }}/qx-release-candidate
+
+      - name: Download fresh Win11 evidence
+        uses: actions/download-artifact@v7
+        with:
+          name: qx-win11-evidence
+          path: artifacts
+
+      - name: Restore candidate evidence
+        shell: pwsh
+        env:
+          CANDIDATE: ${{ runner.temp }}/qx-release-candidate
+        run: |
+          Copy-Item -LiteralPath (Join-Path $env:CANDIDATE "evidence\tauri-components-release.json"), (Join-Path $env:CANDIDATE "evidence\tauri-signature.json") -Destination "artifacts" -Force
 
       - name: Finalize G112 report after verified release evidence
         shell: pwsh
         env:
-          SIGNED_DIR: ${{ runner.temp }}/qx-signed
+          CANDIDATE: ${{ runner.temp }}/qx-release-candidate
         run: |
-          $signedInstaller = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Filter *.exe -File -Recurse | Select-Object -First 1
-          if ($null -eq $signedInstaller) {
-            throw "SignPath did not return a signed installer"
-          }
+          $signedInstaller = Get-ChildItem -LiteralPath (Join-Path $env:CANDIDATE "signed") -Filter *.exe -File | Select-Object -First 1
+          if ($null -eq $signedInstaller) { throw "Signed release candidate installer is missing" }
           $env:QX_TAURI_NSIS = $signedInstaller.FullName
           npm run tauri:finalize-g112-release
 
       - name: Run strict G112 release gate before publishing
         shell: pwsh
         env:
-          SIGNED_DIR: ${{ runner.temp }}/qx-signed
+          CANDIDATE: ${{ runner.temp }}/qx-release-candidate
         run: |
-          $signedInstaller = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Filter *.exe -File -Recurse | Select-Object -First 1
-          if ($null -eq $signedInstaller) {
-            throw "SignPath did not return a signed installer"
-          }
+          $signedInstaller = Get-ChildItem -LiteralPath (Join-Path $env:CANDIDATE "signed") -Filter *.exe -File | Select-Object -First 1
+          if ($null -eq $signedInstaller) { throw "Signed release candidate installer is missing" }
           $env:QX_TAURI_NSIS = $signedInstaller.FullName
           npm run verify:release
 
@@ -296,21 +396,18 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          STAGING: ${{ steps.components.outputs.staging }}
-          SIDECAR: ${{ steps.components.outputs.sidecar }}
-          MPV: ${{ steps.components.outputs.mpv }}
-          SIGNED_DIR: ${{ runner.temp }}/qx-signed
+          CANDIDATE: ${{ runner.temp }}/qx-release-candidate
         run: |
           $tag = $env:GITHUB_REF_NAME
           $version = $tag.TrimStart('v')
-          $signedInstaller = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Filter *.exe -File -Recurse | Select-Object -First 1
+          $signedInstaller = Get-ChildItem -LiteralPath (Join-Path $env:CANDIDATE "signed") -Filter *.exe -File | Select-Object -First 1
           $assets = @(
             "$($signedInstaller.FullName)#QX-Yingshi-$version-x64-setup.exe",
-            "$($env:SIDECAR)#qx-quickjs-sidecar.exe",
-            "$($env:MPV)#qx-mpv.exe",
-            "$(Join-Path $env:STAGING 'components-v1.json')#components-v1.json",
-            "$(Join-Path $env:STAGING 'components-v1.sig.b64')#components-v1.sig.b64",
-            "$(Join-Path $env:STAGING 'components-v1.pub.b64')#components-v1.pub.b64",
+            "$(Join-Path $env:CANDIDATE 'assets\qx-quickjs-sidecar.exe')#qx-quickjs-sidecar.exe",
+            "$(Join-Path $env:CANDIDATE 'assets\qx-mpv.exe')#qx-mpv.exe",
+            "$(Join-Path $env:CANDIDATE 'assets\components-v1.json')#components-v1.json",
+            "$(Join-Path $env:CANDIDATE 'assets\components-v1.sig.b64')#components-v1.sig.b64",
+            "$(Join-Path $env:CANDIDATE 'assets\components-v1.pub.b64')#components-v1.pub.b64",
             "artifacts/tauri-components-release.json",
             "artifacts/tauri-signature.json"
           )
@@ -320,9 +417,9 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          SIGNED_DIR: ${{ runner.temp }}/qx-signed
+          CANDIDATE: ${{ runner.temp }}/qx-release-candidate
         run: |
-          $signedInstaller = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Filter *.exe -File -Recurse | Select-Object -First 1
+          $signedInstaller = Get-ChildItem -LiteralPath (Join-Path $env:CANDIDATE "signed") -Filter *.exe -File | Select-Object -First 1
           $baseUrl = "https://github.com/$($env:GITHUB_REPOSITORY)/releases/download/$($env:GITHUB_REF_NAME)"
           npm run tauri:release-download-canary -- `
             --installer $signedInstaller.FullName `

@@ -291,12 +291,14 @@ jobs:
           try {
             $executable = Get-ChildItem -LiteralPath $installDirectory -Filter "qx-yingshi.exe" -File -Recurse | Select-Object -First 1
             if ($null -eq $executable) { throw "Installed Tauri executable was not found" }
+            $siteKey = [string]([char]0x8350) + [char]0x7247
+            $searchKey = [string]([char]0x6D41) + [char]0x6D6A + [char]0x5730 + [char]0x7403
             npx --no-install tsx scripts/tauri-cdp-canary.ts `
               --exe $executable.FullName `
               --installer $signedInstaller.FullName `
               --config-url "http://xn--z7x900a.net/" `
-              --site-key "荐片" `
-              --search-key "流浪地球" `
+              --site-key $siteKey `
+              --search-key $searchKey `
               --playback `
               --output artifacts/tauri-hls-20s-e2e.json
             if ($LASTEXITCODE -ne 0) { throw "Real Jianpian HLS canary exited with code $LASTEXITCODE" }

@@ -18,6 +18,8 @@ The local release-engineering work for R70 and G70-G75 is recorded. G73 still re
 See [CODE-SIGNING-POLICY.md](CODE-SIGNING-POLICY.md) for the release signing
 provider, maintainer/reviewer/approver roles, privacy statement, and the rules
 that distinguish signed production releases from unsigned test artifacts.
+See [docs/release-signing.md](docs/release-signing.md) for the exact SignPath,
+GitHub Secrets, tag, and acceptance steps.
 
 ## First use
 

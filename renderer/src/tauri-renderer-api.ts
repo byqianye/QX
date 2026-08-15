@@ -1,8 +1,11 @@
 import {
   ingestConfigCatalog,
+  requestConfigCatalogMaintenance,
   requestBusinessData,
   requestBusinessFeature,
   requestComponentManager,
+  requestCast,
+  requestPush,
   requestDesktopService,
   requestEpg,
   requestLive,
@@ -23,6 +26,8 @@ import type {
   BusinessFeatureSnapshot,
   ComponentManagerAction,
   ComponentManagerSnapshot,
+  CastSnapshot,
+  PushSnapshot,
   EpgSnapshot,
   LiveSnapshot,
   PlaybackProxyPayload,
@@ -44,6 +49,8 @@ import type {
 import {
   createRendererState,
   type ApiSpiderState,
+  type BrowseCategory,
+  type BrowseFilter,
   type ImportState,
   type PlaybackCatalog,
   type PlaybackLine,
@@ -66,13 +73,17 @@ interface TauriSite {
 interface TauriRuntimeState {
   import: ImportState;
   source: string;
+  sourceId: string | null;
   selectedSite: TauriSite | null;
   sessionId: string;
   sessionReady: boolean;
+  capabilities: SourceCapabilities | null;
   quickJs: boolean;
   quickJsMethods: Record<string, boolean>;
   page: ApiSpiderState["page"];
   items: Record<string, unknown>[];
+  categories: BrowseCategory[];
+  filters: BrowseFilter[];
   detail: Record<string, unknown> | null;
   playbackCatalog: PlaybackCatalog | null;
   playbackSelection: { lineIndex: number; episodeIndex: number } | null;
@@ -88,8 +99,26 @@ interface TauriRuntimeState {
   playbackFallbackRequests: Map<string, { lineIndex: number; episodeIndex: number }>;
 }
 
+interface SourceSwitchSnapshot {
+  import: ImportState;
+  sourceId: string | null;
+  selectedSite: TauriSite | null;
+  sessionReady: boolean;
+  quickJs: boolean;
+  quickJsMethods: Record<string, boolean>;
+  capabilities: SourceCapabilities | null;
+  page: ApiSpiderState["page"];
+  items: Record<string, unknown>[];
+  categories: BrowseCategory[];
+  filters: BrowseFilter[];
+  detail: Record<string, unknown> | null;
+  playbackCatalog: PlaybackCatalog | null;
+  playbackSelection: { lineIndex: number; episodeIndex: number } | null;
+  featureState: Partial<ApiSpiderState>;
+}
+
 const EMPTY_PERSISTENCE: RendererPersistenceState = {
-  theme: "system",
+  theme: "light",
   navigation: "home",
   siteKey: null,
   category: null,
@@ -124,6 +153,9 @@ export class TauriRendererApi {
   private actions(): Record<string, TauriAction> {
     return {
       "/api/import/load": (body) => this.load(String(body.input ?? "")),
+      "/api/import/load-file": (body) => this.load(String(body.input ?? ""), String(body.sourceName ?? "")),
+      "/api/import/history": () => this.configHistory(),
+      "/api/import/activate": (body) => this.activateConfig(String(body.versionHash ?? "")),
       "/api/import/select": (body) => this.select(String(body.siteKey ?? "")),
       "/api/import/confirm": () => this.confirm(),
       "/api/import/cancel": () => this.cancel(),
@@ -178,6 +210,23 @@ export class TauriRendererApi {
       "/api/live/smart/play": (body) => this.smartPlay(body),
       "/api/live/smart/epg": (body) => this.liveAction("smart-epg", "", body),
       "/api/live/smart/member/health": (body) => this.liveAction("smart-member-health", "", body),
+      "/api/cast/discover": () => this.castAction("discover", {}),
+      "/api/cast/refresh": () => this.castAction("discover", {}),
+      "/api/cast/play": (body) => this.castPlay(body),
+      "/api/cast/pause": () => this.castAction("pause", {}),
+      "/api/cast/resume": () => this.castAction("resume", {}),
+      "/api/cast/stop": () => this.castAction("stop", {}),
+      "/api/cast/seek": (body) => this.castAction("seek", { position: body.position }),
+      "/api/cast/position": () => this.castAction("position", {}),
+      "/api/cast/transport": () => this.castAction("transport", {}),
+      "/api/cast/disconnect": () => this.castAction("disconnect", {}),
+      "/api/push/settings": (body) => this.pushAction("settings", body),
+      "/api/push/submit": (body) => this.pushAction("submit", body),
+      "/api/push/confirm": (body) => this.pushConfirm(body, "play"),
+      "/api/push/reject": (body) => this.pushConfirm(body, "reject"),
+      "/api/push/cancel": (body) => this.pushAction("cancel", body),
+      "/api/push/clear": () => this.pushAction("clear", {}),
+      "/api/push/refresh": () => this.pushAction("refresh", {}),
       "/api/cache/refresh": () => this.desktopAction("cache-refresh", {}),
       "/api/cache/clear": (body) => this.desktopAction("cache-clear", body),
       "/api/storage/refresh": () => this.desktopAction("storage-refresh", {}),
@@ -224,6 +273,7 @@ export class TauriRendererApi {
       "/api/danmaku/load": (body) => this.desktopAction("danmaku-load", body),
       "/api/danmaku/settings": (body) => this.desktopAction("danmaku-settings", body),
       "/api/danmaku/clear": () => this.desktopAction("danmaku-clear", {}),
+      "/api/danmaku/sync": (body) => this.desktopAction("danmaku-sync", body),
       "/api/view-state": (body) => this.viewState(body),
       "/api/history/open": (body) => this.openHistory(String(body.identity ?? "")),
       "/api/history/delete": (body) => this.featureAction("history", "delete", String(body.identity ?? "")),
@@ -250,15 +300,19 @@ export class TauriRendererApi {
     };
   }
 
-  private async load(input: string): Promise<RendererEnvelope> {
+  private async load(input: string, sourceName = ""): Promise<RendererEnvelope> {
     const value = input.trim();
     if (!value) throw new Error("TAURI_CONFIG_INPUT_EMPTY");
     const isUrl = /^https?:\/\//iu.test(value);
     const isInline = value.startsWith("{") || value.startsWith("[") || /^tvbox:|^2423|\*\*/iu.test(value);
-    if (!isUrl && !isInline) {
+    const isFile = sourceName.trim().length > 0;
+    if (!isUrl && !isInline && !isFile) {
       throw new Error("TAURI_CONFIG_FILE_IMPORT_UNSUPPORTED");
     }
-    const payload: ConfigCatalogPayload = isUrl
+    const safeFileName = sourceName.trim().split(/[\\/]/u).pop()?.slice(0, 120) || "selected-config";
+    const payload: ConfigCatalogPayload = isFile
+      ? { source: `file:${safeFileName}`, sourceKind: "file", raw: value }
+      : isUrl
       ? { source: value, sourceKind: "url", raw: "", fetchRemote: true }
       : { source: "inline:tauri", sourceKind: "json", raw: value };
     const snapshot = await ingestConfigCatalog(payload);
@@ -266,33 +320,24 @@ export class TauriRendererApi {
       const keys = isRecord(snapshot) ? Object.keys(snapshot).sort().join(",") : typeof snapshot;
       throw new Error(`TAURI_CONFIG_SNAPSHOT_INVALID:sites:${keys}`);
     }
+    const inputKind: ImportState["inputKind"] = isFile ? "file" : isUrl ? "url" : "json";
+    const sourceKind: ImportState["sourceKind"] = isFile ? "local" : isUrl ? "remote" : "inline";
     const sites = snapshot.sites.map(toSite);
-    const sourceKind: ImportState["sourceKind"] = isUrl ? "remote" : "inline";
-    const importState: ImportState = {
-      status: "confirmation_required",
-      loading: false,
-      inputKind: isUrl ? "url" : "json",
-      source: snapshot.source,
-      sourceKind,
-      warning: snapshot.warningCode ?? null,
-      error: null,
-      trusted: false,
-      summary: summaryFor(snapshot, sites),
-      sites: sites.map((site) => ({ key: site.key, name: site.name, api: site.api })),
-      selectedSiteKey: sites[0]?.key ?? null,
-      selectedApi: sites[0]?.api ?? null,
-      sessionReady: false,
-    };
+    const importState = importStateFor(snapshot, inputKind, sourceKind, sites);
     this.runtime = {
       import: importState,
       source: snapshot.source,
+      sourceId: null,
       selectedSite: sites[0] ?? null,
       sessionId: crypto.randomUUID(),
       sessionReady: false,
+      capabilities: null,
       quickJs: false,
       quickJsMethods: {},
       page: "import",
       items: [],
+      categories: [],
+      filters: [],
       detail: null,
       playbackCatalog: null,
       playbackSelection: null,
@@ -312,20 +357,148 @@ export class TauriRendererApi {
     return this.envelope();
   }
 
+  private async configHistory(): Promise<RendererEnvelope> {
+    const runtime = this.requireRuntime();
+    const history = await requestConfigCatalogMaintenance({ action: "history", source: runtime.source });
+    return { ...this.envelope(), configHistory: history };
+  }
+
+  private async activateConfig(versionHash: string): Promise<RendererEnvelope> {
+    const runtime = this.requireRuntime();
+    const targetVersionHash = versionHash.trim();
+    if (!targetVersionHash) throw new Error("TAURI_CONFIG_VERSION_HASH_EMPTY");
+    if (runtime.playerSource) await this.stopPlayer();
+    else {
+      runtime.fallbackCoordinator = null;
+      runtime.fallbackResolution = null;
+      this.clearFallbackState();
+    }
+    await this.closeSourceSession();
+    await this.closeLiveProxy();
+    const snapshot = await requestConfigCatalogMaintenance({
+      action: "activate",
+      source: runtime.source,
+      versionHash: targetVersionHash,
+    });
+    if (!Array.isArray(snapshot.sites)) {
+      const keys = isRecord(snapshot) ? Object.keys(snapshot).sort().join(",") : typeof snapshot;
+      throw new Error(`TAURI_CONFIG_SNAPSHOT_INVALID:sites:${keys}`);
+    }
+    const inputKind = runtime.import.inputKind ?? inputKindForCatalogKind(snapshot.sourceKind);
+    const sourceKind = runtime.import.sourceKind ?? importSourceKindForCatalogKind(snapshot.sourceKind);
+    const sites = snapshot.sites.map(toSite);
+    runtime.import = importStateFor(snapshot, inputKind, sourceKind, sites);
+    runtime.source = snapshot.source;
+    runtime.sourceId = null;
+    runtime.selectedSite = sites[0] ?? null;
+    runtime.sessionId = crypto.randomUUID();
+    runtime.sessionReady = false;
+    runtime.capabilities = null;
+    runtime.quickJs = false;
+    runtime.quickJsMethods = {};
+    runtime.page = "import";
+    runtime.items = [];
+    runtime.categories = [];
+    runtime.filters = [];
+    runtime.detail = null;
+    runtime.playbackCatalog = null;
+    runtime.playbackSelection = null;
+    runtime.playerSource = null;
+    runtime.proxySessionId = null;
+    runtime.liveProxySessionId = null;
+    runtime.playerDetached = false;
+    runtime.featureState = { ...runtime.featureState, playbackSources: null };
+    runtime.fallbackCoordinator = null;
+    runtime.fallbackResolution = null;
+    runtime.playbackFallbackRequests.clear();
+    const history = await requestConfigCatalogMaintenance({ action: "history", source: runtime.source });
+    return { ...this.envelope(), configHistory: history };
+  }
+
   private async select(siteKey: string): Promise<RendererEnvelope> {
     const runtime = this.requireRuntime();
     const selected = runtime.import.sites.find((site) => site.key === siteKey);
     const selectedSite = selected ? toSite(selected) : null;
     if (!selectedSite) throw new Error("TAURI_SITE_NOT_FOUND");
-    runtime.selectedSite = selectedSite;
-    runtime.import = {
-      ...runtime.import,
-      selectedSiteKey: selectedSite.key,
-      selectedApi: selectedSite.api,
+    const shouldOpen = runtime.sessionReady && runtime.import.trusted;
+    const snapshot = shouldOpen ? this.sourceSwitchSnapshot() : null;
+    try {
+      const changed = await this.changeSite(selectedSite);
+      if (!shouldOpen) return this.envelope();
+      if (changed) await this.openSession();
+      return this.home();
+    } catch (error) {
+      if (snapshot) await this.restoreSourceSwitchSnapshot(snapshot);
+      throw error;
+    }
+  }
+
+  private sourceSwitchSnapshot(): SourceSwitchSnapshot {
+    const runtime = this.requireRuntime();
+    return {
+      import: { ...runtime.import, sites: runtime.import.sites.map((site) => ({ ...site })) },
+      sourceId: runtime.sourceId,
+      selectedSite: runtime.selectedSite ? { ...runtime.selectedSite } : null,
+      sessionReady: runtime.sessionReady,
+      quickJs: runtime.quickJs,
+      quickJsMethods: { ...runtime.quickJsMethods },
+      capabilities: runtime.capabilities ? { ...runtime.capabilities } : null,
+      page: runtime.page,
+      items: runtime.items.map((item) => ({ ...item })),
+      categories: runtime.categories.map((category) => ({ ...category })),
+      filters: runtime.filters.map((filter) => ({ ...filter, options: filter.options.map((option) => ({ ...option })) })),
+      detail: runtime.detail ? { ...runtime.detail } : null,
+      playbackCatalog: runtime.playbackCatalog ? {
+        lines: runtime.playbackCatalog.lines.map((line) => ({
+          ...line,
+          episodes: line.episodes.map((episode) => ({ ...episode })),
+        })),
+      } : null,
+      playbackSelection: runtime.playbackSelection ? { ...runtime.playbackSelection } : null,
+      featureState: { ...runtime.featureState },
     };
-    if (!runtime.sessionReady || !runtime.import.trusted) return this.envelope();
-    await this.openSession();
-    return this.home();
+  }
+
+  private async restoreSourceSwitchSnapshot(snapshot: SourceSwitchSnapshot): Promise<void> {
+    const runtime = this.requireRuntime();
+    const switched = runtime.selectedSite?.key !== snapshot.selectedSite?.key;
+    if (switched && (runtime.sessionReady || runtime.quickJs)) {
+      await this.closeSourceSession().catch(() => undefined);
+    }
+    runtime.import = { ...snapshot.import, sites: snapshot.import.sites.map((site) => ({ ...site })) };
+    runtime.sourceId = snapshot.sourceId;
+    runtime.selectedSite = snapshot.selectedSite ? { ...snapshot.selectedSite } : null;
+    runtime.sessionReady = false;
+    runtime.quickJs = false;
+    runtime.quickJsMethods = {};
+    runtime.capabilities = null;
+    runtime.page = snapshot.page;
+    runtime.items = snapshot.items.map((item) => ({ ...item }));
+    runtime.categories = snapshot.categories.map((category) => ({ ...category }));
+    runtime.filters = snapshot.filters.map((filter) => ({ ...filter, options: filter.options.map((option) => ({ ...option })) }));
+    runtime.detail = snapshot.detail ? { ...snapshot.detail } : null;
+    runtime.playbackCatalog = snapshot.playbackCatalog ? {
+      lines: snapshot.playbackCatalog.lines.map((line) => ({
+        ...line,
+        episodes: line.episodes.map((episode) => ({ ...episode })),
+      })),
+    } : null;
+    runtime.playbackSelection = snapshot.playbackSelection ? { ...snapshot.playbackSelection } : null;
+    runtime.featureState = { ...snapshot.featureState };
+    runtime.playerSource = null;
+    runtime.proxySessionId = null;
+    runtime.playerDetached = false;
+    if (!snapshot.sessionReady || !snapshot.selectedSite) {
+      runtime.import = { ...runtime.import, sessionReady: false };
+      return;
+    }
+    try {
+      await this.openSession();
+    } catch {
+      runtime.import = { ...runtime.import, sessionReady: false };
+      runtime.sessionReady = false;
+      runtime.capabilities = snapshot.capabilities;
+    }
   }
 
   private async confirm(): Promise<RendererEnvelope> {
@@ -333,7 +506,28 @@ export class TauriRendererApi {
     if (!runtime.selectedSite) throw new Error("TAURI_SITE_NOT_FOUND");
     await this.openSession();
     runtime.import = { ...runtime.import, status: "ready", trusted: true, sessionReady: true };
-    return this.home();
+    try {
+      return await this.home();
+    } catch (error) {
+      // Trusting a config and loading its first page are separate operations.
+      // A dead source must not leave the user trapped in the confirmation dialog.
+      runtime.page = "home";
+      runtime.items = [];
+      runtime.categories = [];
+      runtime.filters = [];
+      runtime.import = {
+        ...runtime.import,
+        warning: "配置已确认，但当前来源暂不可用；可以重试或切换来源。",
+      };
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ...this.envelope(),
+        error: message,
+        errorCode: message.includes("SOURCE_SESSION_REQUEST_FAILED")
+          ? "SOURCE_SESSION_REQUEST_FAILED"
+          : "TAURI_SOURCE_HOME_FAILED",
+      };
+    }
   }
 
   private async cancel(): Promise<RendererEnvelope> {
@@ -352,24 +546,7 @@ export class TauriRendererApi {
     const currentIndex = sites.findIndex((site) => site.key === runtime.selectedSite?.key);
     const next = sites[(currentIndex + 1 + sites.length) % sites.length];
     if (!next) throw new Error("TAURI_SOURCE_SWITCH_UNAVAILABLE");
-    runtime.selectedSite = next;
-    runtime.import = {
-      ...runtime.import,
-      selectedSiteKey: next.key,
-      selectedApi: next.api,
-    };
-    await this.closeSourceSession();
-    await this.openSession();
-    runtime.page = "home";
-    runtime.items = [];
-    runtime.detail = null;
-    runtime.playbackCatalog = null;
-    runtime.playbackSelection = null;
-    runtime.playbackFallbackRequests.clear();
-    runtime.fallbackCoordinator = null;
-    runtime.fallbackResolution = null;
-    runtime.featureState = { ...runtime.featureState, playbackSources: null };
-    return this.home();
+    return this.select(next.key);
   }
 
   private async closeSource(): Promise<RendererEnvelope> {
@@ -383,6 +560,8 @@ export class TauriRendererApi {
     await this.closeSourceSession();
     await this.closeLiveProxy();
     runtime.items = [];
+    runtime.categories = [];
+    runtime.filters = [];
     runtime.detail = null;
     runtime.playbackCatalog = null;
     runtime.playbackSelection = null;
@@ -409,13 +588,15 @@ export class TauriRendererApi {
     const open = await this.sourceRequest({
       action: "open",
       sessionId: runtime.sessionId,
-      sourceId: runtime.source,
+      ...(runtime.sourceId ? { sourceId: runtime.sourceId } : {}),
       siteKey: site.key,
       api: site.api,
       siteType: site.siteType,
       ...(site.ext === undefined ? {} : { ext: site.ext }),
     });
     if (open.session.availabilityReason) throw new Error(open.session.availabilityReason);
+    runtime.sourceId = stableSourceId(open.session.sourceId, runtime.sessionId);
+    runtime.capabilities = { ...open.session.capabilities };
     if (site.api.toLowerCase() === "csp_jianpian") {
       await this.sourceRequest({
         action: "call",
@@ -442,6 +623,7 @@ export class TauriRendererApi {
       allowedOrigins,
     });
     if (!capability.supported) throw new Error(capability.reasonCode);
+    await requestComponentManager({ action: "install-default", componentId: "quickjs" });
     await requestQuickJsSidecar({
       action: "load",
       sessionId: runtime.sessionId,
@@ -456,6 +638,7 @@ export class TauriRendererApi {
     runtime.quickJsMethods = Object.fromEntries(
       Object.entries(methods).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"),
     );
+    runtime.capabilities = quickJsCapabilities(runtime);
     if (runtime.quickJsMethods.init) {
       await requestQuickJsSidecar({
         action: "call",
@@ -483,6 +666,9 @@ export class TauriRendererApi {
     });
     runtime.page = method === "home" ? "home" : method;
     runtime.items = listItems(result.result);
+    const metadata = browseMetadata(result.result);
+    if (metadata.categories.length > 0 || method === "home") runtime.categories = metadata.categories;
+    if (metadata.filters.length > 0 || method === "home") runtime.filters = metadata.filters;
     return this.envelope();
   }
 
@@ -536,7 +722,7 @@ export class TauriRendererApi {
       currentSiteKey: currentSite.key,
       currentVod,
       ...(runtime.playbackCatalog ? { currentCatalog: runtime.playbackCatalog } : {}),
-      sourceId: runtime.source,
+      sourceId: requireSourceId(runtime),
       sessionId: runtime.sessionId,
       sites: configuredSites,
     } satisfies PlaybackSourceResolvePayload);
@@ -559,9 +745,7 @@ export class TauriRendererApi {
     const site = runtime.import.sites.map(toSite).find((item) => item.key === siteKey);
     if (!site) throw new Error("TAURI_PLAYBACK_SOURCE_SITE_UNAVAILABLE");
     if (runtime.selectedSite?.key !== site.key) {
-      await this.closeSourceSession();
-      runtime.selectedSite = site;
-      runtime.import = { ...runtime.import, selectedSiteKey: site.key, selectedApi: site.api };
+      await this.changeSite(site, preserveFallback);
       await this.openSession();
     }
     await this.detail(vodId, preserveFallback);
@@ -569,6 +753,38 @@ export class TauriRendererApi {
     if (!preserveFallback) this.beginFallback(resolution, candidate);
     runtime.featureState = { ...runtime.featureState, playbackSources: null };
     return this.envelope();
+  }
+
+  private async changeSite(site: TauriSite, preserveFallback = false): Promise<boolean> {
+    const runtime = this.requireRuntime();
+    if (runtime.selectedSite?.key === site.key) return false;
+
+    if (runtime.playerSource) await this.stopPlayer(preserveFallback);
+    else if (!preserveFallback) {
+      runtime.fallbackCoordinator = null;
+      runtime.fallbackResolution = null;
+      runtime.playbackFallbackRequests.clear();
+      this.clearFallbackState();
+    }
+    await this.closeSourceSession();
+    runtime.sourceId = null;
+    runtime.selectedSite = site;
+    runtime.import = { ...runtime.import, selectedSiteKey: site.key, selectedApi: site.api };
+    runtime.page = "home";
+    runtime.items = [];
+    runtime.categories = [];
+    runtime.filters = [];
+    runtime.detail = null;
+    runtime.playbackCatalog = null;
+    runtime.playbackSelection = null;
+    runtime.playbackFallbackRequests.clear();
+    if (!preserveFallback) {
+      runtime.fallbackCoordinator = null;
+      runtime.fallbackResolution = null;
+      this.clearFallbackState();
+    }
+    runtime.featureState = { ...runtime.featureState, playbackSources: null };
+    return true;
   }
 
   private async play(body: Record<string, unknown>): Promise<RendererEnvelope> {
@@ -605,7 +821,7 @@ export class TauriRendererApi {
       const sniffPayload: WebviewSnifferPayload = {
         action: "sniff",
         sessionId: runtime.sessionId,
-        sourceId: runtime.source,
+        ...(runtime.sourceId ? { sourceId: runtime.sourceId } : {}),
         playbackSessionId: runtime.sessionId,
         initialUrl,
         ...(Object.keys(headers).length === 0 ? {} : { headers }),
@@ -634,6 +850,7 @@ export class TauriRendererApi {
     const backend = raw.backend === "mpv" || stringValue(raw.format).toLowerCase() === "flv" ? "mpv" : "embedded";
     if (backend === "mpv") {
       try {
+        await requestComponentManager({ action: "install-default", componentId: "mpv" });
         await requestMpv({ action: "start", sessionId: runtime.sessionId, source: proxy.proxyUrl });
       } catch (error) {
         await requestPlaybackProxy({ action: "close", sessionId: runtime.sessionId });
@@ -712,6 +929,7 @@ export class TauriRendererApi {
     }
     try {
       await this.desktopAction("player-sync", body);
+      await this.desktopAction("danmaku-sync", body);
     } catch (error) {
       if (!runtime.fallbackCoordinator) throw error;
     }
@@ -721,10 +939,10 @@ export class TauriRendererApi {
         const line = runtime.playbackCatalog.lines.find((candidate) => candidate.index === runtime.playbackSelection?.lineIndex);
         const episode = line?.episodes[runtime.playbackSelection.episodeIndex];
         const rawVodId = stringValue(runtime.detail.vod_id ?? runtime.detail.id);
-        const sourceId = featureSourceId(runtime);
+        const sourceId = runtime.sourceId ? featureSourceId(runtime) : null;
         const vodId = featureIdentifier(rawVodId, "vod");
         const episodeId = episode ? featureIdentifier(episode.id, `episode:${episode.index}`) : null;
-        if (line && episode && vodId && episodeId) {
+        if (line && episode && sourceId && vodId && episodeId) {
           const identity = `${sourceId}:${vodId}:${episodeId}`;
           await this.featureAction("history", "upsert", identity, {
             identity,
@@ -828,7 +1046,7 @@ export class TauriRendererApi {
           id,
           label: `${line.name} · ${episode.name}`,
           kind: "same-content",
-          sourceId: runtime.source,
+          sourceId: runtime.sourceId ?? "",
           lineKey: String(line.index),
         });
       }
@@ -908,11 +1126,17 @@ export class TauriRendererApi {
 
   private async viewState(body: Record<string, unknown>): Promise<RendererEnvelope> {
     const runtime = this.requireRuntime();
+    const category = persistenceCategory(body.category);
+    const search = persistenceSearch(body.search);
     runtime.persistence = {
       ...runtime.persistence,
       ...(body.theme === "system" || body.theme === "light" || body.theme === "dark" ? { theme: body.theme } : {}),
+      ...(isRendererNavigation(body.navigation) ? { navigation: body.navigation } : {}),
+      ...(category !== undefined ? { category } : {}),
+      ...(search !== undefined ? { search } : {}),
       ...(typeof body.scrollTop === "number" ? { scrollTop: Math.max(0, body.scrollTop) } : {}),
       ...(typeof body.siteKey === "string" ? { siteKey: body.siteKey } : {}),
+      ...(typeof body.recentDetailId === "string" ? { recentDetailId: body.recentDetailId } : body.recentDetailId === null ? { recentDetailId: null } : {}),
     };
     await requestBusinessData({
       action: "upsert",
@@ -933,11 +1157,15 @@ export class TauriRendererApi {
     });
     if (!snapshot.found || !snapshot.value) return;
     const value = snapshot.value;
+    const category = persistenceCategory(value.category);
+    const search = persistenceSearch(value.search);
     runtime.persistence = {
       ...runtime.persistence,
       ...(value.theme === "system" || value.theme === "light" || value.theme === "dark" ? { theme: value.theme } : {}),
-      ...(value.navigation === "home" || value.navigation === "category" || value.navigation === "search" || value.navigation === "detail" || value.navigation === "history" || value.navigation === "favorites" || value.navigation === "follow" || value.navigation === "settings" || value.navigation === "live" || value.navigation === "local" || value.navigation === "downloads" ? { navigation: value.navigation } : {}),
+      ...(isRendererNavigation(value.navigation) ? { navigation: value.navigation } : {}),
       ...(typeof value.siteKey === "string" ? { siteKey: value.siteKey } : {}),
+      ...(category !== undefined ? { category } : {}),
+      ...(search !== undefined ? { search } : {}),
       ...(typeof value.scrollTop === "number" ? { scrollTop: Math.max(0, value.scrollTop) } : {}),
       ...(typeof value.recentDetailId === "string" ? { recentDetailId: value.recentDetailId } : {}),
     };
@@ -954,6 +1182,8 @@ export class TauriRendererApi {
     }
     this.applyLiveSnapshot(await requestLive({ action: "snapshot", value: {} }));
     this.applyEpgSnapshot(await requestEpg({ action: "snapshot", value: {} }));
+    this.applyCastSnapshot(await requestCast({ action: "snapshot", value: {} }));
+    this.applyPushSnapshot(await requestPush({ action: "snapshot", value: {} }));
     this.applyDesktopSnapshot(await requestDesktopService({ action: "cache-snapshot", value: {} }));
   }
 
@@ -1013,6 +1243,24 @@ export class TauriRendererApi {
     };
   }
 
+  private applyCastSnapshot(snapshot: CastSnapshot): void {
+    const runtime = this.requireRuntime();
+    const cast = snapshot.state.cast;
+    runtime.featureState = {
+      ...runtime.featureState,
+      ...(isRecord(cast) ? { cast: cast as unknown as NonNullable<ApiSpiderState["cast"]> } : {}),
+    };
+  }
+
+  private applyPushSnapshot(snapshot: PushSnapshot): void {
+    const runtime = this.requireRuntime();
+    const push = snapshot.state.push;
+    runtime.featureState = {
+      ...runtime.featureState,
+      ...(isRecord(push) ? { push: push as unknown as NonNullable<ApiSpiderState["push"]> } : {}),
+    };
+  }
+
   private applyDesktopSnapshot(snapshot: { state: Record<string, unknown> }): void {
     const runtime = this.requireRuntime();
     const localFallback = runtime.fallbackCoordinator?.state;
@@ -1041,6 +1289,81 @@ export class TauriRendererApi {
     });
     this.applyEpgSnapshot(snapshot);
     return this.envelope();
+  }
+
+  private async castAction(
+    action: "snapshot" | "discover" | "pause" | "resume" | "stop" | "seek" | "position" | "transport" | "disconnect",
+    value: Record<string, unknown>,
+  ): Promise<RendererEnvelope> {
+    const snapshot = await requestCast({ action, value });
+    this.applyCastSnapshot(snapshot);
+    return this.envelope();
+  }
+
+  private async castPlay(body: Record<string, unknown>): Promise<RendererEnvelope> {
+    const runtime = this.requireRuntime();
+    const source = runtime.playerSource;
+    if (!source?.url?.trim()) throw new Error("TAURI_CAST_MEDIA_NOT_READY");
+    const url = source.url.trim();
+    const title = stringValue(runtime.detail?.vod_name ?? runtime.detail?.title).trim() || "QX Cast";
+    const snapshot = await requestCast({
+      action: "play",
+      value: {
+        ...body,
+        url,
+        title,
+        ...(source.mediaType && source.mediaType !== "unknown"
+          ? { contentType: castContentType(source.mediaType) }
+          : {}),
+      },
+    });
+    this.applyCastSnapshot(snapshot);
+    return this.envelope();
+  }
+
+  private async pushAction(
+    action: "refresh" | "settings" | "submit" | "cancel" | "clear",
+    value: Record<string, unknown>,
+  ): Promise<RendererEnvelope> {
+    const snapshot = await requestPush({ action, value });
+    this.applyPushSnapshot(snapshot);
+    return this.envelope();
+  }
+
+  private async pushConfirm(
+    body: Record<string, unknown>,
+    decision: "play" | "reject",
+  ): Promise<RendererEnvelope> {
+    const snapshot = await requestPush({
+      action: decision === "reject" ? "reject" : "confirm",
+      value: { ...body, decision },
+    });
+    this.applyPushSnapshot(snapshot);
+    if (decision === "play") await this.startPushPlayback(snapshot);
+    return this.envelope();
+  }
+
+  private async startPushPlayback(snapshot: PushSnapshot): Promise<void> {
+    const runtime = this.requireRuntime();
+    const result = record(snapshot.state.result);
+    const playback = record(result.playback);
+    const url = stringValue(playback.url).trim();
+    if (!url) return;
+    if (!/^https?:\/\//iu.test(url)) throw new Error("TAURI_PUSH_PLAYBACK_URL_INVALID");
+    if (runtime.proxySessionId) {
+      await requestPlaybackProxy({ action: "close", sessionId: runtime.proxySessionId });
+    }
+    const sessionId = stringValue(playback.sessionId).trim() || `${runtime.sessionId}:push`;
+    const proxy = await requestPlaybackProxy({ action: "start", sessionId, url });
+    if (!proxy.proxyUrl) throw new Error("TAURI_PUSH_PROXY_URL_MISSING");
+    runtime.proxySessionId = sessionId;
+    runtime.playerSource = {
+      parse: 0,
+      url: proxy.proxyUrl,
+      headers: {},
+      backend: "embedded",
+      mediaType: proxy.mediaType === "hls" ? "hls" : proxy.mediaType === "dash" ? "dash" : "mp4",
+    };
   }
 
   private async desktopAction(action: string, value: Record<string, unknown>): Promise<RendererEnvelope> {
@@ -1304,6 +1627,7 @@ export class TauriRendererApi {
     } finally {
       runtime.quickJs = false;
       runtime.quickJsMethods = {};
+      runtime.capabilities = null;
       runtime.sessionReady = false;
       runtime.import = { ...runtime.import, sessionReady: false };
     }
@@ -1321,6 +1645,7 @@ export class TauriRendererApi {
       runtime.sessionReady = false;
       runtime.quickJs = false;
       runtime.quickJsMethods = {};
+      runtime.capabilities = null;
       runtime.import = { ...runtime.import, sessionReady: false };
     }
   }
@@ -1342,6 +1667,8 @@ export class TauriRendererApi {
         warning: runtime.import.warning,
         error: null,
         sidecarRunning: runtime.sessionReady,
+        capabilities: runtime.capabilities,
+        sourceId: runtime.sourceId,
         playback: runtime.playerSource
           ? {
               available: true,
@@ -1362,6 +1689,8 @@ export class TauriRendererApi {
         playerHost,
         canPlay: runtime.playbackCatalog?.lines.some((line) => line.episodes.length > 0) ?? false,
         items: runtime.items,
+        categories: runtime.categories,
+        filters: runtime.filters,
         detail: runtime.detail,
         playbackCatalog: runtime.playbackCatalog,
         playbackSelection: runtime.playbackSelection,
@@ -1390,6 +1719,17 @@ export class TauriRendererApi {
   private requireRuntime(): TauriRuntimeState {
     if (!this.runtime) throw new Error("TAURI_RENDERER_IMPORT_REQUIRED");
     return this.runtime;
+  }
+}
+
+function castContentType(mediaType: NonNullable<PlayerSource["mediaType"]>): string {
+  switch (mediaType) {
+    case "hls": return "application/vnd.apple.mpegurl";
+    case "dash": return "application/dash+xml";
+    case "flv": return "video/x-flv";
+    case "web": return "text/html";
+    case "mp4": return "video/mp4";
+    default: return "video/mp4";
   }
 }
 
@@ -1425,10 +1765,92 @@ function summaryFor(snapshot: ConfigCatalogSnapshot, sites: readonly TauriSite[]
   };
 }
 
+function importStateFor(
+  snapshot: ConfigCatalogSnapshot,
+  inputKind: Exclude<ImportState["inputKind"], null>,
+  sourceKind: Exclude<ImportState["sourceKind"], null>,
+  sites: readonly TauriSite[],
+): ImportState {
+  return {
+    status: "confirmation_required",
+    loading: false,
+    inputKind,
+    source: snapshot.source,
+    sourceKind,
+    warning: snapshot.warningCode ?? null,
+    error: null,
+    trusted: false,
+    summary: summaryFor(snapshot, sites),
+    sites: sites.map((site) => ({
+      key: site.key,
+      name: site.name,
+      api: site.api,
+      ...(site.ext === undefined ? {} : { ext: site.ext }),
+    })),
+    selectedSiteKey: sites[0]?.key ?? null,
+    selectedApi: sites[0]?.api ?? null,
+    sessionReady: false,
+  };
+}
+
+function inputKindForCatalogKind(sourceKind: ConfigCatalogSnapshot["sourceKind"]): Exclude<ImportState["inputKind"], null> {
+  return sourceKind === "url" ? "url" : sourceKind === "file" ? "file" : "json";
+}
+
+function importSourceKindForCatalogKind(sourceKind: ConfigCatalogSnapshot["sourceKind"]): Exclude<ImportState["sourceKind"], null> {
+  return sourceKind === "url" ? "remote" : sourceKind === "file" ? "local" : "inline";
+}
+
 function listItems(value: unknown): Record<string, unknown>[] {
   const object = record(value);
   const list = Array.isArray(object.list) ? object.list : Array.isArray(object.items) ? object.items : [];
   return list.filter(isRecord).map((item) => ({ ...item }));
+}
+
+function browseMetadata(value: unknown): { categories: BrowseCategory[]; filters: BrowseFilter[] } {
+  const object = record(value);
+  const categoryValues = Array.isArray(object.class)
+    ? object.class
+    : Array.isArray(object.categories)
+      ? object.categories
+      : [];
+  const categories = categoryValues.flatMap((candidate) => {
+    if (!isRecord(candidate)) return [];
+    const id = stringValue(candidate.type_id ?? candidate.typeId ?? candidate.id).trim();
+    const name = stringValue(candidate.type_name ?? candidate.name ?? candidate.title).trim();
+    return id && name ? [{ id, name }] : [];
+  });
+  const filterValues = Array.isArray(object.filters) ? object.filters : [];
+  const filters = filterValues.flatMap((candidate) => {
+    if (!isRecord(candidate)) return [];
+    const id = stringValue(candidate.id ?? candidate.key ?? candidate.type).trim();
+    const name = stringValue(candidate.name ?? candidate.label ?? candidate.title).trim();
+    const values = Array.isArray(candidate.options)
+      ? candidate.options
+      : Array.isArray(candidate.values)
+        ? candidate.values
+        : [];
+    const options = values.flatMap((option) => {
+      if (!isRecord(option)) return [];
+      const optionId = stringValue(option.id ?? option.value ?? option.key).trim();
+      const optionName = stringValue(option.name ?? option.label ?? option.title ?? option.value).trim();
+      return optionId && optionName ? [{ id: optionId, name: optionName }] : [];
+    });
+    return id && name && options.length > 0 ? [{ id, name, options }] : [];
+  });
+  return {
+    categories: uniqueById(categories),
+    filters: uniqueById(filters),
+  };
+}
+
+function uniqueById<T extends { id: string }>(values: T[]): T[] {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    if (seen.has(value.id)) return false;
+    seen.add(value.id);
+    return true;
+  });
 }
 
 function playbackCatalog(value: Record<string, unknown>): PlaybackCatalog | null {
@@ -1574,7 +1996,19 @@ function quickJsArgs(method: string, params: Record<string, unknown> | undefined
 }
 
 function quickJsSnapshot(runtime: TauriRuntimeState): SourceSessionResult["session"] {
-  const capabilities: SourceCapabilities = {
+  return {
+    sessionId: runtime.sessionId,
+    sourceId: runtime.sourceId ?? "",
+    ...(runtime.selectedSite?.key === undefined ? {} : { siteKey: runtime.selectedSite.key }),
+    api: runtime.selectedSite?.api ?? "",
+    siteType: runtime.selectedSite?.siteType ?? 3,
+    state: runtime.sessionReady ? "ready" : "closed",
+    capabilities: quickJsCapabilities(runtime),
+  };
+}
+
+function quickJsCapabilities(runtime: TauriRuntimeState): SourceCapabilities {
+  return {
     home: Boolean(runtime.quickJsMethods.home || runtime.quickJsMethods.homeVod),
     category: Boolean(runtime.quickJsMethods.category),
     search: Boolean(runtime.quickJsMethods.search),
@@ -1585,24 +2019,66 @@ function quickJsSnapshot(runtime: TauriRuntimeState): SourceSessionResult["sessi
     pagination: Boolean(runtime.quickJsMethods.category || runtime.quickJsMethods.search),
     engine: "quickjs",
   };
-  return {
-    sessionId: runtime.sessionId,
-    sourceId: runtime.source,
-    ...(runtime.selectedSite?.key === undefined ? {} : { siteKey: runtime.selectedSite.key }),
-    api: runtime.selectedSite?.api ?? "",
-    siteType: runtime.selectedSite?.siteType ?? 3,
-    state: runtime.sessionReady ? "ready" : "closed",
-    capabilities,
-  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isRendererNavigation(value: unknown): value is RendererPersistenceState["navigation"] {
+  return value === "home"
+    || value === "category"
+    || value === "search"
+    || value === "detail"
+    || value === "history"
+    || value === "favorites"
+    || value === "follow"
+    || value === "settings"
+    || value === "live"
+    || value === "local"
+    || value === "downloads";
+}
+
+function persistenceCategory(value: unknown): RendererPersistenceState["category"] | undefined {
+  if (value === null) return null;
+  if (!isRecord(value)) return undefined;
+  const typeId = stringValue(value.typeId).trim();
+  const page = numberValue(value.page, 0);
+  if (!typeId || !Number.isInteger(page) || page <= 0) return undefined;
+  const filters = isRecord(value.filters)
+    ? Object.fromEntries(
+        Object.entries(value.filters)
+          .filter(([key, item]) => key.trim().length > 0 && typeof item === "string" && item.trim().length > 0)
+          .map(([key, item]) => [key.trim().slice(0, 120), String(item).trim().slice(0, 240)]),
+      )
+    : {};
+  return { typeId, page, filters };
+}
+
+function persistenceSearch(value: unknown): RendererPersistenceState["search"] | undefined {
+  if (value === null) return null;
+  if (!isRecord(value)) return undefined;
+  const key = stringValue(value.key).trim();
+  const page = numberValue(value.page, 0);
+  return key && Number.isInteger(page) && page > 0 ? { key, page } : undefined;
+}
+
 function featureSourceId(runtime: TauriRuntimeState): string {
-  const source = runtime.selectedSite?.key || runtime.source;
-  return `source:${stableDigest(source)}`;
+  const sourceId = requireSourceId(runtime);
+  const siteKey = runtime.selectedSite?.key;
+  if (!siteKey) throw new Error("TAURI_SITE_NOT_FOUND");
+  return `source:${stableDigest(`${sourceId}:${siteKey}`)}`;
+}
+
+function requireSourceId(runtime: TauriRuntimeState): string {
+  if (!runtime.sourceId) throw new Error("TAURI_SOURCE_ID_UNAVAILABLE");
+  return runtime.sourceId;
+}
+
+function stableSourceId(value: string, sessionId: string): string | null {
+  const normalized = value.trim();
+  if (!normalized || normalized === sessionId || /^https?:\/\//iu.test(normalized)) return null;
+  return normalized;
 }
 
 function featureIdentifier(value: string, prefix: string): string | null {

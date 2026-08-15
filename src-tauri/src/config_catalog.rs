@@ -41,6 +41,25 @@ pub struct ConfigCatalogSnapshot {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ConfigCatalogHistorySnapshot {
+    pub schema_version: String,
+    pub source: String,
+    pub active_version_hash: Option<String>,
+    pub versions: Vec<ConfigCatalogVersionSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigCatalogVersionSummary {
+    pub version_hash: String,
+    pub source_kind: String,
+    pub site_count: usize,
+    pub created_at: i64,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConfigSiteSummary {
     pub key: String,
     pub name: String,
@@ -167,6 +186,122 @@ pub fn ingest_connection(
         warning_code,
         sites,
     })
+}
+
+pub fn history(path: &Path, source: &str) -> Result<ConfigCatalogHistorySnapshot, CatalogError> {
+    let connection =
+        Connection::open(path).map_err(|error| CatalogError::storage(error.to_string()))?;
+    history_connection(&connection, source)
+}
+
+pub fn history_connection(
+    connection: &Connection,
+    source: &str,
+) -> Result<ConfigCatalogHistorySnapshot, CatalogError> {
+    ensure_schema(connection)?;
+    let source = normalized_source_required(source)?;
+    let active_version_hash = connection
+        .query_row(
+            "SELECT active_version_hash FROM config_sources WHERE source = ?1",
+            params![source],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(|error| CatalogError::storage(error.to_string()))?
+        .flatten();
+    let mut statement = connection
+        .prepare(
+            "SELECT version_hash, source_kind, site_count, created_at
+             FROM config_versions WHERE source = ?1 ORDER BY created_at DESC, rowid DESC",
+        )
+        .map_err(|error| CatalogError::storage(error.to_string()))?;
+    let rows = statement
+        .query_map(params![source], |row| {
+            let version_hash = row.get::<_, String>(0)?;
+            Ok(ConfigCatalogVersionSummary {
+                active: active_version_hash.as_deref() == Some(version_hash.as_str()),
+                version_hash,
+                source_kind: row.get(1)?,
+                site_count: row.get::<_, i64>(2)? as usize,
+                created_at: row.get(3)?,
+            })
+        })
+        .map_err(|error| CatalogError::storage(error.to_string()))?;
+    let versions = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| CatalogError::storage(error.to_string()))?;
+    Ok(ConfigCatalogHistorySnapshot {
+        schema_version: "v1".to_string(),
+        source,
+        active_version_hash,
+        versions,
+    })
+}
+
+pub fn activate(
+    path: &Path,
+    source: &str,
+    version_hash: &str,
+) -> Result<ConfigCatalogSnapshot, CatalogError> {
+    let connection =
+        Connection::open(path).map_err(|error| CatalogError::storage(error.to_string()))?;
+    activate_connection(&connection, source, version_hash)
+}
+
+pub fn activate_connection(
+    connection: &Connection,
+    source: &str,
+    version_hash: &str,
+) -> Result<ConfigCatalogSnapshot, CatalogError> {
+    ensure_schema(connection)?;
+    let source = normalized_source_required(source)?;
+    if version_hash.trim().is_empty() {
+        return Err(CatalogError::invalid(
+            "CONFIG_VERSION_HASH_EMPTY",
+            "configuration version hash is empty",
+        ));
+    }
+    let version = connection
+        .query_row(
+            "SELECT source_kind, raw_json, site_count FROM config_versions
+             WHERE source = ?1 AND version_hash = ?2",
+            params![source, version_hash],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)? as usize,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| CatalogError::storage(error.to_string()))?
+        .ok_or_else(|| {
+            CatalogError::invalid(
+                "CONFIG_VERSION_NOT_FOUND",
+                "configuration version was not found",
+            )
+        })?;
+    connection
+        .execute(
+            "INSERT INTO config_sources(source, source_kind, active_version_hash, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(source) DO UPDATE SET
+               source_kind = excluded.source_kind,
+               active_version_hash = excluded.active_version_hash,
+               updated_at = excluded.updated_at",
+            params![source, version.0, version_hash, now_millis()],
+        )
+        .map_err(|error| CatalogError::storage(error.to_string()))?;
+    snapshot_from_version(
+        connection,
+        &source,
+        version_hash,
+        &version.0,
+        &version.1,
+        version.2,
+        true,
+    )
 }
 
 pub async fn ingest_remote(
@@ -541,12 +676,7 @@ pub fn decode_config_payload(input: &str) -> Result<String, CatalogError> {
 }
 
 fn validate_payload(source: &str, source_kind: &str) -> Result<(), CatalogError> {
-    if source.is_empty() {
-        return Err(CatalogError::invalid(
-            "CONFIG_SOURCE_EMPTY",
-            "configuration source is empty",
-        ));
-    }
+    normalized_source_required(source)?;
     if !matches!(source_kind, "url" | "file" | "json" | "multi") {
         return Err(CatalogError::invalid(
             "CONFIG_SOURCE_KIND_INVALID",
@@ -556,6 +686,17 @@ fn validate_payload(source: &str, source_kind: &str) -> Result<(), CatalogError>
     Ok(())
 }
 
+fn normalized_source_required(source: &str) -> Result<String, CatalogError> {
+    let source = normalize_source(source);
+    if source.is_empty() {
+        return Err(CatalogError::invalid(
+            "CONFIG_SOURCE_EMPTY",
+            "configuration source is empty",
+        ));
+    }
+    Ok(source)
+}
+
 fn latest_version(
     connection: &Connection,
     source: &str,
@@ -563,12 +704,49 @@ fn latest_version(
     connection
         .query_row(
             "SELECT version_hash, site_count, raw_json FROM config_versions
-             WHERE source = ?1 ORDER BY created_at DESC, rowid DESC LIMIT 1",
+             WHERE source = ?1
+             ORDER BY CASE WHEN version_hash = (
+               SELECT active_version_hash FROM config_sources WHERE source = ?1
+             ) THEN 0 ELSE 1 END, created_at DESC, rowid DESC LIMIT 1",
             params![source],
             |row| Ok((row.get(0)?, row.get::<_, i64>(1)? as usize, row.get(2)?)),
         )
         .optional()
         .map_err(|error| CatalogError::storage(error.to_string()))
+}
+
+fn snapshot_from_version(
+    connection: &Connection,
+    source: &str,
+    version_hash: &str,
+    source_kind: &str,
+    raw_json: &str,
+    stored_site_count: usize,
+    used_cache: bool,
+) -> Result<ConfigCatalogSnapshot, CatalogError> {
+    let (_, parsed_site_count, sites) = parse_config(raw_json)?;
+    let valid_version_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM config_versions WHERE source = ?1",
+            params![source],
+            |row| row.get(0),
+        )
+        .map_err(|error| CatalogError::storage(error.to_string()))?;
+    Ok(ConfigCatalogSnapshot {
+        schema_version: "v1".to_string(),
+        source: source.to_string(),
+        source_kind: source_kind.to_string(),
+        version_hash: version_hash.to_string(),
+        site_count: if parsed_site_count == 0 {
+            stored_site_count
+        } else {
+            parsed_site_count
+        },
+        used_cache,
+        valid_version_count: valid_version_count as usize,
+        warning_code: http_warning(source),
+        sites,
+    })
 }
 
 fn decode_base64(value: &str) -> Result<String, CatalogError> {
@@ -747,7 +925,8 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_config_payload, ingest_connection, ingest_remote, parse_config, ConfigCatalogPayload,
+        activate_connection, decode_config_payload, history_connection, ingest_connection,
+        ingest_remote, parse_config, ConfigCatalogPayload,
     };
     use crate::jianpian;
     use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -803,6 +982,70 @@ mod tests {
         assert!(fallback.used_cache);
         assert_eq!(fallback.valid_version_count, 3);
         assert_eq!(fallback.site_count, 1);
+    }
+
+    #[test]
+    fn lists_versions_and_activates_a_previous_version_for_cache_reads() {
+        let connection = Connection::open_in_memory().expect("memory database");
+        let first = ingest_connection(
+            &connection,
+            &ConfigCatalogPayload {
+                source: "inline:fixture".to_string(),
+                source_kind: "json".to_string(),
+                raw: r#"{"sites":[{"key":"first","api":"csp_First"}]}"#.to_string(),
+                fetch_remote: false,
+                timeout_ms: None,
+            },
+        )
+        .expect("first config");
+        let second = ingest_connection(
+            &connection,
+            &ConfigCatalogPayload {
+                source: "inline:fixture".to_string(),
+                source_kind: "json".to_string(),
+                raw: r#"{"sites":[{"key":"second","api":"csp_Second"}]}"#.to_string(),
+                fetch_remote: false,
+                timeout_ms: None,
+            },
+        )
+        .expect("second config");
+
+        let history = history_connection(&connection, "inline:fixture").expect("history");
+        assert_eq!(history.versions.len(), 2);
+        assert_eq!(
+            history.active_version_hash.as_deref(),
+            Some(second.version_hash.as_str())
+        );
+        assert!(history
+            .versions
+            .iter()
+            .any(|version| version.version_hash == first.version_hash && !version.active));
+
+        let activated = activate_connection(&connection, "inline:fixture", &first.version_hash)
+            .expect("activate previous config");
+        assert_eq!(activated.version_hash, first.version_hash);
+        assert_eq!(activated.sites[0].key, "first");
+
+        let cached = ingest_connection(
+            &connection,
+            &ConfigCatalogPayload {
+                source: "inline:fixture".to_string(),
+                source_kind: "json".to_string(),
+                raw: "not-json".to_string(),
+                fetch_remote: false,
+                timeout_ms: None,
+            },
+        )
+        .expect("selected cache");
+        assert!(cached.used_cache);
+        assert_eq!(cached.version_hash, first.version_hash);
+        assert_eq!(
+            history_connection(&connection, "inline:fixture")
+                .expect("updated history")
+                .active_version_hash
+                .as_deref(),
+            Some(first.version_hash.as_str())
+        );
     }
 
     #[test]

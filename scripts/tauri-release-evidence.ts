@@ -10,26 +10,37 @@ const installer = requiredPath(args["installer"] ?? process.env.QX_TAURI_NSIS, "
 const componentManifest = requiredPath(args["component-manifest"], "--component-manifest");
 const componentSignature = requiredPath(args["component-signature"], "--component-signature");
 const componentPublicKey = requiredPath(args["component-public-key"], "--component-public-key");
-const componentArtifact = requiredPath(args["component-artifact"], "--component-artifact");
-const componentId = args["component-id"]?.trim();
-if (!componentId) throw new Error("missing --component-id");
+const componentArtifacts = requiredList(args["component-artifact"], "--component-artifact").map((value) => requiredPath(value, "--component-artifact"));
+const componentIds = requiredList(args["component-id"], "--component-id");
 const manifestUrl = requiredHttps(args["manifest-url"], "--manifest-url");
-const artifactUrl = requiredHttps(args["artifact-url"], "--artifact-url");
+const artifactUrls = requiredList(args["artifact-url"], "--artifact-url").map((value) => requiredHttps(value, "--artifact-url"));
+if (componentIds.length !== componentArtifacts.length || componentIds.length !== artifactUrls.length) {
+  throw new Error("--component-id, --component-artifact, and --artifact-url must contain the same number of comma-separated values");
+}
 
 const manifest = readFileSync(componentManifest);
 const signature = decodeBase64File(componentSignature, "component signature");
 const publicKey = decodeBase64File(componentPublicKey, "component public key");
-const artifact = readFileSync(componentArtifact);
 const manifestSignatureVerified = verifyManifest(manifest, signature, publicKey);
-const artifactSha256 = sha256(artifact);
-const manifestComponent = readManifestComponent(manifest, componentId);
-const manifestComponentMatches = manifestComponent?.sha256 === artifactSha256
-  && manifestComponent.url === artifactUrl;
+const components = componentIds.map((componentId, index) => {
+  const artifact = readFileSync(componentArtifacts[index]!);
+  const artifactSha256 = sha256(artifact);
+  const manifestComponent = readManifestComponent(manifest, componentId);
+  return {
+    componentId,
+    artifactSha256,
+    artifactBytes: artifact.length,
+    artifactUrl: artifactUrls[index]!,
+    manifestComponentMatches: manifestComponent?.sha256 === artifactSha256
+      && manifestComponent.url === artifactUrls[index],
+  };
+});
+const manifestComponentMatches = components.every((component) => component.manifestComponentMatches);
 const authenticode = readAuthenticode(installer);
 const installerSha256 = sha256(readFileSync(installer));
 const verified = manifestSignatureVerified
   && manifestComponentMatches
-  && artifact.length > 0
+  && components.every((component) => component.artifactBytes > 0)
   && authenticode.authenticodeStatus === "Valid"
   && authenticode.timestamped;
 
@@ -39,12 +50,13 @@ const componentEvidence = {
   verified,
   manifestSignatureVerified,
   signatureAlgorithm: "Ed25519",
-  componentId,
+  componentId: components[0]!.componentId,
+  components,
   manifestComponentMatches,
   manifestUrl,
-  artifactUrl,
-  artifactSha256,
-  artifactBytes: artifact.length,
+  artifactUrl: components[0]!.artifactUrl,
+  artifactSha256: components[0]!.artifactSha256,
+  artifactBytes: components[0]!.artifactBytes,
   manifestSha256: sha256(manifest),
   generatedBy: "scripts/tauri-release-evidence.ts",
 };
@@ -87,6 +99,12 @@ function requiredPath(value: string | undefined, label: string): string {
   const path = value?.trim();
   if (!path || !existsSync(path)) throw new Error(`missing ${label}`);
   return resolve(path);
+}
+
+function requiredList(value: string | undefined, label: string): string[] {
+  const values = value?.split(",").map((item) => item.trim()).filter(Boolean) ?? [];
+  if (values.length === 0) throw new Error(`missing ${label}`);
+  return values;
 }
 
 function requiredHttps(value: string | undefined, label: string): string {

@@ -1,8 +1,9 @@
-import type { AndroidRuntimeComponentLock, AndroidRuntimeManifest } from "./android-runtime-types.js";
+import type { AndroidRuntimeAvdName, AndroidRuntimeComponentLock, AndroidRuntimeManifest } from "./android-runtime-types.js";
 import {
   ANDROID_RUNTIME_API,
   ANDROID_RUNTIME_ARCHITECTURE,
   ANDROID_RUNTIME_AVD_NAME,
+  ANDROID_RUNTIME_COMPACT_AVD_NAME,
   ANDROID_RUNTIME_SYSTEM_IMAGE,
   ANDROID_RUNTIME_VERSION,
 } from "./android-runtime-types.js";
@@ -53,7 +54,11 @@ export const ANDROID_RUNTIME_SDK_COMPONENT_LOCKS = {
   },
 } as const satisfies Record<string, AndroidRuntimeComponentLock>;
 
-export function buildAndroidRuntimeManifest(hostSha256: string, hostVersion = "1.0.0"): AndroidRuntimeManifest {
+export function buildAndroidRuntimeManifest(
+  hostSha256: string,
+  hostVersion = "1.0.0",
+  avdName: AndroidRuntimeAvdName = ANDROID_RUNTIME_AVD_NAME,
+): AndroidRuntimeManifest {
   return {
     schemaVersion: 1,
     runtimeVersion: ANDROID_RUNTIME_VERSION,
@@ -62,7 +67,7 @@ export function buildAndroidRuntimeManifest(hostSha256: string, hostVersion = "1
       api: ANDROID_RUNTIME_API,
       architecture: ANDROID_RUNTIME_ARCHITECTURE,
       image: ANDROID_RUNTIME_SYSTEM_IMAGE,
-      avdName: ANDROID_RUNTIME_AVD_NAME,
+      avdName,
     },
     sdkPackages: [...ANDROID_RUNTIME_SDK_PACKAGES],
     sdkComponents: {
@@ -90,7 +95,7 @@ export function isAndroidRuntimeManifest(value: unknown): value is AndroidRuntim
     && (android as Record<string, unknown>).api === ANDROID_RUNTIME_API
     && (android as Record<string, unknown>).architecture === ANDROID_RUNTIME_ARCHITECTURE
     && (android as Record<string, unknown>).image === ANDROID_RUNTIME_SYSTEM_IMAGE
-    && (android as Record<string, unknown>).avdName === ANDROID_RUNTIME_AVD_NAME
+    && isAndroidRuntimeAvdName((android as Record<string, unknown>).avdName)
     && Array.isArray(record.sdkPackages)
     && (record.sdkPackages as unknown[]).every((item) => typeof item === "string")
     && (record.sdkPackages as string[]).includes("platform-tools")
@@ -108,6 +113,10 @@ export function isAndroidRuntimeManifest(value: unknown): value is AndroidRuntim
     && typeof (host as Record<string, unknown>).version === "string"
     && typeof (host as Record<string, unknown>).sha256 === "string"
     && /^[a-f0-9]{64}$/iu.test((host as Record<string, unknown>).sha256 as string);
+}
+
+function isAndroidRuntimeAvdName(value: unknown): value is AndroidRuntimeAvdName {
+  return value === ANDROID_RUNTIME_AVD_NAME || value === ANDROID_RUNTIME_COMPACT_AVD_NAME;
 }
 
 function isComponentLock(

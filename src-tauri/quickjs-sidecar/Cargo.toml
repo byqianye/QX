@@ -1,6 +1,6 @@
 [package]
 name = "qx-quickjs-sidecar"
-version = "0.9.0"
+version = "0.9.0-rc.1"
 description = "Verified optional QuickJS sidecar for QX影视"
 authors = ["QX影视"]
 edition = "2021"

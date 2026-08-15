@@ -49,7 +49,8 @@ export async function runAndroidSpiderPoc(
   const response = await fetch(configUrl, { signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`Configuration request failed: HTTP ${response.status}`);
   const config = parseTvBoxConfig(await response.text());
-  const site = selectSite(config.sites ?? []);
+  const siteSelector = process.env.QX_ANDROID_POC_API?.trim() || process.env.QX_ANDROID_POC_SITE_KEY?.trim();
+  const site = selectAndroidPocSite(config.sites ?? [], siteSelector);
   if (!site) throw new Error("No searchable csp_* site was found in the configuration");
   const normalized = normalizeFongMiSite(site, configUrl);
   const cacheRoot = process.env.QX_ANDROID_POC_CACHE ?? join(tmpdir(), "qx-android-spider-poc-cache");
@@ -358,7 +359,7 @@ export async function runAndroidSpiderPoc(
     hostApkAvailable: hostApkFound,
     hostInstalled,
     hostOnline,
-    androidHostAvailable: client?.androidHostAvailable ?? hostOnline,
+    androidHostAvailable: hostOnline,
     hostAvailable: hostOnline,
   };
   const coreOperations = new Set(["health", "loadJar", "createSpider", "init", "searchContent"]);
@@ -411,7 +412,7 @@ export async function runAndroidSpiderPoc(
       ...(hostApkFound ? { hostApkPath } : {}),
       hostInstalled,
       hostOnline,
-      androidHostAvailable: client?.androidHostAvailable ?? hostOnline,
+      androidHostAvailable: hostOnline,
       ...(rpcHealth ? { rpcHealth } : {}),
     },
     artifact: artifactDiagnostics,
@@ -478,11 +479,21 @@ function classDiagnosticsFromError(api: string, siteKey: string, expectedClass: 
   };
 }
 
-function selectSite(sites: readonly TvBoxSite[]): TvBoxSite | undefined {
+export function selectAndroidPocSite(sites: readonly TvBoxSite[], selector?: string): TvBoxSite | undefined {
   const candidates = sites.filter((site) => {
     const normalized = normalizeFongMiSite(site);
     return normalized.searchable && /^csp_/i.test(normalized.api);
   });
+  if (selector) {
+    const wanted = selector.trim().toLowerCase();
+    const selected = candidates.find((site) => {
+      const normalized = normalizeFongMiSite(site);
+      return [site.key, site.name, site.api, normalized.key, normalized.name, normalized.api]
+        .some((value) => typeof value === "string" && value.trim().toLowerCase() === wanted);
+    });
+    if (!selected) throw new Error(`ANDROID_POC_SITE_NOT_FOUND: ${selector}`);
+    return selected;
+  }
   return candidates.find((site) => {
     const key = normalizeFongMiSite(site).key.toLowerCase();
     return key !== "config" && key !== "push_agent";

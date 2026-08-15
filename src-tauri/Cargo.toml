@@ -1,6 +1,6 @@
 [package]
 name = "qx-yingshi"
-version = "0.9.0"
+version = "0.9.0-rc.1"
 description = "QX影视 Tauri desktop shell"
 authors = ["QX影视"]
 edition = "2021"

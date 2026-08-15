@@ -72,20 +72,24 @@ const playableCandidates = computed(() => (props.playbackSources?.candidates ?? 
 </script>
 
 <template>
-  <aside class="detail-drawer" data-testid="detail-drawer" data-od-id="detail-drawer" aria-label="媒体详情">
+  <aside class="detail-drawer" data-testid="detail-drawer" data-od-id="detail-drawer" aria-label="媒体详情" @click.self="emit('close')">
     <section class="detail-drawer-panel" data-testid="detail-panel">
       <button ref="closeButton" type="button" class="drawer-close" aria-label="关闭详情" @click="emit('close')"><Icon name="close" /></button>
-      <div class="detail-cover">
-        <PosterImage
-          :source="typeof detail.vod_pic === 'string' && detail.vod_pic.trim() ? detail.vod_pic : null"
-          :alt="`${String(detail.vod_name || '详情')} 海报`"
-          :fallback-text="String(detail.vod_name || '详情')"
-          test-id="detail-poster"
-        />
+      <div class="detail-header">
+        <div class="detail-cover">
+          <PosterImage
+            :source="typeof detail.vod_pic === 'string' && detail.vod_pic.trim() ? detail.vod_pic : null"
+            :alt="`${String(detail.vod_name || '详情')} 海报`"
+            :fallback-text="String(detail.vod_name || '详情')"
+            test-id="detail-poster"
+          />
+        </div>
+        <div class="detail-header-info">
+          <span class="section-kicker">媒体详情</span>
+          <h2>{{ detail.vod_name || "详情" }}</h2>
+          <p class="detail-summary">{{ detail.vod_content || "暂无简介" }}</p>
+        </div>
       </div>
-      <span class="section-kicker">媒体详情</span>
-      <h2>{{ detail.vod_name || "详情" }}</h2>
-      <p class="detail-summary">{{ detail.vod_content || "暂无简介" }}</p>
       <dl class="detail-meta">
         <div v-for="field in detailFields" :key="field.label"><dt>{{ field.label }}</dt><dd>{{ field.value }}</dd></div>
         <div><dt>线路状态</dt><dd>{{ playbackLabel }}</dd></div>

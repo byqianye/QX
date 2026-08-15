@@ -12,7 +12,8 @@ import { buildAndroidRuntimeManifest } from "../src/spider/android-runtime-manif
 const projectRoot = resolve(import.meta.dirname, "..");
 const apkPath = process.env.QX_ANDROID_HOST_APK?.trim()
   || join(projectRoot, "android-spider-host", "app", "build", "outputs", "apk", "debug", "app-debug.apk");
-const qxRuntimeRoot = join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "QXMovie", "android-runtime");
+const qxRuntimeRoot = process.env.QX_ANDROID_RUNTIME_ROOT?.trim()
+  || join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "QXMovie", "android-runtime");
 const qxSdkPath = join(qxRuntimeRoot, "sdk");
 const qxAdbPath = join(qxSdkPath, "platform-tools", process.platform === "win32" ? "adb.exe" : "adb");
 const qxEnvironment: NodeJS.ProcessEnv = {

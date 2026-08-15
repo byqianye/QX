@@ -489,7 +489,7 @@ describe("real configuration import", () => {
 
       const initial = await fetch(new URL("/api/state", server.url));
       const initialValue = await initial.json() as { persistence: Record<string, unknown> };
-      expect(initialValue.persistence).toMatchObject({ theme: "dark", siteKey: null });
+      expect(initialValue.persistence).toMatchObject({ theme: "light", siteKey: null });
 
       await post(server.url, "/api/import/load", { input: configJson() });
       await post(server.url, "/api/import/confirm");

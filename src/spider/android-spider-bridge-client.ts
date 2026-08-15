@@ -57,6 +57,7 @@ export interface AndroidSpiderBridgeClientOptions {
   sourceName?: string;
   artifactUrl?: string;
   artifactRegistry?: AndroidArtifactRegistry;
+  onActivity?: () => void;
 }
 
 export interface AndroidArtifactSession {
@@ -469,6 +470,7 @@ export class AndroidSpiderBridgeClient {
     signal?: AbortSignal,
   ): Promise<unknown> {
     throwIfAborted(signal, method);
+    this.options.onActivity?.();
     if (!this.isConnected) await this.connect();
     throwIfAborted(signal, method);
     const requestParams = this.withSessionIds(params);

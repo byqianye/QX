@@ -15,6 +15,8 @@ const EXPECTED_TARGET: &str = "x86_64-pc-windows-msvc";
 const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 const MAX_ARTIFACT_BYTES: usize = 128 * 1024 * 1024;
 const COMPONENT_PUBLIC_KEY_ENV: &str = "QX_COMPONENT_PUBLIC_KEY_BASE64";
+const COMPONENT_MANIFEST_URL_ENV: &str = "QX_COMPONENT_MANIFEST_URL";
+const COMPONENT_SIGNATURE_URL_ENV: &str = "QX_COMPONENT_SIGNATURE_URL";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -105,13 +107,87 @@ pub fn handle(
                 reason_code: None,
             })
         }
+        "install-default" => install_default(root, payload),
         "install" => install(root, payload),
         "rollback" => rollback(root, payload),
         "uninstall" => uninstall(root, payload),
         _ => Err(ComponentManagerError::Invalid(
-            "component action must be verify, install, rollback, or uninstall".to_string(),
+            "component action must be verify, install-default, install, rollback, or uninstall"
+                .to_string(),
         )),
     }
+}
+
+fn install_default(
+    root: &Path,
+    payload: &ComponentManagerPayload,
+) -> Result<ComponentManagerSnapshot, ComponentManagerError> {
+    if payload.running.unwrap_or(false) {
+        return Err(ComponentManagerError::Invalid(
+            "running components cannot be switched".to_string(),
+        ));
+    }
+    let component_id = payload
+        .component_id
+        .as_deref()
+        .ok_or_else(|| ComponentManagerError::Invalid("componentId is required".to_string()))?;
+    validate_component_id(component_id)?;
+    let active = safe_component_root(root, component_id)?.join("active");
+    if active.join("payload").is_file() && active.join("manifest.json").is_file() {
+        let version = fs::read_to_string(active.join("manifest.json"))
+            .ok()
+            .and_then(|value| serde_json::from_str::<ComponentManifest>(&value).ok())
+            .and_then(|manifest| {
+                manifest
+                    .components
+                    .into_iter()
+                    .find(|component| component.id == component_id)
+                    .map(|component| component.version)
+            });
+        return Ok(ComponentManagerSnapshot {
+            state: "active".to_string(),
+            component_id: Some(component_id.to_string()),
+            version,
+            verified: true,
+            reason_code: None,
+        });
+    }
+
+    let manifest_url = option_env!("QX_COMPONENT_MANIFEST_URL").ok_or_else(|| {
+        ComponentManagerError::Storage(format!(
+            "default component manifest is not configured; set {COMPONENT_MANIFEST_URL_ENV} at build time"
+        ))
+    })?;
+    let signature_url = option_env!("QX_COMPONENT_SIGNATURE_URL").ok_or_else(|| {
+        ComponentManagerError::Storage(format!(
+            "default component signature is not configured; set {COMPONENT_SIGNATURE_URL_ENV} at build time"
+        ))
+    })?;
+    let client = component_client()?;
+    let manifest = fetch_bounded(&client, manifest_url, MAX_MANIFEST_BYTES)?;
+    let signature = fetch_bounded(&client, signature_url, 16 * 1024)?;
+    let manifest_json = String::from_utf8(manifest).map_err(|error| {
+        ComponentManagerError::Invalid(format!("component manifest is not UTF-8: {error}"))
+    })?;
+    let public_key_base64 = option_env!("QX_COMPONENT_PUBLIC_KEY_BASE64")
+        .ok_or_else(|| {
+            ComponentManagerError::Untrusted(format!(
+                "release component trust anchor is not configured; set {COMPONENT_PUBLIC_KEY_ENV} at build time"
+            ))
+        })?
+        .to_string();
+    install(
+        root,
+        &ComponentManagerPayload {
+            action: "install".to_string(),
+            component_id: Some(component_id.to_string()),
+            manifest_json: Some(manifest_json),
+            signature_base64: Some(String::from_utf8_lossy(&signature).trim().to_string()),
+            public_key_base64: Some(public_key_base64),
+            artifact_base64: None,
+            running: payload.running,
+        },
+    )
 }
 
 fn verify_manifest(
@@ -226,20 +302,7 @@ fn install(
             .decode(encoded)
             .map_err(|error| ComponentManagerError::Invalid(format!("invalid artifact: {error}")))?
     } else {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(60))
-            .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                if attempt.previous().len() >= 3 {
-                    return attempt.stop();
-                }
-                if attempt.url().scheme() != "https" {
-                    return attempt.stop();
-                }
-                attempt.follow()
-            }))
-            .user_agent("QX-Yingshi/1.0 component-manager")
-            .build()
-            .map_err(|error| ComponentManagerError::Storage(error.to_string()))?;
+        let client = component_client()?;
         let response = client
             .get(&component.url)
             .send()
@@ -309,6 +372,64 @@ fn install(
         verified: true,
         reason_code: None,
     })
+}
+
+fn component_client() -> Result<Client, ComponentManagerError> {
+    Client::builder()
+        .timeout(Duration::from_secs(60))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 3 {
+                return attempt.stop();
+            }
+            if attempt.url().scheme() != "https" {
+                return attempt.stop();
+            }
+            attempt.follow()
+        }))
+        .user_agent("QX-Yingshi/1.0 component-manager")
+        .build()
+        .map_err(|error| ComponentManagerError::Storage(error.to_string()))
+}
+
+fn fetch_bounded(
+    client: &Client,
+    url: &str,
+    max_bytes: usize,
+) -> Result<Vec<u8>, ComponentManagerError> {
+    if !is_https_url(url) {
+        return Err(ComponentManagerError::Invalid(
+            "component source must be HTTPS".to_string(),
+        ));
+    }
+    let response = client
+        .get(url)
+        .send()
+        .map_err(|error| ComponentManagerError::Storage(error.to_string()))?;
+    if !response.status().is_success() {
+        return Err(ComponentManagerError::Storage(format!(
+            "component source returned HTTP {}",
+            response.status().as_u16()
+        )));
+    }
+    if response
+        .content_length()
+        .is_some_and(|size| size > max_bytes as u64)
+    {
+        return Err(ComponentManagerError::Invalid(
+            "component source is too large".to_string(),
+        ));
+    }
+    let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
+    response
+        .take((max_bytes + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| ComponentManagerError::Storage(error.to_string()))?;
+    if bytes.is_empty() || bytes.len() > max_bytes {
+        return Err(ComponentManagerError::Invalid(
+            "component source is empty or too large".to_string(),
+        ));
+    }
+    Ok(bytes)
 }
 
 fn rollback(

@@ -73,6 +73,25 @@ export interface ConfigCatalogSnapshot {
   sites: ConfigSiteSummary[];
 }
 
+export type ConfigCatalogMaintenancePayload =
+  | { action: "history"; source: string }
+  | { action: "activate"; source: string; versionHash: string };
+
+export interface ConfigCatalogHistorySnapshot {
+  schemaVersion: "v1";
+  source: string;
+  activeVersionHash: string | null;
+  versions: ConfigCatalogVersionSummary[];
+}
+
+export interface ConfigCatalogVersionSummary {
+  versionHash: string;
+  sourceKind: ConfigCatalogPayload["sourceKind"];
+  siteCount: number;
+  createdAt: number;
+  active: boolean;
+}
+
 export interface ConfigSiteSummary {
   key: string;
   name: string;
@@ -285,6 +304,26 @@ export interface EpgSnapshot {
   state: Record<string, unknown>;
 }
 
+export interface CastPayload {
+  action: "snapshot" | "discover" | "play" | "pause" | "resume" | "stop" | "seek" | "position" | "transport" | "disconnect";
+  value: Record<string, unknown>;
+}
+
+export interface CastSnapshot {
+  schemaVersion: "v1";
+  state: Record<string, unknown>;
+}
+
+export interface PushPayload {
+  action: "snapshot" | "refresh" | "settings" | "submit" | "confirm" | "reject" | "cancel" | "clear";
+  value: Record<string, unknown>;
+}
+
+export interface PushSnapshot {
+  schemaVersion: "v1";
+  state: Record<string, unknown>;
+}
+
 export interface DesktopServicePayload {
   action: string;
   value: Record<string, unknown>;
@@ -305,7 +344,7 @@ export interface PlayerWindowSnapshot {
   state: Record<string, unknown>;
 }
 
-export type ComponentManagerAction = "verify" | "install" | "rollback" | "uninstall";
+export type ComponentManagerAction = "verify" | "install" | "install-default" | "rollback" | "uninstall";
 
 export interface ComponentManagerPayload {
   action: ComponentManagerAction;

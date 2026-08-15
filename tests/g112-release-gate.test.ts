@@ -11,6 +11,9 @@ describe("G112 release gate", () => {
     const override = spawnSync(process.execPath, [tsx, script, "--allow-incomplete"], { encoding: "utf8" });
     expect(override.status).toBe(0);
     expect(`${override.stdout}\n${override.stderr}`).toContain("incomplete override");
+    expect(`${blocked.stdout}\n${blocked.stderr}`).toMatch(/NSIS Authenticode status \(NotSigned\)|NSIS artifact not found:/u);
     expect(`${blocked.stdout}\n${blocked.stderr}`).toContain("G112-REPORT.md is not complete");
+    expect(`${blocked.stdout}\n${blocked.stderr}`).toContain("signed component Releases report (artifacts/tauri-components-release.json) is missing");
+    expect(`${blocked.stdout}\n${blocked.stderr}`).toContain("Authenticode signature report (artifacts/tauri-signature.json) is missing");
   }, 30_000);
 });

@@ -1,12 +1,13 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AndroidRuntimeBootstrapper } from "../src/spider/android-runtime-bootstrapper.js";
 import { AndroidRuntimeSupervisor, buildAndroidEmulatorArguments } from "../src/spider/android-runtime-supervisor.js";
 import type { AndroidRuntimeCommandRunner, AndroidRuntimeRunningProcess } from "../src/spider/android-runtime-process.js";
 import type { AndroidManagedDevice, AndroidRuntimePaths } from "../src/spider/android-runtime-types.js";
+import { ANDROID_RUNTIME_COMPACT_AVD_NAME } from "../src/spider/android-runtime-types.js";
 
 describe("Android Runtime Supervisor", () => {
   const directories: string[] = [];
@@ -16,6 +17,23 @@ describe("Android Runtime Supervisor", () => {
       "-dns-server",
       "192.0.2.53",
     ]));
+  });
+
+ it("can target the isolated Compact AVD without changing the production default", () => {
+    const userdataImagePath = "C:\\QXRuntimeCompact\\userdata-qx-compact.img";
+    expect(buildAndroidEmulatorArguments([], ANDROID_RUNTIME_COMPACT_AVD_NAME, userdataImagePath)).toEqual(expect.arrayContaining([
+     "-avd",
+     ANDROID_RUNTIME_COMPACT_AVD_NAME,
+     "-partition-size",
+     "1024",
+      "-data",
+      userdataImagePath,
+   ]));
+    expect(buildAndroidEmulatorArguments([])).toEqual(expect.arrayContaining([
+      "-avd",
+      "QXSpiderRuntime",
+    ]));
+    expect(buildAndroidEmulatorArguments([])).not.toContain("-partition-size");
   });
 
   afterEach(() => {
@@ -67,7 +85,7 @@ describe("Android Runtime Supervisor", () => {
     expect(device.installs).toBe(1);
     expect(device.networkWaits).toBe(1);
     const emulatorStart = runner.calls.find((call) => call.includes("-no-window"));
-    expect(emulatorStart).toEqual(expect.arrayContaining(["-no-window", "-no-audio", "-no-boot-anim", "-no-snapshot", "-gpu", "swiftshader_indirect"]));
+    expect(emulatorStart).toEqual(expect.arrayContaining(["-no-window", "-no-audio", "-no-boot-anim", "-no-snapshot", "-no-snapstorage", "-gpu", "swiftshader_indirect"]));
     expect(emulatorStart).not.toContain("-snapshot");
     expect(emulatorStart).not.toContain("qx-runtime");
     expect(runner.calls.some((call) => call.includes("kill-server"))).toBe(true);
@@ -76,7 +94,56 @@ describe("Android Runtime Supervisor", () => {
     expect(supervisor.status().mode).toBe("disabled");
     await expect(supervisor.ensureReady({ consent: true })).rejects.toMatchObject({ code: "ANDROID_RUNTIME_DISABLED" });
     expect(readFileSync(join(paths.avd, "QXSpiderRuntime.avd", "config.ini"), "utf8"))
-      .toContain("disk.dataPartition.size=4G");
+      .toContain("hw.ramSize=2G");
+  });
+
+  it("stops an auto runtime after the configured idle period", async () => {
+    vi.useFakeTimers();
+    try {
+      const root = mkdtempSync(join(tmpdir(), "qx-runtime-idle-"));
+      directories.push(root);
+      const paths: AndroidRuntimePaths = {
+        root,
+        sdk: join(root, "sdk"),
+        avd: join(root, "avd"),
+        downloads: join(root, "downloads"),
+        host: join(root, "host"),
+        state: join(root, "state"),
+      };
+      mkdirSync(join(paths.sdk, "cmdline-tools", "latest", "bin"), { recursive: true });
+      mkdirSync(join(paths.sdk, "emulator"), { recursive: true });
+      mkdirSync(join(paths.avd, "QXSpiderRuntime.avd"), { recursive: true });
+      writeFileSync(join(paths.avd, "QXSpiderRuntime.avd", "config.ini"), "hw.ramSize=2G\n");
+      writeFileSync(join(paths.sdk, "cmdline-tools", "latest", "bin", "sdkmanager.bat"), "fixture");
+      writeFileSync(join(paths.sdk, "cmdline-tools", "latest", "bin", "avdmanager.bat"), "fixture");
+      writeFileSync(join(paths.sdk, "emulator", "emulator.exe"), "fixture");
+      const hostApkPath = join(root, "host.apk");
+      writeFileSync(hostApkPath, "host");
+      const runner = fakeRunner();
+      const device = fakeDevice();
+      const supervisor = new AndroidRuntimeSupervisor({
+        paths,
+        bootstrapper: new AndroidRuntimeBootstrapper({ paths, hostApkPath, commandRunner: runner, platform: "win32", diskSpaceProbe: () => Number.MAX_SAFE_INTEGER }),
+        commandRunner: runner,
+        idleShutdownMs: 10,
+        deviceManagerFactory: () => device,
+        bridgeFactory: () => ({
+          async connect() { return { status: "ok" }; },
+          async health() { return { status: "ok" }; },
+          async close() {},
+        }),
+      });
+
+      await supervisor.ensureReady({ consent: true });
+      expect(supervisor.status().supervisorState).toBe("READY");
+
+      await vi.advanceTimersByTimeAsync(9);
+      expect(supervisor.status().supervisorState).toBe("READY");
+      await vi.advanceTimersByTimeAsync(1);
+      expect(supervisor.status().supervisorState).toBe("STOPPED");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("bounds automatic recovery to one emulator restart", async () => {

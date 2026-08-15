@@ -1,10 +1,11 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, ftruncateSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { AndroidRuntimeBootstrapper } from "../src/spider/android-runtime-bootstrapper.js";
 import type { AndroidRuntimeCommandRunner } from "../src/spider/android-runtime-process.js";
+import { ANDROID_RUNTIME_AVD_NAME, ANDROID_RUNTIME_COMPACT_AVD_NAME } from "../src/spider/android-runtime-types.js";
 import type { AndroidRuntimePaths, AndroidRuntimeProgress } from "../src/spider/android-runtime-types.js";
 
 const directories: string[] = [];
@@ -62,7 +63,7 @@ describe("Android Runtime Bootstrapper", () => {
     expect(readFileSync(bootstrapper.hostApkPath(), "utf8")).toBe("updated-host");
   });
 
-  it("normalizes avdmanager userdata config when the size assignment has spaces", async () => {
+  it("does not shrink an existing AVD userdata config", async () => {
     const fixture = createFixture();
     writeFileSync(join(fixture.paths.avd, "QXSpiderRuntime.avd", "config.ini"), "disk.dataPartition.size = 6442450944\n");
     const bootstrapper = new AndroidRuntimeBootstrapper({
@@ -76,9 +77,129 @@ describe("Android Runtime Bootstrapper", () => {
     await bootstrapper.ensureProvisioned({ consent: true });
 
     const config = readFileSync(join(fixture.paths.avd, "QXSpiderRuntime.avd", "config.ini"), "utf8");
-    expect(config).toContain("disk.dataPartition.size=4G");
-    expect(config).not.toContain("6442450944");
+    expect(config).toContain("disk.dataPartition.size = 6442450944");
+    expect(config).not.toContain("disk.dataPartition.size=1G");
     expect(config.match(/disk\.dataPartition\.size/gu)).toHaveLength(1);
+  });
+
+  it("creates a compact AVD profile without shrinking an existing AVD", async () => {
+    const fixture = createFixture(ANDROID_RUNTIME_COMPACT_AVD_NAME);
+    rmSync(join(fixture.paths.avd, `${ANDROID_RUNTIME_COMPACT_AVD_NAME}.avd`), { recursive: true, force: true });
+    const runner = fakeRunner({
+      avdListOutput: "",
+      onRun: (args, file) => {
+        if (file?.includes("mke2fs")) {
+          const partial = args[args.length - 2];
+          if (!partial) throw new Error("missing compact userdata image path");
+          const descriptor = openSync(partial, "w");
+          try {
+            ftruncateSync(descriptor, 1024 * 1024 * 1024);
+          } finally {
+            closeSync(descriptor);
+          }
+          return;
+        }
+        if (args[0] !== "create") return;
+        const avdPath = join(fixture.paths.avd, `${ANDROID_RUNTIME_COMPACT_AVD_NAME}.avd`);
+        mkdirSync(avdPath, { recursive: true });
+        writeFileSync(join(avdPath, "config.ini"), "disk.dataPartition.size=4G\nhw.ramSize=2G\n");
+      },
+    });
+    const bootstrapper = new AndroidRuntimeBootstrapper({
+      paths: fixture.paths,
+      hostApkPath: fixture.hostApkPath,
+      avdName: ANDROID_RUNTIME_COMPACT_AVD_NAME,
+      commandRunner: runner,
+      platform: "win32",
+      diskSpaceProbe: () => Number.MAX_SAFE_INTEGER,
+    });
+
+    await bootstrapper.ensureProvisioned({ consent: true });
+
+    const config = readFileSync(join(fixture.paths.avd, `${ANDROID_RUNTIME_COMPACT_AVD_NAME}.avd`, "config.ini"), "utf8");
+    expect((await bootstrapper.manifest()).android.avdName).toBe(ANDROID_RUNTIME_COMPACT_AVD_NAME);
+    expect(config).toContain("disk.dataPartition.size=1073741824");
+    expect(config).toContain("hw.ramSize=1024M");
+    expect(config).toContain("hw.audioInput=no");
+    expect(config).toContain("hw.audioOutput=no");
+    expect(config).toContain("hw.camera.back=none");
+    expect(config).toContain("hw.camera.front=none");
+    expect(config).toContain("hw.sdCard=no");
+    expect(config).toContain("firstboot.saveToLocalSnapshot=no");
+    expect(config).not.toContain("disk.dataPartition.size=4G");
+  });
+
+  it("creates a real one-gigabyte userdata image for Compact mode", async () => {
+    const fixture = createFixture(ANDROID_RUNTIME_COMPACT_AVD_NAME);
+    const runner = fakeRunner({
+      onRun: (args, file) => {
+        if (!file?.includes("mke2fs")) return;
+        const partial = args[args.length - 2];
+        if (!partial) throw new Error("missing compact userdata image path");
+        const descriptor = openSync(partial, "w");
+        try {
+          ftruncateSync(descriptor, 1024 * 1024 * 1024);
+        } finally {
+          closeSync(descriptor);
+        }
+      },
+    });
+    const bootstrapper = new AndroidRuntimeBootstrapper({
+      paths: fixture.paths,
+      hostApkPath: fixture.hostApkPath,
+      avdName: ANDROID_RUNTIME_COMPACT_AVD_NAME,
+      commandRunner: runner,
+      platform: "win32",
+      diskSpaceProbe: () => Number.MAX_SAFE_INTEGER,
+    });
+
+    await bootstrapper.ensureProvisioned({ consent: true });
+
+    const imagePath = bootstrapper.userdataImagePath();
+    expect(imagePath).toBeDefined();
+    expect(statSync(imagePath!).size).toBe(1024 * 1024 * 1024);
+    expect(runner.calls.some((call) => call[0]?.includes("mke2fs") && call.includes("ext4"))).toBe(true);
+  });
+
+  it("creates the Compact AVD before reporting an unavailable WHPX", async () => {
+    const fixture = createFixture(ANDROID_RUNTIME_COMPACT_AVD_NAME);
+    rmSync(join(fixture.paths.avd, `${ANDROID_RUNTIME_COMPACT_AVD_NAME}.avd`), { recursive: true, force: true });
+    const runner = fakeRunner({
+      avdListOutput: "",
+      whpxReady: false,
+      onRun: (args, file) => {
+        if (file?.includes("mke2fs")) {
+          const partial = args[args.length - 2];
+          if (!partial) throw new Error("missing compact userdata image path");
+          const descriptor = openSync(partial, "w");
+          try {
+            ftruncateSync(descriptor, 1024 * 1024 * 1024);
+          } finally {
+            closeSync(descriptor);
+          }
+          return;
+        }
+        if (args[0] !== "create") return;
+        const avdPath = join(fixture.paths.avd, `${ANDROID_RUNTIME_COMPACT_AVD_NAME}.avd`);
+        mkdirSync(avdPath, { recursive: true });
+        writeFileSync(join(avdPath, "config.ini"), "disk.dataPartition.size=10G\nhw.ramSize=2G\n");
+      },
+    });
+    const bootstrapper = new AndroidRuntimeBootstrapper({
+      paths: fixture.paths,
+      hostApkPath: fixture.hostApkPath,
+      avdName: ANDROID_RUNTIME_COMPACT_AVD_NAME,
+      commandRunner: runner,
+      platform: "win32",
+      diskSpaceProbe: () => Number.MAX_SAFE_INTEGER,
+    });
+
+    const state = await bootstrapper.ensureProvisioned({ consent: true });
+
+    expect(state.bootstrapState).toBe("REPAIR_AVAILABLE");
+    expect(state.diagnostics).toContain("WHPX_NOT_READY");
+    expect(readFileSync(join(fixture.paths.avd, `${ANDROID_RUNTIME_COMPACT_AVD_NAME}.avd`, "config.ini"), "utf8"))
+      .toContain("disk.dataPartition.size=1073741824");
   });
 
   it("keeps the persisted state valid when progress writes overlap state transitions", async () => {
@@ -113,7 +234,7 @@ describe("Android Runtime Bootstrapper", () => {
   });
 });
 
-function createFixture(): { paths: AndroidRuntimePaths; hostApkPath: string } {
+function createFixture(avdName = ANDROID_RUNTIME_AVD_NAME): { paths: AndroidRuntimePaths; hostApkPath: string } {
   const root = mkdtempSync(join(tmpdir(), "qx-embedded-android-"));
   directories.push(root);
   const paths: AndroidRuntimePaths = {
@@ -124,26 +245,31 @@ function createFixture(): { paths: AndroidRuntimePaths; hostApkPath: string } {
     host: join(root, "host"),
     state: join(root, "state"),
   };
-  mkdirSync(join(paths.sdk, "cmdline-tools", "latest", "bin"), { recursive: true });
-  mkdirSync(join(paths.sdk, "emulator"), { recursive: true });
-  mkdirSync(join(paths.avd, "QXSpiderRuntime.avd"), { recursive: true });
-  writeFileSync(join(paths.sdk, "cmdline-tools", "latest", "bin", "sdkmanager.bat"), "fixture");
-  writeFileSync(join(paths.sdk, "cmdline-tools", "latest", "bin", "avdmanager.bat"), "fixture");
-  writeFileSync(join(paths.sdk, "emulator", "emulator.exe"), "fixture");
-  writeFileSync(join(paths.avd, "QXSpiderRuntime.avd", "config.ini"), "disk.dataPartition.size=12G\n");
+ mkdirSync(join(paths.sdk, "cmdline-tools", "latest", "bin"), { recursive: true });
+  mkdirSync(join(paths.sdk, "platform-tools"), { recursive: true });
+ mkdirSync(join(paths.sdk, "emulator"), { recursive: true });
+  mkdirSync(join(paths.avd, `${avdName}.avd`), { recursive: true });
+ writeFileSync(join(paths.sdk, "cmdline-tools", "latest", "bin", "sdkmanager.bat"), "fixture");
+ writeFileSync(join(paths.sdk, "cmdline-tools", "latest", "bin", "avdmanager.bat"), "fixture");
+  writeFileSync(join(paths.sdk, "platform-tools", "mke2fs.exe"), "fixture");
+ writeFileSync(join(paths.sdk, "emulator", "emulator.exe"), "fixture");
+  writeFileSync(join(paths.avd, `${avdName}.avd`, "config.ini"), "disk.dataPartition.size=12G\n");
   const hostApkPath = join(root, "source-host.apk");
   writeFileSync(hostApkPath, "host");
   return { paths, hostApkPath };
 }
 
-function fakeRunner(): AndroidRuntimeCommandRunner & { calls: string[][] } {
+function fakeRunner(options: { avdListOutput?: string; whpxReady?: boolean; onRun?: (args: readonly string[], file?: string) => void } = {}): AndroidRuntimeCommandRunner & { calls: string[][] } {
   const calls: string[][] = [];
   return {
     calls,
     async run(file, args) {
       calls.push([file, ...args]);
-      if (args.includes("-accel-check")) return { exitCode: 0, stdout: "WHPX(10.0.22631) is installed and usable.", stderr: "" };
-      if (args.includes("list") && args.includes("avd")) return { exitCode: 0, stdout: "", stderr: "" };
+      options.onRun?.(args, file);
+      if (args.includes("-accel-check")) return options.whpxReady === false
+        ? { exitCode: 1, stdout: "", stderr: "WHPX is not installed" }
+        : { exitCode: 0, stdout: "WHPX(10.0.22631) is installed and usable.", stderr: "" };
+      if (args.includes("list") && args.includes("avd")) return { exitCode: 0, stdout: options.avdListOutput ?? "QXSpiderRuntime", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     },
     start() { throw new Error("not used"); },

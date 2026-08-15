@@ -3134,7 +3134,7 @@ dependencies = [
 
 [[package]]
 name = "qx-yingshi"
-version = "0.9.0"
+version = "0.9.0-rc.1"
 dependencies = [
  "aes",
  "base64 0.22.1",

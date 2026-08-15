@@ -46,6 +46,8 @@ const TITLES: Record<string, string> = {
   AUTH_REQUIRED: "需要登录或授权",
   SOURCE_TIMEOUT: "来源请求超时",
   SOURCE_OFFLINE: "来源暂时不可用",
+  SOURCE_SESSION_REQUEST_FAILED: "来源暂不可用",
+  SOURCE_SESSION_NOT_FOUND: "来源暂不可用",
   PARSE_FAILED: "解析失败",
   MEDIA_FAILED: "媒体不可用",
 };
@@ -93,8 +95,19 @@ export function formatDiagnostic(error: AppError): string {
   ].filter(Boolean).join("\n");
 }
 
+export function isOfflineError(error: Pick<AppError, "code" | "source"> | null | undefined): boolean {
+  if (!error) return false;
+  return error.source === "source" && (
+    error.code === "SOURCE_OFFLINE"
+    || error.code === "SOURCE_TIMEOUT"
+    || error.code === "SOURCE_SESSION_REQUEST_FAILED"
+    || error.code === "SOURCE_SESSION_NOT_FOUND"
+  );
+}
+
 export function sourceForCode(code: string): AppErrorSource {
   if (code.startsWith("IMPORT_") || code === "UNSUPPORTED_SPIDER_ENGINE") return "config";
+  if (code.startsWith("SOURCE_")) return "source";
   if (code.includes("TRUST")) return "trust";
   if (code.startsWith("STATE_PERSISTENCE_") || code.startsWith("DATABASE_") || code === "LEGACY_MIGRATION_FAILED") return "persistence";
   if (code.startsWith("JELLYFIN_")) return "source";

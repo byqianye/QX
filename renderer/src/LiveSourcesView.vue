@@ -174,7 +174,7 @@ function sourceLabel(type: LiveSourceType): string {
   if (type === "txt-url") return "TXT URL";
   if (type === "m3u-file") return "M3U 文件";
   if (type === "txt-file") return "TXT 文件";
-  return "测试 fixture";
+  return "其他来源";
 }
 
 function isFileType(): boolean {

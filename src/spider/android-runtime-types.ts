@@ -1,6 +1,8 @@
 import type { AndroidDeviceManagerPort, AndroidEnvironmentSnapshot } from "./android-device-manager.js";
 
 export const ANDROID_RUNTIME_AVD_NAME = "QXSpiderRuntime";
+export const ANDROID_RUNTIME_COMPACT_AVD_NAME = "QXSpiderRuntimeCompact";
+export type AndroidRuntimeAvdName = typeof ANDROID_RUNTIME_AVD_NAME | typeof ANDROID_RUNTIME_COMPACT_AVD_NAME;
 export const ANDROID_RUNTIME_SERIAL = "emulator-5554";
 export const ANDROID_RUNTIME_ADB_SERVER_PORT = 5038;
 export const ANDROID_RUNTIME_VERSION = "1.0.0";
@@ -86,7 +88,7 @@ export interface AndroidRuntimeManifest {
     api: number;
     architecture: typeof ANDROID_RUNTIME_ARCHITECTURE;
     image: typeof ANDROID_RUNTIME_SYSTEM_IMAGE;
-    avdName: typeof ANDROID_RUNTIME_AVD_NAME;
+    avdName: AndroidRuntimeAvdName;
   };
   sdkPackages: readonly string[];
   sdkComponents: {
@@ -137,7 +139,7 @@ export interface AndroidRuntimeStatus {
   hostVersion?: string;
   androidApi: number;
   architecture: typeof ANDROID_RUNTIME_ARCHITECTURE;
-  avdName: typeof ANDROID_RUNTIME_AVD_NAME;
+  avdName: AndroidRuntimeAvdName;
   estimatedDownload: string;
   diskUsageBytes?: number;
   mode: AndroidRuntimeMode;

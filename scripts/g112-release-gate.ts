@@ -10,6 +10,7 @@ const allowIncomplete = process.argv.includes("--allow-incomplete");
 
 const packageJson = readJson(join(root, "package.json")) as { version?: string };
 const tauriConfig = readJson(join(root, "src-tauri", "tauri.conf.json")) as {
+  version?: string;
   identifier?: string;
   bundle?: { targets?: string[] };
 };
@@ -17,6 +18,7 @@ const tauriConfig = readJson(join(root, "src-tauri", "tauri.conf.json")) as {
 check("Tauri identifier", tauriConfig.identifier === "com.qx.yingshi.desktop");
 check("Tauri NSIS target", tauriConfig.bundle?.targets?.includes("nsis") === true);
 check("package semver", typeof packageJson.version === "string" && /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/u.test(packageJson.version));
+check("Tauri version matches package version", tauriConfig.version === packageJson.version);
 check("G107 report exists", existsSync(join(root, "G107-BASELINE-REPORT.md")));
 check("G108 report exists", existsSync(join(root, "G108-REPORT.md")));
 check("G109 report exists", existsSync(join(root, "G109-REPORT.md")));
@@ -25,14 +27,22 @@ check("G111 report exists", existsSync(join(root, "G111-REPORT.md")));
 check("old Electron remains during migration", existsSync(join(root, "src", "electron", "main.ts")));
 check("Tauri backend remains", existsSync(join(root, "src-tauri", "src", "lib.rs")));
 
-const installer = process.env.QX_TAURI_NSIS ?? join(root, "src-tauri", "target", "x86_64-pc-windows-msvc", "release", "bundle", "nsis", "QX影视_0.9.0_x64-setup.exe");
-const releaseInstallerDir = join(root, "src-tauri", "target", "release", "bundle", "nsis");
-const releaseInstaller = existsSync(releaseInstallerDir)
-  ? readdirSync(releaseInstallerDir).find((name) => name.toLowerCase().endsWith(".exe"))
-  : undefined;
-const measuredInstaller = existsSync(installer)
-  ? installer
-  : releaseInstaller ? join(releaseInstallerDir, releaseInstaller) : undefined;
+const configuredInstaller = process.env.QX_TAURI_NSIS?.trim();
+const installerDirectories = [
+  join(root, "src-tauri", "target", "x86_64-pc-windows-msvc", "release", "bundle", "nsis"),
+  join(root, "src-tauri", "target", "release", "bundle", "nsis"),
+];
+const installer = configuredInstaller ?? installerDirectories[0]!;
+const discoveredInstaller = installerDirectories
+  .flatMap((directory) => existsSync(directory)
+    ? readdirSync(directory)
+      .filter((name) => name.toLowerCase().endsWith(".exe"))
+      .map((name) => join(directory, name))
+    : [])
+  .at(0);
+const measuredInstaller = configuredInstaller && existsSync(configuredInstaller)
+  ? configuredInstaller
+  : discoveredInstaller;
 if (measuredInstaller) {
   check("NSIS <= 20 MiB", statSync(measuredInstaller).size <= 20 * 1024 * 1024, `${statSync(measuredInstaller).size} bytes`);
   const authenticode = readAuthenticode(measuredInstaller);
@@ -134,12 +144,20 @@ function validateEvidence(relativePath: string, evidence: Record<string, unknown
     checkNestedEvidenceField(relativePath, evidence, "observations", "webviewProfileRemoved", true);
     checkNestedEvidenceField(relativePath, evidence, "observations", "runnerWorkspaceRemoved", true);
     checkNestedEvidenceField(relativePath, evidence, "observations", "runnerWorkspaceCleanupFailed", false);
+    checkSha256Field(relativePath, evidence, "installerSha256");
+    if (measuredInstaller) checkEvidenceField(relativePath, evidence, "installerSha256", sha256File(measuredInstaller));
   } else if (relativePath.endsWith("tauri-upgrade-win11-e2e.json")) {
     checkEvidenceField(relativePath, evidence, "evidenceType", "tauri-upgrade-win11-e2e");
     checkEvidenceField(relativePath, evidence, "cleanInstall", true);
     checkEvidenceField(relativePath, evidence, "platform", "win32-x64");
     checkEvidenceField(relativePath, evidence, "oldVersion", "0.8.0");
-    checkEvidenceField(relativePath, evidence, "newVersion", "0.9.0");
+    checkEvidenceField(relativePath, evidence, "newVersion", packageJson.version ?? "");
+    const hashes = evidence.hashes;
+    if (!isRecord(hashes) || typeof hashes.newInstallerSha256 !== "string" || !/^[a-f0-9]{64}$/iu.test(hashes.newInstallerSha256)) {
+      evidenceFailure(`${relativePath} hashes.newInstallerSha256 must be a SHA-256 hex digest`);
+    } else if (measuredInstaller) {
+      checkEvidenceField(relativePath, hashes, "newInstallerSha256", sha256File(measuredInstaller));
+    }
     checkNestedEvidenceField(relativePath, evidence, "observations", "oldDatabaseCreated", true);
     checkNestedEvidenceField(relativePath, evidence, "observations", "newDatabasePresent", true);
     checkNestedEvidenceField(relativePath, evidence, "observations", "markerPreserved", true);
@@ -150,6 +168,8 @@ function validateEvidence(relativePath: string, evidence: Record<string, unknown
   } else if (relativePath.endsWith("tauri-hls-20s-e2e.json")) {
     checkEvidenceField(relativePath, evidence, "evidenceType", "tauri-hls-20s-e2e");
     checkEvidenceField(relativePath, evidence, "realHttp", true);
+    checkSha256Field(relativePath, evidence, "installerSha256");
+    if (measuredInstaller) checkEvidenceField(relativePath, evidence, "installerSha256", sha256File(measuredInstaller));
     const duration = evidence.durationSeconds;
     if (typeof duration !== "number" || duration < 20) {
       evidenceFailure(`${relativePath} durationSeconds must be at least 20`);
@@ -163,6 +183,28 @@ function validateEvidence(relativePath: string, evidence: Record<string, unknown
     checkHttpsField(relativePath, evidence, "manifestUrl");
     checkHttpsField(relativePath, evidence, "artifactUrl");
     checkSha256Field(relativePath, evidence, "artifactSha256");
+    const components = evidence.components;
+    if (!Array.isArray(components) || components.length === 0) {
+      evidenceFailure(`${relativePath} components must contain every signed component`);
+    } else {
+      for (const [index, component] of components.entries()) {
+        if (!isRecord(component)) {
+          evidenceFailure(`${relativePath} components[${index}] must be an object`);
+          continue;
+        }
+        if (typeof component.componentId !== "string" || component.componentId.length === 0) {
+          evidenceFailure(`${relativePath} components[${index}].componentId is required`);
+        }
+        if (component.manifestComponentMatches !== true) {
+          evidenceFailure(`${relativePath} components[${index}].manifestComponentMatches must equal true`);
+        }
+        if (typeof component.artifactBytes !== "number" || component.artifactBytes <= 0) {
+          evidenceFailure(`${relativePath} components[${index}].artifactBytes must be positive`);
+        }
+        checkHttpsField(relativePath, component, `components[${index}].artifactUrl`);
+        checkSha256Field(relativePath, component, `components[${index}].artifactSha256`);
+      }
+    }
   } else if (relativePath.endsWith("tauri-signature.json")) {
     checkEvidenceField(relativePath, evidence, "generatedBy", "scripts/tauri-release-evidence.ts");
     checkEvidenceField(relativePath, evidence, "evidenceType", "tauri-signature");

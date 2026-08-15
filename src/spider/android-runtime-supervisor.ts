@@ -17,11 +17,13 @@ import type {
   AndroidRuntimePaths,
   AndroidRuntimeMode,
   AndroidRuntimeProgress,
+  AndroidRuntimeAvdName,
 } from "./android-runtime-types.js";
 import {
   ANDROID_RUNTIME_API,
   ANDROID_RUNTIME_ARCHITECTURE,
   ANDROID_RUNTIME_AVD_NAME,
+  ANDROID_RUNTIME_COMPACT_AVD_NAME,
   ANDROID_RUNTIME_ESTIMATED_DOWNLOAD,
   ANDROID_RUNTIME_SERIAL,
   ANDROID_RUNTIME_VERSION,
@@ -33,6 +35,8 @@ interface SupervisorBridge {
   close(): Promise<void>;
 }
 
+const DEFAULT_ANDROID_RUNTIME_IDLE_SHUTDOWN_MS = 20 * 60 * 1_000;
+
 export interface AndroidRuntimeSupervisorOptions {
   paths: AndroidRuntimePaths;
   bootstrapper: AndroidRuntimeBootstrapper;
@@ -43,21 +47,32 @@ export interface AndroidRuntimeSupervisorOptions {
   bridgeFactory?: (deviceManager: AndroidManagedDevice) => SupervisorBridge;
   now?: () => Date;
   diagnosticLogger?: (event: string, details: Record<string, unknown>) => void;
+  avdName?: AndroidRuntimeAvdName;
+  idleShutdownMs?: number;
 }
 
-export function buildAndroidEmulatorArguments(dnsServers: readonly string[]): string[] {
+export function buildAndroidEmulatorArguments(
+  dnsServers: readonly string[],
+  avdName: AndroidRuntimeAvdName = ANDROID_RUNTIME_AVD_NAME,
+  userdataImagePath?: string,
+): string[] {
   const args = [
-    "-avd", ANDROID_RUNTIME_AVD_NAME,
+    "-avd", avdName,
     "-port", "5554",
     "-no-window",
     "-no-audio",
     "-no-boot-anim",
     "-no-snapshot",
+    "-no-snapstorage",
     // Force the software backend for headless Windows runs. Leaving the
     // emulator's GPU mode at auto can exit before the first boot on a clean
     // profile even though WHPX itself is available.
     "-gpu", "swiftshader_indirect",
   ];
+  if (avdName === ANDROID_RUNTIME_COMPACT_AVD_NAME) {
+    args.push("-partition-size", "1024");
+    if (userdataImagePath) args.push("-data", userdataImagePath);
+  }
   const usableDnsServers = dnsServers
     .map((server) => server.trim())
     .filter((server) => isIP(server) > 0);
@@ -78,6 +93,7 @@ export class AndroidRuntimeSupervisor {
   private operation: Promise<AndroidRuntimeStatus> | undefined;
   private recoveryUsed = false;
   private crashRecoveryPromise: Promise<void> | undefined;
+  private idleShutdownTimer: NodeJS.Timeout | undefined;
   private mode: AndroidRuntimeMode = "auto";
   private readonly modePath: string;
 
@@ -87,7 +103,7 @@ export class AndroidRuntimeSupervisor {
       now: () => new Date(),
       ...options,
     };
-    this.current = initialStatus();
+    this.current = initialStatus(this.options.avdName ?? ANDROID_RUNTIME_AVD_NAME);
     this.modePath = join(options.paths.state, "runtime-mode.json");
   }
 
@@ -113,6 +129,7 @@ export class AndroidRuntimeSupervisor {
     if (this.current.supervisorState === "READY" && this.bridge) {
       try {
         await this.bridge.health();
+        this.markActivity();
         return this.status();
       } catch {
         // Fall through to the bounded recovery path.
@@ -135,6 +152,8 @@ export class AndroidRuntimeSupervisor {
     await writeFile(this.modePath, `${JSON.stringify({ mode })}\n`, "utf8");
     this.current = { ...this.current, mode };
     if (mode === "disabled") await this.stopRuntime();
+    else if (mode === "resident") this.clearIdleShutdown();
+    else this.markActivity();
     return this.status();
   }
 
@@ -197,10 +216,11 @@ export class AndroidRuntimeSupervisor {
   public async uninstall(): Promise<void> {
     await this.stopRuntime();
     await this.options.bootstrapper.uninstall();
-    this.current = { ...initialStatus(), mode: this.mode, diagnostics: ["ANDROID_RUNTIME_UNINSTALLED"], message: "Android 兼容运行环境已卸载" };
+    this.current = { ...initialStatus(this.options.avdName ?? ANDROID_RUNTIME_AVD_NAME), mode: this.mode, diagnostics: ["ANDROID_RUNTIME_UNINSTALLED"], message: "Android 兼容运行环境已卸载" };
   }
 
   public async stopRuntime(): Promise<void> {
+    this.clearIdleShutdown();
     this.current = { ...this.current, supervisorState: "STOPPING", message: "正在停止 Android 兼容运行环境…" };
     await this.bridge?.close().catch(() => undefined);
     this.bridge = undefined;
@@ -211,6 +231,11 @@ export class AndroidRuntimeSupervisor {
     this.recoveryUsed = false;
     this.crashRecoveryPromise = undefined;
     this.current = { ...this.current, supervisorState: "STOPPED", hostOnline: false, deviceFound: false, hostInstalled: false, message: "Android 兼容运行环境已停止" };
+  }
+
+  /** Refreshes the auto-shutdown deadline after an Android runtime operation. */
+  public touchActivity(): void {
+    this.markActivity();
   }
 
   private async refreshRuntimeMetadata(): Promise<void> {
@@ -311,14 +336,40 @@ export class AndroidRuntimeSupervisor {
     await this.bridge?.health();
     await this.options.bootstrapper.recordState("READY");
     this.current = { ...this.current, supervisorState: "READY", hostOnline: true, message: "Android 兼容运行环境已就绪" };
+    this.markActivity();
   }
 
   private async connectBridge(): Promise<void> {
     await this.bridge?.close().catch(() => undefined);
     const bridge = this.options.bridgeFactory?.(this.deviceManager)
-      ?? new AndroidSpiderBridgeClient({ deviceManager: this.deviceManager, localPort: 8765, remotePort: 8765 });
+      ?? new AndroidSpiderBridgeClient({
+        deviceManager: this.deviceManager,
+        localPort: 8765,
+        remotePort: 8765,
+        onActivity: () => this.markActivity(),
+      });
     await bridge.connect();
     this.bridge = bridge;
+  }
+
+  private markActivity(): void {
+    if (this.current.supervisorState !== "READY" || this.mode !== "auto") return;
+    this.clearIdleShutdown();
+    const idleShutdownMs = Math.max(0, Math.floor(this.options.idleShutdownMs ?? DEFAULT_ANDROID_RUNTIME_IDLE_SHUTDOWN_MS));
+    if (idleShutdownMs === 0) return;
+    this.idleShutdownTimer = setTimeout(() => {
+      this.idleShutdownTimer = undefined;
+      if (this.current.supervisorState !== "READY" || this.mode !== "auto") return;
+      this.options.diagnosticLogger?.("ANDROID_RUNTIME_IDLE_SHUTDOWN", { idleShutdownMs });
+      void this.stopRuntime();
+    }, idleShutdownMs);
+    this.idleShutdownTimer.unref?.();
+  }
+
+  private clearIdleShutdown(): void {
+    if (!this.idleShutdownTimer) return;
+    clearTimeout(this.idleShutdownTimer);
+    this.idleShutdownTimer = undefined;
   }
 
   private async startEmulator(): Promise<void> {
@@ -360,7 +411,11 @@ export class AndroidRuntimeSupervisor {
     }
     this.emulatorProcess = this.options.commandRunner.start(
       this.options.bootstrapper.emulatorPath(),
-      buildAndroidEmulatorArguments(getServers()),
+      buildAndroidEmulatorArguments(
+        getServers(),
+        this.options.avdName ?? ANDROID_RUNTIME_AVD_NAME,
+        this.options.bootstrapper.userdataImagePath(),
+      ),
       { cwd: emulatorTemp, env },
     );
     this.options.diagnosticLogger?.("ANDROID_RUNTIME_EMULATOR_STARTED", {
@@ -475,7 +530,7 @@ export class AndroidRuntimeSupervisorError extends Error {
   }
 }
 
-function initialStatus(): AndroidRuntimeStatus {
+function initialStatus(avdName: AndroidRuntimeAvdName): AndroidRuntimeStatus {
   return {
     bootstrapState: "NOT_INSTALLED",
     supervisorState: "STOPPED",
@@ -483,7 +538,7 @@ function initialStatus(): AndroidRuntimeStatus {
     runtimeVersion: ANDROID_RUNTIME_VERSION,
     androidApi: ANDROID_RUNTIME_API,
     architecture: ANDROID_RUNTIME_ARCHITECTURE,
-    avdName: ANDROID_RUNTIME_AVD_NAME,
+    avdName,
     estimatedDownload: ANDROID_RUNTIME_ESTIMATED_DOWNLOAD,
     mode: "auto",
     whpx: "unknown",

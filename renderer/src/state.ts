@@ -5,6 +5,7 @@ import type { PlaybackMediaEvent } from "../../src/desktop/playback.js";
 import type { PlaybackSourceResolution } from "../../src/desktop/playback-source-resolver.js";
 import type { PlaybackAttemptDiagnostics } from "../../src/desktop/spider-ui.js";
 import type { HistoryResumeCandidate, HistoryUiState } from "../../src/history/history-types.js";
+export type { HistoryResumeMode } from "../../src/history/history-types.js";
 import type { FavoriteItem, FavoritesUiState } from "../../src/favorites/favorites-types.js";
 import type { FollowItem, FollowUiState } from "../../src/follow/follow-types.js";
 import type { CacheUiState } from "../../src/cache/cache-types.js";
@@ -22,7 +23,7 @@ import { EMPTY_PUSH_UI_STATE } from "../../src/push/push-types.js";
 import type { PushUiState } from "../../src/push/push-types.js";
 import { EMPTY_CAST_UI_STATE } from "../../src/cast/cast-types.js";
 import type { CastUiState } from "../../src/cast/cast-types.js";
-import type { ComponentManagerSnapshot } from "./contracts.js";
+import type { ComponentManagerSnapshot, ConfigCatalogHistorySnapshot, SourceCapabilities } from "./contracts.js";
 
 export type ImportStatus =
   | "empty"
@@ -94,7 +95,7 @@ export interface RendererPersistenceState {
   theme: RendererThemeMode;
   navigation: RendererNavigation;
   siteKey: string | null;
-  category: { typeId: string; page: number } | null;
+  category: { typeId: string; page: number; filters?: Record<string, string> } | null;
   search: { key: string; page: number } | null;
   scrollTop: number;
   recentDetailId: string | null;
@@ -105,7 +106,7 @@ export interface RendererViewStatePatch {
   theme?: RendererThemeMode;
   navigation?: RendererNavigation;
   siteKey?: string | null;
-  category?: { typeId: string; page: number } | null;
+  category?: { typeId: string; page: number; filters?: Record<string, string> } | null;
   search?: { key: string; page: number } | null;
   scrollTop?: number;
   recentDetailId?: string | null;
@@ -137,6 +138,7 @@ export interface ImportSite {
   key: string;
   name: string;
   api: string;
+  ext?: string;
 }
 
 export interface ImportState {
@@ -178,16 +180,36 @@ export type SpiderPlayback =
 
 export interface SpiderState {
   source: string;
+  sourceId: string | null;
   api: string | null;
   status: SpiderStatus;
   warning: string | null;
   sidecarRunning: boolean;
+  capabilities: SourceCapabilities | null;
 }
 
 export interface BrowseState {
   page: "import" | "home" | "category" | "search" | "detail" | "closed";
   loading: boolean;
   items: Record<string, unknown>[];
+  categories: BrowseCategory[];
+  filters: BrowseFilter[];
+}
+
+export interface BrowseCategory {
+  id: string;
+  name: string;
+}
+
+export interface BrowseFilterOption {
+  id: string;
+  name: string;
+}
+
+export interface BrowseFilter {
+  id: string;
+  name: string;
+  options: BrowseFilterOption[];
 }
 
 export interface PlaybackEpisode {
@@ -317,16 +339,20 @@ export interface RendererState {
 export interface ApiSpiderState {
   page: BrowseState["page"];
   source: string;
+  sourceId?: string | null;
   api: string | null;
   status: SpiderStatus;
   loading: boolean;
   warning: string | null;
   error: RendererError | null;
   sidecarRunning: boolean;
+  capabilities?: SourceCapabilities | null;
   playback: SpiderPlayback;
   player: PlayerState;
   canPlay: boolean;
   items: Record<string, unknown>[];
+  categories?: BrowseCategory[];
+  filters?: BrowseFilter[];
   detail: Record<string, unknown> | null;
   playbackCatalog: PlaybackCatalog | null;
   playbackSelection: PlaybackSelection | null;
@@ -356,6 +382,7 @@ export interface ApiSpiderState {
 
 export interface RendererEnvelope {
   import?: ImportState | null;
+  configHistory?: ConfigCatalogHistorySnapshot | null;
   state?: ApiSpiderState | null;
   persistence?: RendererPersistenceState | null;
   live?: LiveUiState | null;
@@ -387,12 +414,14 @@ export function createRendererState(): RendererState {
     },
     spider: {
       source: "",
+      sourceId: null,
       api: null,
       status: "confirmation_required",
       warning: null,
       sidecarRunning: false,
+      capabilities: null,
     },
-    browse: { page: "import", loading: false, items: [] },
+    browse: { page: "import", loading: false, items: [], categories: [], filters: [] },
     detail: {
       detail: null,
       playbackCatalog: null,
@@ -488,15 +517,22 @@ export function applyRendererEnvelope(
     import: importState,
     spider: {
       source: state.source,
+      sourceId: state.sourceId ?? current.spider.sourceId,
       api: state.api,
       status: state.status,
       warning: state.warning,
       sidecarRunning: state.sidecarRunning,
+      capabilities: state.capabilities ?? current.spider.capabilities,
     },
     browse: {
       page: state.page,
       loading: state.loading,
       items: stateStage("browse-items", () => state.items.map((item) => ({ ...item }))),
+      categories: stateStage("browse-categories", () => (state.categories ?? current.browse.categories).map((category) => ({ ...category }))),
+      filters: stateStage("browse-filters", () => (state.filters ?? current.browse.filters).map((filter) => ({
+        ...filter,
+        options: filter.options.map((option) => ({ ...option })),
+      }))),
     },
     detail: {
       detail: state.detail ? { ...state.detail } : null,

@@ -60,4 +60,18 @@ describe("packaged runtime paths and production logging", () => {
     expect(readFileSync(join(directory, "main.log.1"), "utf8")).toContain("APP_START");
     expect(current).not.toContain("https://media.example.invalid/episode.m3u8");
   });
+
+  it("supports an explicit isolated Android Runtime root for Compact E2E", () => {
+    const resolver = new RuntimePathResolver({
+      appPath: "C:\\project",
+      resourcesPath: "C:\\project\\resources",
+      userDataPath: "C:\\Users\\user\\AppData\\Roaming\\QX褰辫",
+      localAppDataPath: "C:\\Users\\user\\AppData\\Local",
+      androidRuntimeRoot: "D:\\QXRuntimeCompact\\android-runtime",
+      isPackaged: false,
+    });
+
+    expect(resolver.getAndroidRuntimePath()).toBe("D:\\QXRuntimeCompact\\android-runtime");
+    expect(resolver.getAndroidRuntimePaths().avd).toBe("D:\\QXRuntimeCompact\\android-runtime\\avd");
+  });
 });

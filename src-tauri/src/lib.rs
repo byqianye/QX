@@ -6,6 +6,7 @@ use tauri::{AppHandle, Manager};
 
 mod business_data;
 mod business_features;
+mod cast_core;
 mod component_manager;
 mod config_catalog;
 mod desktop_services;
@@ -17,6 +18,7 @@ mod native_sources;
 mod playback_proxy;
 mod playback_sources;
 mod player_window;
+mod push_core;
 mod quickjs_bridge;
 mod runtime_capability;
 mod source_session;
@@ -177,7 +179,7 @@ fn backend_app_snapshot(
 async fn backend_config_catalog(
     app: AppHandle,
     request: BackendRequest,
-) -> Result<BackendResponse<config_catalog::ConfigCatalogSnapshot>, BackendFailure> {
+) -> Result<BackendResponse<serde_json::Value>, BackendFailure> {
     if request.version != BACKEND_RPC_VERSION {
         return Err(failure(
             &request,
@@ -190,28 +192,89 @@ async fn backend_config_catalog(
             },
         ));
     }
-    let payload: config_catalog::ConfigCatalogPayload =
-        serde_json::from_value(request.payload.clone()).map_err(|error| {
-            failure(
-                &request,
-                BackendError {
-                    category: BackendErrorCategory::InvalidConfig,
-                    reason_code: "CONFIG_PAYLOAD_INVALID".to_string(),
-                    retryable: false,
-                    diagnostic_id: "config-catalog-payload-invalid".to_string(),
-                    safe_details: [("error".to_string(), error.to_string())]
-                        .into_iter()
-                        .collect(),
-                },
-            )
-        })?;
     let (_, database_path) = app_data_paths(&app).map_err(|error| failure(&request, error))?;
-    let snapshot = if payload.fetch_remote
-        || (payload.source_kind == "url" && payload.raw.trim().is_empty())
-    {
-        config_catalog::ingest_remote(&database_path, &payload).await
-    } else {
-        config_catalog::ingest(&database_path, &payload)
+    let action = request
+        .payload
+        .get("action")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("ingest");
+    let snapshot = match action {
+        "ingest" => {
+            let payload: config_catalog::ConfigCatalogPayload =
+                serde_json::from_value(request.payload.clone()).map_err(|error| {
+                    failure(
+                        &request,
+                        BackendError {
+                            category: BackendErrorCategory::InvalidConfig,
+                            reason_code: "CONFIG_PAYLOAD_INVALID".to_string(),
+                            retryable: false,
+                            diagnostic_id: "config-catalog-payload-invalid".to_string(),
+                            safe_details: [("error".to_string(), error.to_string())]
+                                .into_iter()
+                                .collect(),
+                        },
+                    )
+                })?;
+            if payload.fetch_remote
+                || (payload.source_kind == "url" && payload.raw.trim().is_empty())
+            {
+                config_catalog::ingest_remote(&database_path, &payload)
+                    .await
+                    .and_then(|value| {
+                        serde_json::to_value(value).map_err(|error| config_catalog::CatalogError {
+                            code: "CONFIG_SNAPSHOT_SERIALIZE_FAILED".to_string(),
+                            message: error.to_string(),
+                            retryable: false,
+                        })
+                    })
+            } else {
+                config_catalog::ingest(&database_path, &payload).and_then(|value| {
+                    serde_json::to_value(value).map_err(|error| config_catalog::CatalogError {
+                        code: "CONFIG_SNAPSHOT_SERIALIZE_FAILED".to_string(),
+                        message: error.to_string(),
+                        retryable: false,
+                    })
+                })
+            }
+        }
+        "history" => {
+            let source = request
+                .payload
+                .get("source")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            config_catalog::history(&database_path, source).and_then(|value| {
+                serde_json::to_value(value).map_err(|error| config_catalog::CatalogError {
+                    code: "CONFIG_SNAPSHOT_SERIALIZE_FAILED".to_string(),
+                    message: error.to_string(),
+                    retryable: false,
+                })
+            })
+        }
+        "activate" => {
+            let source = request
+                .payload
+                .get("source")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let version_hash = request
+                .payload
+                .get("versionHash")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            config_catalog::activate(&database_path, source, version_hash).and_then(|value| {
+                serde_json::to_value(value).map_err(|error| config_catalog::CatalogError {
+                    code: "CONFIG_SNAPSHOT_SERIALIZE_FAILED".to_string(),
+                    message: error.to_string(),
+                    retryable: false,
+                })
+            })
+        }
+        _ => Err(config_catalog::CatalogError {
+            code: "CONFIG_ACTION_UNSUPPORTED".to_string(),
+            message: "configuration catalog action is unsupported".to_string(),
+            retryable: false,
+        }),
     }
     .map_err(|error| {
         let config_catalog::CatalogError {
@@ -787,6 +850,148 @@ fn backend_epg(
 }
 
 #[tauri::command]
+async fn backend_cast(
+    state: tauri::State<'_, cast_core::CastState>,
+    request: BackendRequest,
+) -> Result<BackendResponse<cast_core::CastSnapshot>, BackendFailure> {
+    if request.version != BACKEND_RPC_VERSION {
+        return Err(failure(
+            &request,
+            BackendError {
+                category: BackendErrorCategory::InvalidConfig,
+                reason_code: "RPC_VERSION_UNSUPPORTED".to_string(),
+                retryable: false,
+                diagnostic_id: "rpc-invalid-version".to_string(),
+                safe_details: std::collections::BTreeMap::new(),
+            },
+        ));
+    }
+    let payload: cast_core::CastPayload =
+        serde_json::from_value(request.payload.clone()).map_err(|error| {
+            failure(
+                &request,
+                BackendError {
+                    category: BackendErrorCategory::InvalidConfig,
+                    reason_code: "DLNA_PAYLOAD_INVALID".to_string(),
+                    retryable: false,
+                    diagnostic_id: "dlna-payload-invalid".to_string(),
+                    safe_details: [("message".to_string(), error.to_string())]
+                        .into_iter()
+                        .collect(),
+                },
+            )
+        })?;
+    let snapshot = state.handle(&payload).await.map_err(|error| {
+        let (category, reason_code, retryable, message) = match error {
+            cast_core::CastError::Invalid(message) => (
+                BackendErrorCategory::InvalidConfig,
+                "DLNA_INVALID",
+                false,
+                message,
+            ),
+            cast_core::CastError::Network(message) => (
+                BackendErrorCategory::PlaybackFailed,
+                "DLNA_REQUEST_FAILED",
+                true,
+                message,
+            ),
+        };
+        failure(
+            &request,
+            BackendError {
+                category,
+                reason_code: reason_code.to_string(),
+                retryable,
+                diagnostic_id: "dlna-cast-error".to_string(),
+                safe_details: [("message".to_string(), message)].into_iter().collect(),
+            },
+        )
+    })?;
+    Ok(BackendResponse {
+        version: BACKEND_RPC_VERSION.to_string(),
+        request_id: request.request_id,
+        session_id: request.session_id,
+        sequence: request.sequence,
+        ok: true,
+        payload: snapshot,
+    })
+}
+
+#[tauri::command]
+async fn backend_push(
+    state: tauri::State<'_, push_core::PushState>,
+    request: BackendRequest,
+) -> Result<BackendResponse<push_core::PushSnapshot>, BackendFailure> {
+    if request.version != BACKEND_RPC_VERSION {
+        return Err(failure(
+            &request,
+            BackendError {
+                category: BackendErrorCategory::InvalidConfig,
+                reason_code: "RPC_VERSION_UNSUPPORTED".to_string(),
+                retryable: false,
+                diagnostic_id: "rpc-invalid-version".to_string(),
+                safe_details: std::collections::BTreeMap::new(),
+            },
+        ));
+    }
+    let payload: push_core::PushPayload =
+        serde_json::from_value(request.payload.clone()).map_err(|error| {
+            failure(
+                &request,
+                BackendError {
+                    category: BackendErrorCategory::InvalidConfig,
+                    reason_code: "PUSH_PAYLOAD_INVALID".to_string(),
+                    retryable: false,
+                    diagnostic_id: "push-payload-invalid".to_string(),
+                    safe_details: [("message".to_string(), error.to_string())]
+                        .into_iter()
+                        .collect(),
+                },
+            )
+        })?;
+    let snapshot = state.handle(&payload).await.map_err(|error| {
+        let (category, reason_code, retryable, message) = match error {
+            push_core::PushError::Invalid(message) => (
+                BackendErrorCategory::InvalidConfig,
+                "PUSH_INVALID",
+                false,
+                message,
+            ),
+            push_core::PushError::Conflict(message) => (
+                BackendErrorCategory::PlaybackFailed,
+                "PUSH_CONFLICT",
+                false,
+                message,
+            ),
+            push_core::PushError::Storage(message) => (
+                BackendErrorCategory::InvalidConfig,
+                "PUSH_STORAGE_FAILED",
+                true,
+                message,
+            ),
+        };
+        failure(
+            &request,
+            BackendError {
+                category,
+                reason_code: reason_code.to_string(),
+                retryable,
+                diagnostic_id: "push-core-error".to_string(),
+                safe_details: [("message".to_string(), message)].into_iter().collect(),
+            },
+        )
+    })?;
+    Ok(BackendResponse {
+        version: BACKEND_RPC_VERSION.to_string(),
+        request_id: request.request_id,
+        session_id: request.session_id,
+        sequence: request.sequence,
+        ok: true,
+        payload: snapshot,
+    })
+}
+
+#[tauri::command]
 async fn backend_desktop_services(
     app: AppHandle,
     request: BackendRequest,
@@ -1333,6 +1538,8 @@ pub fn run() {
             backend_mpv,
             backend_live,
             backend_epg,
+            backend_cast,
+            backend_push,
             backend_desktop_services,
             backend_player_window,
             backend_business_data,
@@ -1345,6 +1552,8 @@ pub fn run() {
         .manage(mpv_bridge::MpvState::default())
         .manage(live_core::LiveCoreState::default())
         .manage(epg_core::EpgCoreState::default())
+        .manage(cast_core::CastState::default())
+        .manage(push_core::PushState::default())
         .manage(player_window::PlayerWindowState::default())
         .manage(quickjs_bridge::QuickJsSidecarState::default())
         .manage(webview_sniffer::WebviewSnifferState::default())

@@ -26,9 +26,10 @@ export function resolvePackagedExecutable(
 export function runPackagedExecutable(
   executable: string,
   variables: Record<string, string>,
+  args: readonly string[] = [],
 ): Promise<PackagedProcessResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, [], {
+    const child = spawn(executable, args, {
       env: { ...process.env, ...variables },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,

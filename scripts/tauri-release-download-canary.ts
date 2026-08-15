@@ -7,28 +7,30 @@ const projectRoot = resolve(import.meta.dirname, "..");
 const args = parseArgs(process.argv.slice(2));
 const manifestUrl = requiredHttps(args["manifest-url"], "--manifest-url");
 const signatureUrl = requiredHttps(args["signature-url"], "--signature-url");
-const artifactUrl = requiredHttps(args["artifact-url"], "--artifact-url");
-const componentId = args["component-id"]?.trim();
+const artifactUrls = requiredList(args["artifact-url"], "--artifact-url").map((value) => requiredHttps(value, "--artifact-url"));
+const componentIds = requiredList(args["component-id"], "--component-id");
 const publicKeyBase64 = args["public-key-base64"]?.trim();
-if (!componentId) throw new Error("missing --component-id");
 if (!publicKeyBase64) throw new Error("missing --public-key-base64");
+if (componentIds.length !== artifactUrls.length) {
+  throw new Error("--component-id and --artifact-url must contain the same number of comma-separated values");
+}
 
 const directory = await mkdtemp(join(tmpdir(), "qx-tauri-release-download-"));
 try {
-  const [manifest, signature, artifact] = await Promise.all([
+  const [manifest, signature, ...artifacts] = await Promise.all([
     download(manifestUrl, 256 * 1024),
     download(signatureUrl, 64 * 1024),
-    download(artifactUrl, 128 * 1024 * 1024),
+    ...artifactUrls.map((url) => download(url, 128 * 1024 * 1024)),
   ]);
   const manifestPath = join(directory, "manifest.json");
   const signaturePath = join(directory, "manifest.sig.b64");
   const publicKeyPath = join(directory, "manifest.pub.b64");
-  const artifactPath = join(directory, "component.bin");
+  const artifactPaths = artifacts.map((artifact, index) => join(directory, `component-${index}.bin`));
   await Promise.all([
     writeFile(manifestPath, manifest.bytes),
     writeFile(signaturePath, signature.bytes.toString("utf8").trim(), "utf8"),
     writeFile(publicKeyPath, publicKeyBase64, "utf8"),
-    writeFile(artifactPath, artifact.bytes),
+    ...artifacts.map((artifact, index) => writeFile(artifactPaths[index]!, artifact.bytes)),
   ]);
   const result = await run(process.execPath, [
     join(projectRoot, "node_modules", "tsx", "dist", "cli.mjs"),
@@ -37,10 +39,10 @@ try {
     "--component-manifest", manifestPath,
     "--component-signature", signaturePath,
     "--component-public-key", publicKeyPath,
-    "--component-artifact", artifactPath,
-    "--component-id", componentId,
+    "--component-artifact", artifactPaths.join(","),
+    "--component-id", componentIds.join(","),
     "--manifest-url", manifestUrl,
-    "--artifact-url", artifactUrl,
+    "--artifact-url", artifactUrls.join(","),
     "--output", resolve(projectRoot, args.output ?? "artifacts"),
   ]);
   process.stdout.write(result.stdout);
@@ -82,6 +84,12 @@ function parseArgs(values: string[]): Record<string, string | undefined> {
 function requiredHttps(value: string | undefined, label: string): string {
   if (!value || !/^https:\/\//iu.test(value)) throw new Error(`${label} must be an HTTPS URL`);
   return value;
+}
+
+function requiredList(value: string | undefined, label: string): string[] {
+  const values = value?.split(",").map((item) => item.trim()).filter(Boolean) ?? [];
+  if (values.length === 0) throw new Error(`missing ${label}`);
+  return values;
 }
 
 function requiredPath(value: string | undefined, label: string): string {

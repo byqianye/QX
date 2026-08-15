@@ -45,7 +45,7 @@ if (!rendererApi.includes("isTauriRuntime() ? new TauriRendererApi() : null")) {
 }
 const tauriConfig = JSON.parse(readFileSync(join(root, "src-tauri/tauri.conf.json"), "utf8")) as {
   identifier?: string;
-  bundle?: { resources?: string[] };
+  bundle?: { resources?: string[] | Record<string, string> };
 };
 const coreCargo = readFileSync(join(root, "src-tauri/Cargo.toml"), "utf8");
 if (coreCargo.includes('name = "qx-quickjs-sidecar"')) {
@@ -55,7 +55,13 @@ if (!existsSync(join(root, "src-tauri/quickjs-sidecar/Cargo.toml"))) {
   failures.push("separate QuickJS sidecar Cargo package is missing");
 }
 if (tauriConfig.identifier !== "com.qx.yingshi.desktop") failures.push("Tauri identifier drifted");
-if (tauriConfig.bundle?.resources?.includes("target/release/qx-quickjs-sidecar.exe")) {
+const configuredResources = tauriConfig.bundle?.resources;
+const resourcePaths = Array.isArray(configuredResources)
+  ? configuredResources
+  : configuredResources && typeof configuredResources === "object"
+    ? [...Object.keys(configuredResources), ...Object.values(configuredResources)]
+    : [];
+if (resourcePaths.includes("target/release/qx-quickjs-sidecar.exe")) {
   failures.push("optional QuickJS sidecar must not be declared as a core Tauri resource");
 }
 

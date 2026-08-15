@@ -11,7 +11,9 @@ describe("Tauri release evidence", () => {
     try {
       const artifact = Buffer.from("component-fixture");
       const artifactSha256 = createHash("sha256").update(artifact).digest("hex");
-      const manifest = Buffer.from(`{"version":1,"components":[{"id":"mpv","version":"1","target":"x86_64-pc-windows-msvc","sha256":"${artifactSha256}","url":"https://example.test/component.bin"}]}`);
+      const quickJsArtifact = Buffer.from("quickjs-fixture");
+      const quickJsSha256 = createHash("sha256").update(quickJsArtifact).digest("hex");
+      const manifest = Buffer.from(`{"version":1,"components":[{"id":"mpv","version":"1","target":"x86_64-pc-windows-msvc","sha256":"${artifactSha256}","url":"https://example.test/component.bin"},{"id":"quickjs","version":"1","target":"x86_64-pc-windows-msvc","sha256":"${quickJsSha256}","url":"https://example.test/quickjs.bin"}]}`);
       const { privateKey, publicKey } = generateKeyPairSync("ed25519");
       const publicKeyDer = publicKey.export({ format: "der", type: "spki" });
       const signature = sign(null, manifest, privateKey);
@@ -20,27 +22,30 @@ describe("Tauri release evidence", () => {
       const signaturePath = join(directory, "manifest.sig.b64");
       const publicKeyPath = join(directory, "manifest.pub.b64");
       const artifactPath = join(directory, "component.bin");
+      const quickJsArtifactPath = join(directory, "quickjs.bin");
       const output = join(directory, "out");
       writeFileSync(installer, "not-a-signed-pe");
       writeFileSync(manifestPath, manifest);
       writeFileSync(signaturePath, signature.toString("base64"));
       writeFileSync(publicKeyPath, publicKeyDer.subarray(publicKeyDer.length - 32).toString("base64"));
       writeFileSync(artifactPath, artifact);
+      writeFileSync(quickJsArtifactPath, quickJsArtifact);
 
       const result = spawnSync(process.execPath, ["node_modules/tsx/dist/cli.mjs", "scripts/tauri-release-evidence.ts",
         "--installer", installer,
         "--component-manifest", manifestPath,
         "--component-signature", signaturePath,
         "--component-public-key", publicKeyPath,
-        "--component-artifact", artifactPath,
-        "--component-id", "mpv",
+        "--component-artifact", `${artifactPath},${quickJsArtifactPath}`,
+        "--component-id", "mpv,quickjs",
         "--manifest-url", "https://example.test/manifest.json",
-        "--artifact-url", "https://example.test/component.bin",
+        "--artifact-url", "https://example.test/component.bin,https://example.test/quickjs.bin",
         "--output", output,
       ], { cwd: process.cwd(), encoding: "utf8", windowsHide: true });
 
       expect(result.status).not.toBe(0);
       expect(`${result.stdout}\n${result.stderr}`).toContain("TAURI_RELEASE_EVIDENCE_FAILED");
+      expect(result.stdout).toContain('"componentId": "quickjs"');
       expect(existsSync(join(output, "tauri-components-release.json"))).toBe(false);
       expect(existsSync(join(output, "tauri-signature.json"))).toBe(false);
     } finally {

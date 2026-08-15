@@ -7,10 +7,11 @@ import { join, resolve } from "node:path";
 
 const projectRoot = resolve(import.meta.dirname, "..");
 const outputPath = resolve(projectRoot, "artifacts", "tauri-upgrade-win11-e2e.json");
+const packageJson = JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf8")) as { version?: string };
 const oldInstaller = process.env.QX_TAURI_OLD_NSIS?.trim() ? resolve(process.env.QX_TAURI_OLD_NSIS) : "";
 const newInstaller = process.env.QX_TAURI_NEW_NSIS?.trim() ? resolve(process.env.QX_TAURI_NEW_NSIS) : "";
 const oldVersion = process.env.QX_TAURI_OLD_VERSION?.trim() || "0.8.0";
-const newVersion = process.env.QX_TAURI_NEW_VERSION?.trim() || "0.9.0";
+const newVersion = process.env.QX_TAURI_NEW_VERSION?.trim() || packageJson.version || "0.9.0-rc.1";
 const runtimeImages = [
   "qx-yingshi.exe",
   "qx-quickjs-sidecar.exe",

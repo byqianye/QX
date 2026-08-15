@@ -49,7 +49,7 @@ async function loadFile(event: Event): Promise<void> {
 </script>
 
 <template>
-  <SettingsSection title="弹幕" description="只接收用户提供、本地、自建服务或 fixture 的 JSON/XML；播放器覆盖层不会修改视频内容。">
+  <SettingsSection title="弹幕" description="只接收用户提供、本地或自建服务的 JSON/XML；播放器覆盖层不会修改视频内容。">
     <div class="settings-row">
       <span>总条数 / 状态</span>
       <strong data-testid="danmaku-status">{{ props.state.totalCount }} / {{ props.state.status }}</strong>

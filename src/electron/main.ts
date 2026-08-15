@@ -29,6 +29,7 @@ import { AndroidArtifactRegistry, AndroidSpiderBridgeClient } from "../spider/an
 import type { AndroidRuntimeStatus as LegacyAndroidRuntimeStatus } from "../spider/android-runtime-diagnostics.js";
 import { AndroidRuntimeBootstrapper } from "../spider/android-runtime-bootstrapper.js";
 import { AndroidRuntimeSupervisor } from "../spider/android-runtime-supervisor.js";
+import { ANDROID_RUNTIME_AVD_NAME, ANDROID_RUNTIME_COMPACT_AVD_NAME, type AndroidRuntimeAvdName } from "../spider/android-runtime-types.js";
 import { ElectronSpiderCredentialProvider } from "../spider/electron-spider-credential-provider.js";
 import { readJellyfinEnvironment } from "../jellyfin/jellyfin-adapter.js";
 import { resolveJavaExecutable } from "../spikes/java-probe.js";
@@ -491,12 +492,14 @@ function createShell(): DesktopShellRuntime {
       const androidRuntimeBootstrapper = new AndroidRuntimeBootstrapper({
         paths: qxRuntimePaths,
         hostApkPath: androidPaths.getAndroidHostApkPath(),
+        avdName: androidRuntimeAvdName(),
         javaExecutable: runtime.javaExecutable,
         progressLogger: (progress) => runtimeSupervisorForProgress?.updateProgress(progress),
       });
       const androidRuntimeSupervisor = new AndroidRuntimeSupervisor({
         paths: qxRuntimePaths,
         bootstrapper: androidRuntimeBootstrapper,
+        avdName: androidRuntimeAvdName(),
         diagnosticLogger: (event, details) => getRuntimeLogger().info(event, details),
       });
       runtimeSupervisorForProgress = androidRuntimeSupervisor;
@@ -1027,8 +1030,15 @@ function runtimePaths(): RuntimePathResolver {
     resourcesPath: process.resourcesPath,
     userDataPath: app.getPath("userData"),
     ...(process.env.LOCALAPPDATA ? { localAppDataPath: process.env.LOCALAPPDATA } : {}),
+    ...(process.env.QX_ANDROID_RUNTIME_ROOT?.trim() ? { androidRuntimeRoot: process.env.QX_ANDROID_RUNTIME_ROOT.trim() } : {}),
     isPackaged: app.isPackaged,
   });
+}
+
+function androidRuntimeAvdName(): AndroidRuntimeAvdName {
+  return process.env.QX_ANDROID_AVD_NAME === ANDROID_RUNTIME_COMPACT_AVD_NAME
+    ? ANDROID_RUNTIME_COMPACT_AVD_NAME
+    : ANDROID_RUNTIME_AVD_NAME;
 }
 
 function getProductionLogger(): ProductionLogger {

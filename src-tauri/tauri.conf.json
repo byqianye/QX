@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "QX影视",
-  "version": "0.9.0",
+  "version": "0.9.0-rc.1",
   "identifier": "com.qx.yingshi.desktop",
   "build": {
     "beforeDevCommand": "npm run tauri:prepare-sidecar:dev && npm run dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm run tauri:prepare-sidecar && npm run renderer:build",
+    "beforeBuildCommand": "npm run android-host:build && npm run tauri:prepare-sidecar && npm run renderer:build",
     "frontendDist": "../dist/renderer"
   },
   "app": {
@@ -30,6 +30,10 @@
     "active": true,
     "targets": ["nsis"],
     "icon": ["../build/assets/qx-yingshi.ico"],
+    "resources": {
+      "../android-spider-host/app/build/outputs/apk/debug/app-debug.apk": "android-host/android-spider-host.apk",
+      "../build/android-runtime-manifest.json": "android-host/android-runtime-manifest.json"
+    },
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"

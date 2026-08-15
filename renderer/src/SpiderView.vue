@@ -187,7 +187,7 @@ const view = ref<"browse" | "history" | "favorites" | "follow" | "settings" | "l
       : props.initialNavigation === "follow" ? "follow"
         : props.initialNavigation === "local" ? "local"
           : props.initialNavigation === "downloads" ? "downloads" : "browse");
-const theme = ref<"system" | "light" | "dark">(props.initialTheme ?? "dark");
+const theme = ref<"system" | "light" | "dark">(props.initialTheme ?? "light");
 const systemTheme = ref<"light" | "dark">("light");
 const debugOpen = ref(false);
 const debugVersion = ref(0);
@@ -428,6 +428,7 @@ function navigationFromPage(page: string): RendererNavigation {
       :active-page="String(activePage)"
       :source="props.state.spider.source"
       :source-name="currentSourceName"
+      :source-count="props.state.import.sites.length"
       :status="props.state.spider.status"
       :can-start="canStart"
       :pending="props.pending !== null"
@@ -471,6 +472,7 @@ function navigationFromPage(page: string): RendererNavigation {
           :source="props.state.spider.source"
           :source-name="currentSourceName"
           :api="props.state.spider.api"
+          :source-count="props.state.import.sites.length"
           :status="props.state.spider.status"
           :pending="props.pending !== null"
           @change="emit('switch')"
@@ -547,12 +549,11 @@ function navigationFromPage(page: string): RendererNavigation {
           />
         </template>
         <template v-else-if="view === 'settings'">
-          <AndroidRuntimeStatusPanel />
           <SettingsSection title="来源管理" description="管理已导入的来源和当前连接状态。">
             <div class="settings-row"><span>当前来源</span><strong>{{ currentSourceName }}</strong></div>
             <button type="button" class="button-secondary" data-action="settings-switch" @click="emit('switch')">切换来源</button>
           </SettingsSection>
-          <SettingsSection title="主题" description="默认使用深色；选择跟随系统时只读取操作系统的明暗偏好，不保存敏感信息。">
+          <SettingsSection title="主题" description="默认使用浅色；选择跟随系统时只读取操作系统的明暗偏好，不保存敏感信息。">
             <label class="settings-control">
               <span>外观模式</span>
               <select v-model="theme" data-action="theme-mode" aria-label="外观模式">
@@ -561,14 +562,6 @@ function navigationFromPage(page: string): RendererNavigation {
                 <option value="dark">深色</option>
               </select>
             </label>
-          </SettingsSection>
-          <AboutPanel :storage="props.state.storage" />
-          <SettingsSection title="LocalProxy" description="播放需要代理时，Electron 主进程负责管理代理会话与生命周期。">
-            <div class="settings-row"><span>状态</span><strong>{{ props.state.playback.playback.available ? "按线路决定" : "等待播放线路" }}</strong></div>
-            <button type="button" class="button-secondary" data-action="proxy-test">测试连接</button>
-          </SettingsSection>
-          <SettingsSection title="播放偏好" description="播放顺序与当前线路由既有会话状态决定；本阶段不增加未确认的播放器能力。">
-            <div class="settings-row"><span>当前剧集顺序</span><strong>{{ props.order === "forward" ? "正序" : "倒序" }}</strong></div>
           </SettingsSection>
           <DanmakuSettingsPanel
             :state="props.state.danmaku"
@@ -586,22 +579,6 @@ function navigationFromPage(page: string): RendererNavigation {
             @cancel="emit('pushCancel', $event)"
             @clear="emit('pushClear')"
           />
-          <SettingsSection title="诊断与日志" description="只展示主进程返回的脱敏诊断，不在 renderer 读取日志文件或凭据。">
-            <DiagnosticPanel
-              :source="props.state.spider.source"
-              :source-name="currentSourceName"
-              :player-status="props.state.playback.player.status"
-              :code="props.state.error.error?.code ?? props.persistenceDiagnostic?.code"
-              :message="props.state.error.error?.message ?? props.persistenceDiagnostic?.message"
-              :error="props.state.error.error ?? undefined"
-              :diagnostic="props.persistenceDiagnostic"
-              :show-debug="true"
-              @open-debug="openDebug"
-            />
-          </SettingsSection>
-          <SettingsSection title="隐私" description="凭据、Cookie、完整播放地址和本机路径不在界面回显。">
-            <div class="settings-row"><span>renderer 数据边界</span><strong>仅 typed IPC</strong></div>
-          </SettingsSection>
           <CacheManagement
             :state="props.state.cache"
             :pending="props.pending"
@@ -639,6 +616,36 @@ function navigationFromPage(page: string): RendererNavigation {
             @alias-set="emit('epgAliasSet', $event)"
             @alias-remove="emit('epgAliasRemove', $event)"
           />
+          <AboutPanel :storage="props.state.storage" />
+
+          <details class="settings-advanced" data-testid="settings-advanced">
+            <summary>高级 / 开发者选项</summary>
+            <p class="settings-advanced-hint">诊断、运行时、代理等低频技术选项，默认折叠。</p>
+            <AndroidRuntimeStatusPanel />
+            <SettingsSection title="LocalProxy" description="播放需要代理时，Electron 主进程负责管理代理会话与生命周期。">
+              <div class="settings-row"><span>状态</span><strong>{{ props.state.playback.playback.available ? "按线路决定" : "等待播放线路" }}</strong></div>
+              <button type="button" class="button-secondary" data-action="proxy-test">测试连接</button>
+            </SettingsSection>
+            <SettingsSection title="播放偏好" description="播放顺序由既有会话状态决定。">
+              <div class="settings-row"><span>当前剧集顺序</span><strong>{{ props.order === "forward" ? "正序" : "倒序" }}</strong></div>
+            </SettingsSection>
+            <SettingsSection title="诊断与日志" description="只展示主进程返回的脱敏诊断，不在 renderer 读取日志文件或凭据。">
+              <DiagnosticPanel
+                :source="props.state.spider.source"
+                :source-name="currentSourceName"
+                :player-status="props.state.playback.player.status"
+                :code="props.state.error.error?.code ?? props.persistenceDiagnostic?.code"
+                :message="props.state.error.error?.message ?? props.persistenceDiagnostic?.message"
+                :error="props.state.error.error ?? undefined"
+                :diagnostic="props.persistenceDiagnostic"
+                :show-debug="true"
+                @open-debug="openDebug"
+              />
+            </SettingsSection>
+            <SettingsSection title="隐私" description="凭据、Cookie、完整播放地址和本机路径不在界面回显。">
+              <div class="settings-row"><span>renderer 数据边界</span><strong>仅 typed IPC</strong></div>
+            </SettingsSection>
+          </details>
         </template>
 
         <FavoritesView

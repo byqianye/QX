@@ -1,5 +1,8 @@
 <script setup lang="ts">
-defineProps<{ active: string }>();
+const props = withDefaults(defineProps<{
+  active: string;
+  categoryAvailable?: boolean | null;
+}>(), { categoryAvailable: null });
 const emit = defineEmits<{ select: [key: "home" | "category"] }>();
 
 function moveTab(event: KeyboardEvent): void {
@@ -20,7 +23,7 @@ function moveTab(event: KeyboardEvent): void {
 
 <template>
   <div class="category-tabs" data-testid="category-tabs" data-od-id="category-tabs" role="tablist" aria-label="内容分类">
-    <button type="button" role="tab" data-action="home-tab" :aria-selected="active === 'home'" :class="{ selected: active === 'home' }" @keydown="moveTab" @click="emit('select', 'home')">推荐</button>
-    <button type="button" role="tab" :aria-selected="active === 'category'" :class="{ selected: active === 'category' }" data-action="category-tab" @keydown="moveTab" @click="emit('select', 'category')">分类</button>
+    <button type="button" role="tab" data-action="home-tab" :aria-selected="props.active === 'home'" :class="{ selected: props.active === 'home' }" @keydown="moveTab" @click="emit('select', 'home')">推荐</button>
+    <button v-if="props.categoryAvailable !== false" type="button" role="tab" :aria-selected="props.active === 'category'" :class="{ selected: props.active === 'category' }" data-action="category-tab" @keydown="moveTab" @click="emit('select', 'category')">分类</button>
   </div>
 </template>

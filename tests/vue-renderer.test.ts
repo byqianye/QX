@@ -473,12 +473,48 @@ describe("Vue renderer", () => {
     await flushPromises();
     expect(wrapper.get('[data-testid="config-import-form"]')).toBeTruthy();
     expect(wrapper.get('[data-testid="first-launch-guide"]')).toBeTruthy();
+    expect(wrapper.get('[data-testid="first-launch-guide"]').text()).not.toMatch(/本地媒体|Jellyfin|Emby/u);
     await wrapper.get('[data-action="confirm-import"]').trigger("click");
     await flushPromises();
 
     expect(wrapper.get('[data-testid="desktop-spider-ui"]')).toBeTruthy();
     expect(wrapper.get('[data-testid="search-form"]')).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith("/api/import/confirm", expect.objectContaining({ method: "POST" }));
+    wrapper.unmount();
+  });
+
+  it("enters the Spider renderer when confirmation succeeds but the first source request fails", async () => {
+    const initial = readyEnvelope();
+    initial.import = {
+      ...initial.import!,
+      status: "confirmation_required",
+      warning: "Confirm this import",
+      trusted: false,
+      sessionReady: false,
+    };
+    initial.state = null;
+    const confirmed = readyEnvelope();
+    confirmed.state = { ...confirmed.state!, page: "home", items: [], sidecarRunning: true };
+    confirmed.error = "SourceUnavailable: SOURCE_SESSION_REQUEST_FAILED";
+    confirmed.errorCode = "SOURCE_SESSION_REQUEST_FAILED";
+    const responses: Record<string, RendererEnvelope> = {
+      "/api/state": initial,
+      "/api/import/confirm": confirmed,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => ({
+      ok: true,
+      json: async () => responses[String(input)] ?? confirmed,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('[data-action="confirm-import"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="desktop-spider-ui"]')).toBeTruthy();
+    expect(wrapper.get('[data-testid="error-state"]').text()).toContain("SOURCE_SESSION_REQUEST_FAILED");
+    expect((fetchMock.mock.calls as unknown as Array<[string]>).map(([path]) => path)).not.toContain("/api/open");
     wrapper.unmount();
   });
 

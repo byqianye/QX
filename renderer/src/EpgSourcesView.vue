@@ -53,7 +53,7 @@ function preview(): void {
 }
 
 function sourceTypeLabel(value: EpgSourceType): string {
-  return value === "xmltv-url" ? "XMLTV URL" : value === "xmltv-file" ? "XMLTV 文件" : "fixture";
+  return value === "xmltv-url" ? "XMLTV URL" : value === "xmltv-file" ? "XMLTV 文件" : "其他来源";
 }
 
 function formatTime(value: number | null): string {

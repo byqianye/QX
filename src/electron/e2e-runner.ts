@@ -173,6 +173,10 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
 
   try {
     const initialHtml = await readPage(options);
+    if (options.captureWindow) {
+      await post(options.baseUrl, "/api/view-state", { navigation: "home", theme: "light" });
+      await readPage(options);
+    }
     await captureWindow(options, "first-start-light");
     if (options.captureWindow) {
       await post(options.baseUrl, "/api/view-state", { navigation: "home", theme: "dark" });
@@ -656,6 +660,11 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
       await post(options.baseUrl, "/api/view-state", { navigation: "home", siteKey: null });
       await readPage(options);
       await options.captureWindow("home-source-ready");
+      await post(options.baseUrl, "/api/view-state", { navigation: "home", siteKey: null, theme: "dark" });
+      await readPage(options);
+      await options.captureWindow("home-source-ready-dark");
+      await post(options.baseUrl, "/api/view-state", { navigation: "home", siteKey: null, theme: "light" });
+      await readPage(options);
     }
     const search = await post(options.baseUrl, "/api/search", {
       key: "蜘蛛侠",
@@ -666,6 +675,11 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
     if (options.captureWindow) {
       await readPage(options);
       await options.captureWindow("search-results");
+      await post(options.baseUrl, "/api/view-state", { navigation: "search", theme: "dark" });
+      await readPage(options);
+      await options.captureWindow("search-results-dark");
+      await post(options.baseUrl, "/api/view-state", { navigation: "search", theme: "light" });
+      await readPage(options);
     }
     if (options.verifyAggregateSearch && search.state?.aggregateSearch) {
       checks.aggregateSearch = search.state.aggregateSearch.status === "complete"
@@ -681,6 +695,11 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
     if (options.captureWindow) {
       await readPage(options);
       await options.captureWindow("detail-drawer");
+      await post(options.baseUrl, "/api/view-state", { navigation: "detail", recentDetailId: searchVodId, theme: "dark" });
+      await readPage(options);
+      await options.captureWindow("detail-drawer-dark");
+      await post(options.baseUrl, "/api/view-state", { navigation: "detail", recentDetailId: searchVodId, theme: "light" });
+      await readPage(options);
     }
     if (options.verifyWebControl) {
       if (!options.webControlUrl) throw new Error("Packaged Web control E2E URL is not configured");
@@ -1262,6 +1281,22 @@ export async function runPackagedE2e(options: PackagedE2eOptions): Promise<Packa
     }
 
     if (options.captureWindow) {
+      const p3Views = [
+        "live",
+        "downloads",
+        "history",
+        "favorites",
+        "follow",
+        "local",
+        "settings",
+      ] as const;
+      for (const navigation of p3Views) {
+        for (const theme of ["light", "dark"] as const) {
+          await post(options.baseUrl, "/api/view-state", { navigation, theme });
+          await readPage(options);
+          await options.captureWindow(`p3-${navigation}-${theme}`);
+        }
+      }
       await post(options.baseUrl, "/api/view-state", { navigation: "settings", theme: "light" });
       await readPage(options);
       await new Promise<void>((resolve) => setTimeout(resolve, 2500));

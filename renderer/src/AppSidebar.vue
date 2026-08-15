@@ -5,15 +5,17 @@ defineProps<{
   activePage: string;
   source: string;
   sourceName?: string;
+  sourceCount?: number;
   status: string;
-  canStart: boolean;
+  categoryAvailable?: boolean | null;
+  localAvailable?: boolean | null;
   pending: boolean;
   theme: "system" | "light" | "dark";
   followUpdates: number;
 }>();
 
 const emit = defineEmits<{
-  navigate: [route: "home" | "category" | "history" | "favorites" | "follow" | "settings" | "live" | "local" | "downloads"];
+  navigate: [route: "home" | "category" | "history" | "favorites" | "follow" | "settings" | "live" | "local" | "downloads" | "sources"];
   open: [];
   switch: [];
   close: [];
@@ -31,15 +33,8 @@ const emit = defineEmits<{
       </div>
     </div>
 
-    <div class="sidebar-source" data-testid="sidebar-source">
-      <span class="status-dot" :data-status="status" aria-hidden="true" />
-      <div>
-        <span class="sidebar-label">当前来源</span>
-        <strong>{{ sourceName ?? "当前来源" }}</strong>
-      </div>
-    </div>
-
     <nav class="sidebar-nav" aria-label="工作区">
+      <span class="sidebar-group-label" aria-hidden="true">浏览</span>
       <button
         class="sidebar-nav-item"
         :class="{ selected: activePage === 'home' }"
@@ -51,12 +46,11 @@ const emit = defineEmits<{
         <Icon name="home" /><span>点播首页</span>
       </button>
       <button
+        v-if="categoryAvailable !== false"
         class="sidebar-nav-item"
         :class="{ selected: activePage === 'category' }"
         type="button"
         data-action="category"
-        data-type-id="hot_gaia"
-        data-page="1"
         :disabled="pending"
         @click="emit('navigate', 'category')"
       >
@@ -70,9 +64,10 @@ const emit = defineEmits<{
         :disabled="pending"
         @click="emit('navigate', 'live')"
       >
-        <Icon name="play" /><span>直播源</span>
+        <Icon name="tv" /><span>直播源</span>
       </button>
       <button
+        v-if="localAvailable !== false"
         class="sidebar-nav-item"
         :class="{ selected: activePage === 'local' }"
         type="button"
@@ -80,8 +75,9 @@ const emit = defineEmits<{
         :disabled="pending"
         @click="emit('navigate', 'local')"
       >
-        <Icon name="grid" /><span>本地媒体</span>
+        <Icon name="folder" /><span>本地媒体</span>
       </button>
+      <span class="sidebar-group-label" aria-hidden="true">资料库</span>
       <button
         class="sidebar-nav-item"
         :class="{ selected: activePage === 'history' }"
@@ -90,7 +86,7 @@ const emit = defineEmits<{
         :disabled="pending"
         @click="emit('navigate', 'history')"
       >
-        <Icon name="grid" /><span>历史记录</span>
+        <Icon name="history" /><span>历史记录</span>
       </button>
       <button
         class="sidebar-nav-item"
@@ -100,7 +96,7 @@ const emit = defineEmits<{
         :disabled="pending"
         @click="emit('navigate', 'favorites')"
       >
-        <Icon name="home" /><span>收藏</span>
+        <Icon name="heart" /><span>收藏</span>
       </button>
       <button
         class="sidebar-nav-item"
@@ -110,7 +106,7 @@ const emit = defineEmits<{
         :disabled="pending"
         @click="emit('navigate', 'follow')"
       >
-        <Icon name="grid" /><span>追更</span><span v-if="followUpdates > 0" class="sidebar-badge">{{ followUpdates }}</span>
+        <Icon name="bell" /><span>追更</span><span v-if="followUpdates > 0" class="sidebar-badge">{{ followUpdates }}</span>
       </button>
       <button
         class="sidebar-nav-item"
@@ -120,30 +116,40 @@ const emit = defineEmits<{
         :disabled="pending"
         @click="emit('navigate', 'downloads')"
       >
-        <Icon name="grid" /><span>下载</span>
+        <Icon name="download" /><span>下载</span>
       </button>
-      <button
-        v-if="canStart"
-        class="sidebar-nav-item"
-        type="button"
-        data-action="open"
-        :disabled="pending"
-        @click="emit('open')"
-      >
-        <Icon name="play" /><span>启动 Spider</span>
-      </button>
-      <button
-        class="sidebar-nav-item"
-        type="button"
-        data-action="switch"
-        :disabled="pending"
-        @click="emit('switch')"
-      >
-        <Icon name="switch" /><span>切换来源</span>
-      </button>
+      <span class="sidebar-group-label" aria-hidden="true">来源</span>
     </nav>
 
     <div class="sidebar-spacer" />
+
+    <button
+      type="button"
+      class="sidebar-source"
+      data-testid="sidebar-source"
+      data-action="sidebar-source-status"
+      :disabled="pending"
+      @click="emit('navigate', 'sources')"
+    >
+      <span class="status-dot" :data-status="status" aria-hidden="true" />
+      <span>
+        <span class="sidebar-label">当前来源</span>
+        <strong>{{ sourceName ?? "当前来源" }}</strong>
+      </span>
+    </button>
+
+    <nav class="sidebar-nav sidebar-nav-source" aria-label="来源管理">
+      <button
+        class="sidebar-nav-item"
+        :class="{ selected: activePage === 'sources' }"
+        type="button"
+        data-action="sources"
+        :disabled="pending"
+        @click="emit('navigate', 'sources')"
+      >
+        <Icon name="source" /><span>来源中心</span>
+      </button>
+    </nav>
 
     <nav class="sidebar-nav sidebar-nav-secondary" aria-label="工具">
       <button

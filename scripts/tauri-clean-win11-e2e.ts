@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -5,7 +6,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const projectRoot = resolve(import.meta.dirname, "..");
-const outputPath = resolve(projectRoot, "artifacts", "tauri-clean-win11-e2e.json");
+const outputPath = process.env.QX_TAURI_EVIDENCE_PATH?.trim()
+  ? resolve(projectRoot, process.env.QX_TAURI_EVIDENCE_PATH)
+  : resolve(projectRoot, "artifacts", "tauri-clean-win11-e2e.json");
 const installerValue = process.env.QX_TAURI_NSIS?.trim();
 const installer = installerValue ? resolve(projectRoot, installerValue) : "";
 const runtimeImages = [
@@ -33,6 +36,8 @@ if (process.env.QX_TAURI_CLEAN_E2E !== "1") {
 if (!installer || !existsSync(installer)) {
   throw new Error(`TAURI_CLEAN_WIN11_E2E_INSTALLER_MISSING: ${installer || "set QX_TAURI_NSIS"}`);
 }
+const installerBytes = readFileSync(installer);
+const installerSha256 = createHash("sha256").update(installerBytes).digest("hex");
 
 const hostPreflight = inspectHost();
 if (!hostPreflight.verified) {
@@ -107,6 +112,8 @@ try {
     platform: "win32-x64",
     generatedBy: "scripts/tauri-clean-win11-e2e.ts",
     installer,
+    installerSha256,
+    installerBytes: installerBytes.length,
     installDirectory,
     dataDirectory,
     observations: {

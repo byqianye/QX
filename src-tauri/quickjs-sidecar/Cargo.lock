@@ -774,7 +774,7 @@ dependencies = [
 
 [[package]]
 name = "qx-quickjs-sidecar"
-version = "0.9.0"
+version = "0.9.0-rc.1"
 dependencies = [
  "base64",
  "md-5",

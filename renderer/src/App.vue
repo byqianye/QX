@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import { RendererApi } from "./api.js";
 import ConfigImportView from "./ConfigImportView.vue";
+import CoreShell from "./CoreShell.vue";
 import { toAppError } from "./error.js";
 import LaunchSplash from "./LaunchSplash.vue";
 import PlayerWindow from "./PlayerWindow.vue";
+import { isCoreRouteName, router, ROUTER_ENABLED_KEY } from "./router.js";
 import SpiderView from "./SpiderView.vue";
+import { isTauriRuntime } from "./tauri-rpc.js";
 import {
   applyRendererEnvelope,
   createRendererState,
@@ -27,8 +30,11 @@ const order = ref<"forward" | "reverse">("forward");
 const persistence = ref<RendererPersistenceState | null>(null);
 const restoreCandidate = ref<RendererPersistenceState | null>(null);
 const restored = ref(false);
+const restoreCompleted = ref(false);
+const routerEnabled = inject(ROUTER_ENABLED_KEY, false);
 const isPlayerWindow = new URL(window.location.href).searchParams.get("player-window") === "1";
-const rendererTheme = computed<"light" | "dark">(() => persistence.value?.theme === "light" ? "light" : "dark");
+const initialRouteIntent = ref<string | null>(captureInitialRouteIntent());
+const rendererTheme = computed<"light" | "dark">(() => persistence.value?.theme === "dark" ? "dark" : "light");
 let scrollTimer: ReturnType<typeof setTimeout> | undefined;
 let playerSyncTimer: ReturnType<typeof setTimeout> | undefined;
 let liveSyncTimer: ReturnType<typeof setTimeout> | undefined;
@@ -37,6 +43,14 @@ let latestLiveSync: PlayerMediaSync | null = null;
 let retryAction: { operation: string; call: () => Promise<RendererEnvelope> } | null = null;
 
 const showImport = computed(() => state.value.import.status !== "ready" || !state.value.import.sessionReady);
+const isCoreRoute = computed(() => routerEnabled && isCoreRouteName(router.currentRoute.value.name));
+const legacyInitialNavigation = computed<RendererPersistenceState["navigation"]>(() => {
+  const name = String(router.currentRoute.value.name ?? "");
+  const legacy = name.startsWith("legacy-") ? name.slice("legacy-".length) : "";
+  return (legacy === "history" || legacy === "favorites" || legacy === "follow" || legacy === "settings" || legacy === "live" || legacy === "local" || legacy === "downloads")
+    ? legacy
+    : persistence.value?.navigation ?? "home";
+});
 
 onMounted(() => {
   if (isPlayerWindow) return;
@@ -44,6 +58,22 @@ onMounted(() => {
   window.addEventListener("qx-player-attached", refreshAfterPlayerWindow);
   void request("state", () => api.getState());
 });
+
+watch([showImport, restoreCompleted], ([importVisible, isRestored]) => {
+  if (!routerEnabled || isPlayerWindow) return;
+  if (importVisible) {
+    if (router.currentRoute.value.name !== "onboarding") void router.replace({ name: "onboarding" });
+    return;
+  }
+  if (!isRestored) return;
+  if (initialRouteIntent.value) {
+    const target = initialRouteIntent.value;
+    initialRouteIntent.value = null;
+    void router.replace(target);
+    return;
+  }
+  syncRouteFromPersistence();
+}, { immediate: true });
 
 onBeforeUnmount(() => {
   if (isPlayerWindow) return;
@@ -73,7 +103,11 @@ async function request(
     const selection = state.value.detail.playbackSelection;
     lineIndex.value = selection?.lineIndex ?? state.value.detail.playbackCatalog?.lines[0]?.index ?? 0;
     if (!restored.value && state.value.import.status === "ready" && state.value.import.sessionReady) {
-      await restorePage();
+      if (operation === "confirm" && envelope.errorCode) {
+        restored.value = true;
+        restoreCompleted.value = true;
+      }
+      else await restorePage();
     }
   } catch (error) {
     const appError = toAppError({
@@ -96,6 +130,46 @@ async function request(
 
 function post(operation: string, path: string, body: Record<string, unknown> = {}): void {
   void request(operation, () => api.post(path, body));
+}
+
+function syncRouteFromPersistence(): void {
+  if (!routerEnabled || showImport.value) return;
+  const currentName = router.currentRoute.value.name;
+  if (currentName && currentName !== "home" && currentName !== "onboarding" && isCoreRouteName(currentName)) return;
+  const candidate = restoreCandidate.value ?? persistence.value;
+  if (!candidate) {
+    void router.replace({ name: "home" });
+    return;
+  }
+  if (candidate.navigation === "category") {
+    const typeId = candidate.category?.typeId?.trim();
+    const filters = candidate.category?.filters ?? {};
+    void router.replace({
+      name: "category",
+      ...(typeId ? {
+        query: {
+          type: typeId,
+          ...(Object.keys(filters).length > 0 ? { filter: JSON.stringify(filters) } : {}),
+        },
+      } : {}),
+    });
+  } else if (candidate.navigation === "search" && candidate.search?.key) {
+    void router.replace({ name: "search", query: { q: candidate.search.key } });
+  } else if (candidate.navigation === "detail" && candidate.recentDetailId) {
+    void router.replace({ name: "media", params: { mediaId: candidate.recentDetailId } });
+  } else {
+    void router.replace({ name: "home" });
+  }
+}
+
+function captureInitialRouteIntent(): string | null {
+  const current = router.currentRoute.value;
+  return routerEnabled
+    && isCoreRouteName(current.name)
+    && current.name !== "home"
+    && current.name !== "onboarding"
+    ? current.fullPath
+    : null;
 }
 
 function retryLast(): void {
@@ -206,6 +280,13 @@ function sourceForOperation(operation: string): AppErrorSource {
   if (operation.includes("player")) return "player";
   if (operation.includes("search")) return "search";
   if (operation.includes("detail")) return "detail";
+  if (operation === "open"
+    || operation === "home"
+    || operation === "category"
+    || operation === "switch"
+    || operation === "select-source"
+    || operation.startsWith("restore-")
+    || operation.startsWith("initial-")) return "source";
   return "renderer";
 }
 
@@ -226,17 +307,27 @@ async function restorePage(): Promise<void> {
       if (state.value.spider.sidecarRunning) await request("initial-home", () => api.post("/api/home"));
     }
     restoreScroll(0);
+    restoreCompleted.value = true;
     return;
   }
   if (candidate.navigation === "local" || !candidate.siteKey || candidate.navigation === "settings" || candidate.navigation === "live") {
     restoreScroll(candidate?.scrollTop ?? 0);
+    restoreCompleted.value = true;
     return;
   }
-  if (state.value.import.selectedSiteKey !== candidate.siteKey) return;
+  if (state.value.import.selectedSiteKey !== candidate.siteKey) {
+    restoreCompleted.value = true;
+    return;
+  }
 
   await request("restore-open", () => api.post("/api/open"));
   if (candidate.navigation === "category" && candidate.category) {
-    await request("restore-category", () => api.post("/api/category", candidate.category ?? {}));
+    const { typeId, page, filters } = candidate.category;
+    await request("restore-category", () => api.post("/api/category", {
+      page,
+      ...(typeId ? { typeId } : {}),
+      ...(Object.keys(filters).length > 0 ? { extend: filters, filter: filters } : {}),
+    }));
   } else if (candidate.navigation === "search" && candidate.search) {
     await request("restore-search", () => api.post("/api/search", {
       key: candidate.search.key,
@@ -247,18 +338,22 @@ async function restorePage(): Promise<void> {
     await request("restore-detail", () => api.post("/api/detail", { vodId: candidate.recentDetailId }));
   } else if (candidate.navigation === "history") {
     restoreScroll(candidate.scrollTop);
+    restoreCompleted.value = true;
     return;
   } else if (candidate.navigation === "favorites") {
     restoreScroll(candidate.scrollTop);
+    restoreCompleted.value = true;
     return;
   } else if (candidate.navigation === "follow") {
     await request("restore-follow", () => api.post("/api/follow/refresh"));
     restoreScroll(candidate.scrollTop);
+    restoreCompleted.value = true;
     return;
   } else {
     await request("restore-home", () => api.post("/api/home"));
   }
   restoreScroll(candidate.scrollTop);
+  restoreCompleted.value = true;
 }
 
 function restoreScroll(scrollTop: number): void {
@@ -278,14 +373,76 @@ function selectSite(siteKey: string): void {
   post("select", "/api/import/select", { siteKey });
 }
 
-function play(line: number, episode: number, resumeMode?: HistoryResumeMode): void {
+function loadConfigFile(file: { name: string; text: string }): void {
+  if (isTauriRuntime()) {
+    post("import-file", "/api/import/load-file", { input: file.text, sourceName: file.name });
+  } else {
+    post("import", "/api/import/load", { input: file.text });
+  }
+}
+
+async function play(line: number, episode: number, resumeMode?: HistoryResumeMode): Promise<void> {
   lineIndex.value = line;
-  post("player", "/api/player", {
+  await request("player", () => api.post("/api/player", {
     lineIndex: line,
     episodeIndex: episode,
     vipFlags: [],
     ...(resumeMode ? { resume: resumeMode } : {}),
+  }));
+  if (routerEnabled && state.value.detail.detail) {
+    const mediaId = String(state.value.detail.detail.vod_id ?? state.value.detail.detail.id ?? "");
+    if (mediaId) void router.push({ name: "watch", params: { mediaId }, query: { episode: String(episode + 1) } });
+  }
+}
+
+function handleHome(): void {
+  post("home", "/api/home");
+  if (routerEnabled) void router.push({ name: "home" });
+}
+
+function handleCategory(typeIdValue?: string, filters: Record<string, string> = {}): void {
+  const typeId = typeIdValue?.trim() || persistence.value?.category?.typeId?.trim();
+  post("category", "/api/category", {
+    page: 1,
+    ...(typeId ? { typeId } : {}),
+    ...(Object.keys(filters).length > 0 ? { extend: filters, filter: filters } : {}),
   });
+  if (routerEnabled) {
+    const query = {
+      ...(typeId ? { type: typeId } : {}),
+      ...(Object.keys(filters).length > 0 ? { filter: JSON.stringify(filters) } : {}),
+    };
+    void router.push({ name: "category", ...(Object.keys(query).length > 0 ? { query } : {}) });
+  }
+}
+
+function handleSearch(query: string): void {
+  post("search", "/api/search", { key: query, page: 1, quick: false });
+  if (routerEnabled && query.trim()) void router.push({ name: "search", query: { q: query.trim() } });
+}
+
+function handleDetail(vodId: string): void {
+  post("detail", "/api/detail", { vodId });
+  const currentRoute = router.currentRoute.value.name;
+  if (routerEnabled && vodId.trim() && currentRoute !== "media" && currentRoute !== "watch") {
+    void router.push({ name: "media", params: { mediaId: vodId } });
+  }
+}
+
+function handleDetailClose(): void {
+  post("detail-close", "/api/detail/close");
+  if (routerEnabled) void router.push({ name: "home" });
+}
+
+function handleSwitch(): void {
+  post("switch", "/api/switch");
+  if (routerEnabled) void router.push({ name: "home" });
+}
+
+function selectCoreSource(siteKey: string): void {
+  if (!siteKey.trim()) return;
+  post("select-source", "/api/import/select", { siteKey });
+  if (routerEnabled) void router.push({ name: "home" });
 }
 
 function selectPlaybackSource(siteKey: string, vodId: string): void {
@@ -317,9 +474,46 @@ function playLocal(itemId: string, resumeMode?: HistoryResumeMode): void {
       :pending="pending"
       :persistence-diagnostic="persistence?.diagnostic"
       @load="post('import', '/api/import/load', { input: $event })"
+      @load-file="loadConfigFile"
       @select="selectSite"
       @confirm="post('confirm', '/api/import/confirm')"
       @cancel="post('cancel', '/api/import/cancel')"
+    />
+    <CoreShell
+      v-else-if="routerEnabled && isCoreRoute"
+      :state="state"
+      :pending="pending"
+      :line-index="lineIndex"
+      :order="order"
+      :initial-theme="persistence?.theme"
+      :initial-search-query="persistence?.search?.key"
+      :persistence-diagnostic="persistence?.diagnostic"
+      @open="post('open', '/api/open')"
+      @home="handleHome"
+      @category="handleCategory"
+      @search="handleSearch"
+      @detail="handleDetail"
+      @find-playback-source="post('playback-source-search', '/api/playback-sources/search')"
+      @select-playback-source="selectPlaybackSource"
+      @play="play"
+      @retry="retryLast"
+      @line="lineIndex = $event"
+      @order="order = $event"
+      @switch="handleSwitch"
+      @select-source="selectCoreSource"
+      @close="post('close', '/api/close')"
+      @view-state="persistView"
+      @player-detach="detachPlayer"
+      @player-attach="attachPlayer"
+      @player-stop="stopPlayer"
+      @player-sync="syncPlayer"
+      @fallback-cancel="cancelFallback"
+      @fallback-approve="approveFallback"
+      @fallback-mode="setFallbackMode"
+      @favorite-toggle="post('favorite-toggle-detail', '/api/favorites/toggle-detail')"
+      @favorite-move-detail="post('favorite-move-detail', '/api/favorites/move-detail', { groupId: $event })"
+      @follow-toggle="post('follow-toggle-detail', '/api/follow/toggle-detail')"
+      @follow-and-favorite="post('follow-and-favorite-detail', '/api/follow/favorite-detail')"
     />
     <SpiderView
       v-else
@@ -327,23 +521,23 @@ function playLocal(itemId: string, resumeMode?: HistoryResumeMode): void {
       :pending="pending"
       :line-index="lineIndex"
       :order="order"
-      :initial-navigation="persistence?.navigation"
+      :initial-navigation="routerEnabled ? legacyInitialNavigation : persistence?.navigation"
       :initial-theme="persistence?.theme"
       :initial-search-query="persistence?.search?.key"
       :persistence-diagnostic="persistence?.diagnostic"
       @open="post('open', '/api/open')"
-      @home="post('home', '/api/home')"
-      @category="post('category', '/api/category', { typeId: 'hot_gaia', page: 1 })"
-      @search="post('search', '/api/search', { key: $event, page: 1, quick: false })"
-      @detail="post('detail', '/api/detail', { vodId: $event })"
-      @detail-close="post('detail-close', '/api/detail/close')"
+      @home="handleHome"
+      @category="handleCategory"
+      @search="handleSearch"
+      @detail="handleDetail"
+      @detail-close="handleDetailClose"
       @find-playback-source="post('playback-source-search', '/api/playback-sources/search')"
       @select-playback-source="selectPlaybackSource"
       @play="play"
       @retry="retryLast"
       @line="lineIndex = $event"
       @order="order = $event"
-      @switch="post('switch', '/api/switch')"
+      @switch="handleSwitch"
       @close="post('close', '/api/close')"
       @view-state="persistView"
       @player-detach="detachPlayer"

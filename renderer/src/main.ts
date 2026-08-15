@@ -2,9 +2,11 @@ import { createApp } from "vue";
 
 import App from "./App.vue";
 import "./styles.css";
+import { router, ROUTER_ENABLED_KEY } from "./router.js";
 import { isTauriRuntime, requestAppSnapshot } from "./tauri-rpc.js";
 
-createApp(App).mount("#app");
+const app = createApp(App).use(router).provide(ROUTER_ENABLED_KEY, true);
+void router.isReady().then(() => app.mount("#app"));
 
 if (isTauriRuntime()) {
   void requestAppSnapshot()

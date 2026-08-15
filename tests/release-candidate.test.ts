@@ -20,6 +20,18 @@ describe("Windows Release Candidate V1", () => {
     expect(ANDROID_RUNTIME_MINIMUM_QX_VERSION).toBe("0.9.0-rc.1");
   });
 
+  it("keeps the Tauri and QuickJS package versions aligned with the RC", () => {
+    const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
+    const tauri = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8")) as { version?: string };
+    const cargo = readFileSync(new URL("../src-tauri/Cargo.toml", import.meta.url), "utf8");
+    const sidecarCargo = readFileSync(new URL("../src-tauri/quickjs-sidecar/Cargo.toml", import.meta.url), "utf8");
+    const cargoVersion = cargo.match(/^version = "([^"]+)"/mu)?.[1];
+    const sidecarVersion = sidecarCargo.match(/^version = "([^"]+)"/mu)?.[1];
+    expect(tauri.version).toBe(packageJson.version);
+    expect(cargoVersion).toBe(packageJson.version);
+    expect(sidecarVersion).toBe(packageJson.version);
+  });
+
   it("exposes every QX Android Runtime path from one resolver", () => {
     const resolver = new RuntimePathResolver({
       appPath: "C:\\Program Files\\QX影视\\resources\\app.asar",

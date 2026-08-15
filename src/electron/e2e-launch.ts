@@ -120,6 +120,9 @@ try {
   });
   const configUrl = await startConfigServer(config);
   const executable = process.env.QX_PACKAGED_EXECUTABLE ?? resolvePackagedExecutable();
+  const executableArgs = process.env.QX_E2E_DEV_APP?.trim()
+    ? [resolve(process.env.QX_E2E_DEV_APP)]
+    : [];
   const first = await runPackagedExecutable(executable, {
     QX_ELECTRON_E2E: "1",
     QX_E2E_CONFIG_URL: configUrl,
@@ -157,7 +160,7 @@ try {
     QX_E2E_SNIFF_URL: mediaFixture.sniffUrl,
     ...parserEnvironment(),
     ...playbackRuleEnvironment(playbackConfig),
-  });
+  }, executableArgs);
   const firstResultValue = readResult(firstResult);
   assertRun("first packaged E2E", first, firstResultValue);
   const firstFavoriteId = stringValue(firstResultValue.favoriteId, "Packaged E2E did not return a favorite identity");
@@ -208,7 +211,7 @@ try {
     QX_E2E_SNIFF_URL: mediaFixture.sniffUrl,
     ...parserEnvironment(),
     ...playbackRuleEnvironment(playbackConfig),
-  });
+  }, executableArgs);
   const secondResultValue = readResult(secondResult);
   assertRun("restarted packaged E2E", second, secondResultValue);
   assertPersistedDesktopState(userData, "douban");

@@ -14,6 +14,8 @@ jobs:
     runs-on: windows-latest
     env:
       QX_COMPONENT_PUBLIC_KEY_BASE64: ${{ secrets.QX_COMPONENT_PUBLIC_KEY_BASE64 }}
+      QX_COMPONENT_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/components-v1.json
+      QX_COMPONENT_SIGNATURE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/components-v1.sig.b64
 
     steps:
       - name: Check out source
@@ -47,6 +49,7 @@ jobs:
         run: |
           npm run check:tauri
           npm run audit:tauri:no-remnant
+          npm test -- --reporter=dot
 
       - name: Build Windows x64 NSIS package
         shell: pwsh
@@ -62,7 +65,7 @@ jobs:
           }
           "installer=$($installer.FullName)" >> $env:GITHUB_OUTPUT
 
-      - name: Prepare signed QuickJS component manifest
+      - name: Prepare signed media component manifest
         id: components
         shell: pwsh
         env:
@@ -80,19 +83,44 @@ jobs:
             throw "The release QuickJS sidecar was not produced"
           }
 
+          $mpvArchive = Join-Path $env:RUNNER_TEMP "mpv-x86_64-20260814-git-7b8915bc1d.7z"
+          Invoke-WebRequest -Uri "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20260814/mpv-x86_64-20260814-git-7b8915bc1d.7z" -OutFile $mpvArchive
+          if ((Get-FileHash -LiteralPath $mpvArchive -Algorithm SHA256).Hash.ToLowerInvariant() -ne "1bf3b029da2c98e605e00e85f21ee3142f22a1dcc4ceb5c827b5c51e36e390f9") {
+            throw "Pinned mpv archive hash does not match"
+          }
+          $mpvRoot = Join-Path $env:RUNNER_TEMP "mpv-unpacked"
+          New-Item -ItemType Directory -Force -Path $mpvRoot | Out-Null
+          7z x $mpvArchive "-o$mpvRoot" -y | Out-Null
+          $mpv = Get-ChildItem -LiteralPath $mpvRoot -Filter "mpv.exe" -File -Recurse | Select-Object -First 1
+          if ($null -eq $mpv) {
+            throw "Pinned mpv archive did not contain mpv.exe"
+          }
+
           $componentUrl = "https://github.com/$($env:GITHUB_REPOSITORY)/releases/download/$($env:GITHUB_REF_NAME)/qx-quickjs-sidecar.exe"
+          $mpvUrl = "https://github.com/$($env:GITHUB_REPOSITORY)/releases/download/$($env:GITHUB_REF_NAME)/qx-mpv.exe"
           $spec = @{ components = @(@{
                 id = "quickjs"
                 version = $version
                 artifact = $sidecar
                 url = $componentUrl
+              }, @{
+                id = "mpv"
+                version = "20260814-git-7b8915bc1d"
+                artifact = $mpv.FullName
+                url = $mpvUrl
               }) } | ConvertTo-Json -Depth 4
           $specPath = Join-Path $env:RUNNER_TEMP "components-spec.json"
           Set-Content -LiteralPath $specPath -Value $spec -Encoding utf8
 
           npm run tauri:component-manifest -- --private-key $privateKey --components $specPath --output-dir $staging
+          $expectedPublicKey = $env:QX_COMPONENT_PUBLIC_KEY_BASE64.Trim()
+          $generatedPublicKey = (Get-Content -LiteralPath (Join-Path $staging "components-v1.pub.b64") -Raw).Trim()
+          if ($generatedPublicKey -ne $expectedPublicKey) {
+            throw "Component private key does not match QX_COMPONENT_PUBLIC_KEY_BASE64"
+          }
           "staging=$staging" >> $env:GITHUB_OUTPUT
           "sidecar=$sidecar" >> $env:GITHUB_OUTPUT
+          "mpv=$($mpv.FullName)" >> $env:GITHUB_OUTPUT
 
       - name: Upload unsigned installer for signing
         id: upload-unsigned-installer
@@ -120,6 +148,7 @@ jobs:
         env:
           STAGING: ${{ steps.components.outputs.staging }}
           SIDECAR: ${{ steps.components.outputs.sidecar }}
+          MPV: ${{ steps.components.outputs.mpv }}
           SIGNED_DIR: ${{ runner.temp }}/qx-signed
         run: |
           $signedInstaller = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Filter *.exe -File -Recurse | Select-Object -First 1
@@ -134,10 +163,47 @@ jobs:
             --component-manifest (Join-Path $env:STAGING "components-v1.json") `
             --component-signature (Join-Path $env:STAGING "components-v1.sig.b64") `
             --component-public-key (Join-Path $env:STAGING "components-v1.pub.b64") `
-            --component-artifact $env:SIDECAR `
-            --component-id quickjs `
+            --component-artifact "$($env:SIDECAR),$($env:MPV)" `
+            --component-id "quickjs,mpv" `
             --manifest-url $manifestUrl `
-            --artifact-url $componentUrl
+            --artifact-url "$($componentUrl),$($componentUrl.Replace('qx-quickjs-sidecar.exe','qx-mpv.exe'))"
+
+      - name: Run clean Win11 E2E for signed installer
+        shell: pwsh
+        env:
+          SIGNED_DIR: ${{ runner.temp }}/qx-signed
+          QX_TAURI_CLEAN_E2E: "1"
+        run: |
+          $signedInstaller = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Filter *.exe -File -Recurse | Select-Object -First 1
+          if ($null -eq $signedInstaller) {
+            throw "SignPath did not return a signed installer"
+          }
+          $env:QX_TAURI_NSIS = $signedInstaller.FullName
+          npm run tauri:e2e:clean-win11
+
+      - name: Finalize G112 report after verified release evidence
+        shell: pwsh
+        env:
+          SIGNED_DIR: ${{ runner.temp }}/qx-signed
+        run: |
+          $signedInstaller = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Filter *.exe -File -Recurse | Select-Object -First 1
+          if ($null -eq $signedInstaller) {
+            throw "SignPath did not return a signed installer"
+          }
+          $env:QX_TAURI_NSIS = $signedInstaller.FullName
+          npm run tauri:finalize-g112-release
+
+      - name: Run strict G112 release gate before publishing
+        shell: pwsh
+        env:
+          SIGNED_DIR: ${{ runner.temp }}/qx-signed
+        run: |
+          $signedInstaller = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Filter *.exe -File -Recurse | Select-Object -First 1
+          if ($null -eq $signedInstaller) {
+            throw "SignPath did not return a signed installer"
+          }
+          $env:QX_TAURI_NSIS = $signedInstaller.FullName
+          npm run verify:release
 
       - name: Publish signed GitHub Release
         shell: pwsh
@@ -145,6 +211,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           STAGING: ${{ steps.components.outputs.staging }}
           SIDECAR: ${{ steps.components.outputs.sidecar }}
+          MPV: ${{ steps.components.outputs.mpv }}
           SIGNED_DIR: ${{ runner.temp }}/qx-signed
         run: |
           $tag = $env:GITHUB_REF_NAME
@@ -153,6 +220,7 @@ jobs:
           $assets = @(
             "$($signedInstaller.FullName)#QX-Yingshi-$version-x64-setup.exe",
             "$($env:SIDECAR)#qx-quickjs-sidecar.exe",
+            "$($env:MPV)#qx-mpv.exe",
             "$(Join-Path $env:STAGING 'components-v1.json')#components-v1.json",
             "$(Join-Path $env:STAGING 'components-v1.sig.b64')#components-v1.sig.b64",
             "$(Join-Path $env:STAGING 'components-v1.pub.b64')#components-v1.pub.b64",
@@ -173,8 +241,8 @@ jobs:
             --installer $signedInstaller.FullName `
             --manifest-url "$baseUrl/components-v1.json" `
             --signature-url "$baseUrl/components-v1.sig.b64" `
-            --artifact-url "$baseUrl/qx-quickjs-sidecar.exe" `
-            --component-id quickjs `
+            --artifact-url "$baseUrl/qx-quickjs-sidecar.exe,$baseUrl/qx-mpv.exe" `
+            --component-id "quickjs,mpv" `
             --public-key-base64 $env:QX_COMPONENT_PUBLIC_KEY_BASE64
           gh release upload $env:GITHUB_REF_NAME `
             artifacts/tauri-components-release.json `

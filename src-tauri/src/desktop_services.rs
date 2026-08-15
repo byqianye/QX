@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Write;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -996,12 +998,24 @@ fn fetch_download(
     task: &mut Value,
 ) -> Result<(), String> {
     let url = string(request, "url");
-    let client = Client::builder()
+    let parsed_url = reqwest::Url::parse(&url).map_err(|error| error.to_string())?;
+    let mut client_builder = Client::builder()
         .timeout(Duration::from_secs(60))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
+        .redirect(reqwest::redirect::Policy::none());
+    if parsed_url.host_str().is_some_and(|host| {
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<IpAddr>()
+                .map(|address| address.is_loopback())
+                .unwrap_or(false)
+    }) {
+        client_builder = client_builder.no_proxy();
+    }
+    let client = client_builder.build().map_err(|error| error.to_string())?;
+    let response = client
+        .get(parsed_url)
+        .send()
         .map_err(|error| error.to_string())?;
-    let response = client.get(&url).send().map_err(|error| error.to_string())?;
     if !response.status().is_success() {
         return Err(format!("DOWNLOAD_HTTP_{}", response.status().as_u16()));
     }
@@ -1024,11 +1038,47 @@ fn fetch_download(
     .ok_or_else(|| "DOWNLOAD_TARGET_INVALID".to_string())?;
     let path =
         PathBuf::from(string(&target, "path")).join(safe_filename(&string(request, "filename")));
-    fs::write(path, &bytes).map_err(|error| error.to_string())?;
+    write_download_atomically(&path, &bytes)?;
     task["totalBytes"] = json!(bytes.len());
     task["completedBytes"] = json!(bytes.len());
     task["speed"] = json!(null);
     Ok(())
+}
+
+fn write_download_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "DOWNLOAD_TARGET_INVALID".to_string())?;
+    let filename = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("download.bin");
+    let temporary = parent.join(format!(".{filename}.{}.part", Uuid::new_v4()));
+
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| error.to_string())?;
+        file.write_all(bytes).map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+        drop(file);
+
+        match fs::rename(&temporary, path) {
+            Ok(()) => Ok(()),
+            Err(_error) if path.exists() => {
+                fs::remove_file(path).map_err(|replace_error| replace_error.to_string())?;
+                fs::rename(&temporary, path).map_err(|replace_error| replace_error.to_string())
+            }
+            Err(error) => Err(error.to_string()),
+        }
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 fn download_snapshot(connection: &Connection) -> Result<Value, DesktopServiceError> {
@@ -1280,9 +1330,12 @@ fn map_business_error(error: business_data::BusinessDataError) -> DesktopService
 
 #[cfg(test)]
 mod tests {
-    use super::{handle, DesktopServicePayload};
+    use super::{handle, write_download_atomically, DesktopServicePayload};
     use serde_json::json;
     use std::fs;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
 
     fn fixture_root(name: &str) -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!(
@@ -1337,6 +1390,92 @@ mod tests {
         let database = root.join("qx.sqlite3");
         let error = handle(&root, &database, &DesktopServicePayload { action: "download-add".to_string(), value: json!({"title":"Stream","url":"https://media.example.test/live.m3u8","targetDirectoryId":"missing"}) }).expect_err("stream rejected");
         assert!(format!("{error:?}").contains("DOWNLOAD_URL_UNSUPPORTED"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn writes_download_atomically_and_replaces_existing_file() {
+        let root = fixture_root("download-atomic");
+        let destination = root.join("episode.mp4");
+        fs::write(&destination, b"old").expect("existing file");
+
+        write_download_atomically(&destination, b"new-content").expect("atomic write");
+
+        assert_eq!(
+            fs::read(&destination).expect("download file"),
+            b"new-content"
+        );
+        assert_eq!(fs::read_dir(&root).expect("download directory").count(), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn downloads_native_http_file_and_reports_completed_progress() {
+        let root = fixture_root("download-http");
+        let database = root.join("qx.sqlite3");
+        let target = root.join("downloads");
+        fs::create_dir_all(&target).expect("download target");
+        let target_snapshot = handle(
+            &root,
+            &database,
+            &DesktopServicePayload {
+                action: "download-select-folder".to_string(),
+                value: json!({"path": target}),
+            },
+        )
+        .expect("download target");
+        let target_id = target_snapshot["downloads"]["targetDirectories"][0]["id"]
+            .as_str()
+            .expect("target id")
+            .to_string();
+
+        let body = b"native-download-fixture".to_vec();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("local HTTP listener");
+        let address = listener.local_addr().expect("listener address");
+        let server = thread::spawn({
+            let body = body.clone();
+            move || {
+                let (mut stream, _) = listener.accept().expect("HTTP request");
+                let mut request = [0_u8; 1024];
+                let _ = stream.read(&mut request).expect("HTTP request bytes");
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .expect("HTTP response headers");
+                stream.write_all(&body).expect("HTTP response body");
+            }
+        });
+
+        let snapshot = handle(
+            &root,
+            &database,
+            &DesktopServicePayload {
+                action: "download-add".to_string(),
+                value: json!({
+                    "title": "Episode",
+                    "url": format!("http://{address}/episode.mp4"),
+                    "filename": "episode.mp4",
+                    "targetDirectoryId": target_id,
+                }),
+            },
+        )
+        .expect("native download");
+        server.join().expect("HTTP server");
+
+        let task = &snapshot["downloads"]["tasks"][0];
+        assert_eq!(task["status"], "completed", "{task}");
+        assert_eq!(task["totalBytes"], body.len());
+        assert_eq!(task["completedBytes"], body.len());
+        assert_eq!(
+            fs::read(target.join("episode.mp4")).expect("downloaded file"),
+            body
+        );
+        assert_eq!(
+            fs::read_dir(&target).expect("download directory").count(),
+            1
+        );
         let _ = fs::remove_dir_all(root);
     }
 

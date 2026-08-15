@@ -30,6 +30,7 @@
     "tauri:e2e:clean-win11": "tsx scripts/tauri-clean-win11-e2e.ts",
     "tauri:e2e:upgrade-win11": "tsx scripts/tauri-upgrade-win11-e2e.ts",
     "tauri:release-evidence": "tsx scripts/tauri-release-evidence.ts",
+    "tauri:finalize-g112-release": "tsx scripts/finalize-g112-release.ts",
     "tauri:component-manifest": "tsx scripts/tauri-component-manifest.ts",
     "tauri:release-download-canary": "tsx scripts/tauri-release-download-canary.ts",
     "tauri:runtime-canary": "tsx scripts/tauri-runtime-canary.ts",
@@ -107,14 +108,16 @@
     "android-host:start": "tsx scripts/android-host.ts start",
     "android-host:stop": "tsx scripts/android-host.ts stop",
     "android-host:check": "tsx scripts/android-host.ts check",
-    "android-host:check:qx": "tsx scripts/android-host.ts check --qx"
+    "android-host:check:qx": "tsx scripts/android-host.ts check --qx",
+    "android-runtime:compact:provision": "tsx scripts/android-runtime-compact.ts"
   },
   "dependencies": {
     "hls.js": "^1.6.17",
     "quickjs-emscripten": "^0.32.0",
     "saxes": "^6.0.0",
     "shaka-player": "^5.0.4",
-    "vue": "^3.5.41"
+    "vue": "^3.5.41",
+    "vue-router": "^4.6.4"
   },
   "devDependencies": {
     "@electron/packager": "^20.1.1",

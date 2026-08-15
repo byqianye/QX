@@ -16,12 +16,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   load: [input: string];
+  loadFile: [file: { name: string; text: string }];
   select: [siteKey: string];
   confirm: [];
   cancel: [];
 }>();
 
 const input = ref("");
+const fileInput = ref<HTMLInputElement | null>(null);
 const selectedSiteKey = ref(props.state.selectedSiteKey ?? "");
 const appError = computed(() => toAppError(props.state.error, "config"));
 const persistenceError = computed(() => props.persistenceDiagnostic
@@ -34,6 +36,14 @@ watch(() => props.state.selectedSiteKey, (value) => {
 
 function submit(): void {
   emit("load", input.value.trim());
+}
+
+async function selectFile(event: Event): Promise<void> {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement) || !target.files?.[0]) return;
+  const file = target.files[0];
+  emit("loadFile", { name: file.name, text: await file.text() });
+  if (fileInput.value) fileInput.value.value = "";
 }
 
 function selectSite(event: Event): void {
@@ -66,29 +76,31 @@ function submitSite(): void {
     </header>
 
     <section class="first-launch-guide" data-testid="first-launch-guide">
-      <div><strong>第一次使用</strong><span>从三个安全入口开始</span></div>
+      <div><strong>第一次使用</strong><span>先导入已授权的来源，再开始观看流程</span></div>
       <ul>
         <li><b>添加配置</b><span>导入你有权访问的媒体配置，先看来源摘要再确认。</span></li>
-        <li><b>添加本地媒体</b><span>进入工作台后可选择本地文件或文件夹。</span></li>
-        <li><b>连接授权服务</b><span>仅在你主动配置时连接 Jellyfin 等服务。</span></li>
       </ul>
     </section>
 
     <section class="import-card">
       <form data-testid="config-import-form" @submit.prevent="submit">
-        <label for="config-input">配置 URL、文件路径或原始 JSON</label>
-        <textarea id="config-input" v-model="input" name="input" placeholder="https://... / C:\\config.json / {&quot;sites&quot;:[...]}" :disabled="props.pending !== null" />
+        <label for="config-input">配置地址或原始 JSON</label>
+        <textarea id="config-input" v-model="input" name="input" placeholder="https://... / {&quot;sites&quot;:[...]}" :disabled="props.pending !== null" />
         <div class="form-footer">
           <span class="meta">配置只在本机解析；导入前会显示来源摘要。</span>
           <button type="submit" class="button-primary" :disabled="props.pending !== null">导入配置</button>
         </div>
       </form>
+      <div class="file-import-row">
+        <label for="config-file">或选择本地配置文件</label>
+        <input id="config-file" ref="fileInput" type="file" accept=".json,.txt,application/json,text/plain" :disabled="props.pending !== null" @change="selectFile" />
+      </div>
     </section>
 
     <section v-if="props.state.summary" data-testid="config-summary" class="panel">
       <strong>配置摘要</strong>
       <p>
-        站点 {{ props.state.summary.siteCount }} 个，Spider：{{ props.state.summary.hasSpider ? "有" : "无" }}
+        已发现站点 {{ props.state.summary.siteCount }} 个
       </p>
     </section>
 
@@ -97,7 +109,7 @@ function submitSite(): void {
       data-testid="site-selector"
       @submit.prevent="submitSite"
     >
-      <label for="site-key">Spider 站点</label>
+      <label for="site-key">选择来源站点</label>
       <select id="site-key" v-model="selectedSiteKey" name="siteKey" @change="selectSite">
         <option v-for="site in props.state.sites" :key="site.key" :value="site.key">
           {{ site.name }} · {{ displaySource(site.api) }}

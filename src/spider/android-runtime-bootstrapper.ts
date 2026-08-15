@@ -10,6 +10,7 @@ import {
   buildAndroidRuntimeManifest,
   isAndroidRuntimeManifest,
 } from "./android-runtime-manifest.js";
+
 import { NodeAndroidRuntimeCommandRunner, type AndroidRuntimeCommandRunner } from "./android-runtime-process.js";
 import type {
   AndroidEnvironmentDoctorResult,
@@ -18,15 +19,20 @@ import type {
   AndroidRuntimePersistedState,
   AndroidRuntimePaths,
   AndroidRuntimeBootstrapState,
+  AndroidRuntimeAvdName,
 } from "./android-runtime-types.js";
 import {
   ANDROID_RUNTIME_AVD_NAME,
+  ANDROID_RUNTIME_COMPACT_AVD_NAME,
   ANDROID_RUNTIME_ADB_SERVER_PORT,
   ANDROID_RUNTIME_API,
   ANDROID_RUNTIME_MIN_FREE_BYTES,
   ANDROID_RUNTIME_SYSTEM_IMAGE,
   ANDROID_RUNTIME_VERSION,
 } from "./android-runtime-types.js";
+
+const COMPACT_USERDATA_IMAGE_BYTES = 1024 * 1024 * 1024;
+const COMPACT_USERDATA_BLOCK_SIZE = 4096;
 
 export interface AndroidRuntimeBootstrapperOptions {
   paths: AndroidRuntimePaths;
@@ -39,6 +45,7 @@ export interface AndroidRuntimeBootstrapperOptions {
   arch?: NodeJS.Architecture;
   progressLogger?: (progress: AndroidRuntimeProgress) => void;
   diskSpaceProbe?: (path: string) => number;
+  avdName?: AndroidRuntimeAvdName;
 }
 
 export interface AndroidRuntimeProvisionOptions {
@@ -50,6 +57,8 @@ export interface AndroidRuntimeBootstrapperPort {
   status(): Promise<AndroidRuntimePersistedState>;
   manifest(): Promise<AndroidRuntimeManifest>;
   hostApkPath(): string;
+  avdName(): AndroidRuntimeAvdName;
+  userdataImagePath(): string | undefined;
   recordState(state: AndroidRuntimeBootstrapState, diagnostics?: readonly string[]): Promise<AndroidRuntimePersistedState>;
   ensureProvisioned(options: AndroidRuntimeProvisionOptions): Promise<AndroidRuntimePersistedState>;
   repair(consent: boolean): Promise<AndroidRuntimePersistedState>;
@@ -61,6 +70,7 @@ export class AndroidRuntimeBootstrapper implements AndroidRuntimeBootstrapperPor
   private readonly options: Omit<AndroidRuntimeBootstrapperOptions, "commandRunner" | "fetchImpl" | "now" | "platform" | "arch"> & Required<Pick<AndroidRuntimeBootstrapperOptions, "commandRunner" | "fetchImpl" | "now" | "platform" | "arch">>;
   private readonly statePath: string;
   private readonly manifestPath: string;
+  private readonly avdNameValue: AndroidRuntimeAvdName;
   private current: AndroidRuntimePersistedState = {
     bootstrapState: "NOT_INSTALLED",
     runtimeVersion: ANDROID_RUNTIME_VERSION,
@@ -82,6 +92,7 @@ export class AndroidRuntimeBootstrapper implements AndroidRuntimeBootstrapperPor
       arch: process.arch,
       ...options,
     };
+    this.avdNameValue = options.avdName ?? ANDROID_RUNTIME_AVD_NAME;
     this.statePath = join(options.paths.state, "bootstrap-state.json");
     this.manifestPath = join(options.paths.state, "runtime-manifest.json");
   }
@@ -106,11 +117,20 @@ export class AndroidRuntimeBootstrapper implements AndroidRuntimeBootstrapperPor
     } catch {
       // Build the manifest after the host hash is available.
     }
-    return buildAndroidRuntimeManifest(await sha256File(this.options.hostApkPath));
+    return buildAndroidRuntimeManifest(await sha256File(this.options.hostApkPath), "1.0.0", this.avdNameValue);
   }
 
   public hostApkPath(): string {
     return join(this.options.paths.host, "android-spider-host.apk");
+  }
+
+  public avdName(): AndroidRuntimeAvdName {
+    return this.avdNameValue;
+  }
+
+  public userdataImagePath(): string | undefined {
+    if (this.avdNameValue !== ANDROID_RUNTIME_COMPACT_AVD_NAME) return undefined;
+    return join(this.options.paths.avd, `${this.avdNameValue}.avd`, "userdata-qx-compact.img");
   }
 
   public recordState(state: AndroidRuntimeBootstrapState, diagnostics: readonly string[] = []): Promise<AndroidRuntimePersistedState> {
@@ -182,17 +202,17 @@ export class AndroidRuntimeBootstrapper implements AndroidRuntimeBootstrapperPor
         return this.fail("HOST_APK_NOT_FOUND", `Android Host APK 不存在：${this.options.hostApkPath}`);
       }
       await this.prepareDirectories();
-      const manifest = buildAndroidRuntimeManifest(await sha256File(this.options.hostApkPath));
+      const manifest = buildAndroidRuntimeManifest(await sha256File(this.options.hostApkPath), "1.0.0", this.avdNameValue);
       await writeFile(this.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
       await copyFile(this.options.hostApkPath, this.hostApkPath());
       await this.ensureCommandLineTools(manifest);
       await this.transition("INSTALLING", [], { stage: "installing", message: "正在安装锁定的 Android SDK 组件…", cancellable: true });
       await this.runSdkManager(manifest.sdkPackages);
+      await this.ensureAvd(manifest);
       const doctor = await this.environmentDoctor();
       if (doctor.whpx !== "ready") {
         return this.fail("WHPX_NOT_READY", doctor.message, doctor.diagnostics);
       }
-      await this.ensureAvd(manifest);
       return await this.transition("READY", [], { stage: "ready", message: "Android Runtime 已就绪。", cancellable: false });
     } catch (error) {
       return this.fail(errorCode(error), error instanceof Error ? error.message : String(error));
@@ -261,11 +281,12 @@ export class AndroidRuntimeBootstrapper implements AndroidRuntimeBootstrapperPor
       timeoutMs: 30_000,
     });
     if (listed.exitCode !== 0) throw new Error(`ANDROID_RUNTIME_AVD_LIST_FAILED: ${listed.stderr || listed.stdout}`);
-    if (!listed.stdout.split(/\r?\n/u).map((line) => line.trim()).includes(ANDROID_RUNTIME_AVD_NAME)) {
+    const avdExists = listed.stdout.split(/\r?\n/u).map((line) => line.trim()).includes(this.avdNameValue);
+    if (!avdExists) {
       const result = await this.options.commandRunner.run(avdmanager, [
-        "create", "avd", "-n", ANDROID_RUNTIME_AVD_NAME,
+        "create", "avd", "-n", this.avdNameValue,
         "-k", manifest.android.image,
-        "-p", join(this.options.paths.avd, `${ANDROID_RUNTIME_AVD_NAME}.avd`),
+        "-p", join(this.options.paths.avd, `${this.avdNameValue}.avd`),
         "-f",
       ], {
         env: this.commandEnvironment(),
@@ -274,17 +295,87 @@ export class AndroidRuntimeBootstrapper implements AndroidRuntimeBootstrapperPor
       });
       if (result.exitCode !== 0) throw new Error(`ANDROID_RUNTIME_AVD_CREATE_FAILED: ${result.stderr || result.stdout}`);
     }
-    await this.limitAvdUserdataPartition();
+    if (this.avdNameValue === ANDROID_RUNTIME_COMPACT_AVD_NAME) {
+      await this.configureCompactAvd();
+      await this.ensureCompactUserdataImage();
+    }
   }
 
-  private async limitAvdUserdataPartition(): Promise<void> {
-    const configPath = join(this.options.paths.avd, `${ANDROID_RUNTIME_AVD_NAME}.avd`, "config.ini");
+  private async configureCompactAvd(): Promise<void> {
+    const configPath = join(this.options.paths.avd, `${this.avdNameValue}.avd`, "config.ini");
     if (!existsSync(configPath)) throw new Error(`ANDROID_RUNTIME_AVD_CONFIG_MISSING: ${configPath}`);
     const current = await readFile(configPath, "utf8");
-    const next = current.match(/^disk\.dataPartition\.size\s*=.*$/mu)
-      ? current.replace(/^disk\.dataPartition\.size\s*=.*$/mu, "disk.dataPartition.size=4G")
-      : `${current.trimEnd()}\ndisk.dataPartition.size=4G\n`;
+    const settings: Readonly<Record<string, string>> = {
+      // Keep the AVD profile compact as a baseline. The actual writable data
+      // partition is the dedicated userdata-qx-compact.img passed with -data;
+      // API 35 may rewrite this legacy config field during boot.
+      "disk.dataPartition.size": "1073741824",
+      "hw.ramSize": "1024M",
+      "hw.audioInput": "no",
+      "hw.audioOutput": "no",
+      "hw.camera.back": "none",
+      "hw.camera.front": "none",
+      "hw.sdCard": "no",
+      "firstboot.bootFromDownloadableSnapshot": "no",
+      "firstboot.bootFromLocalSnapshot": "no",
+      "firstboot.saveToLocalSnapshot": "no",
+      "fastboot.forceChosenSnapshotBoot": "no",
+      "fastboot.forceColdBoot": "yes",
+      "fastboot.forceFastBoot": "no",
+    };
+    let next = current;
+    for (const [key, value] of Object.entries(settings)) {
+      const assignment = `${key}=${value}`;
+      const pattern = new RegExp(`^${escapeRegExp(key)}\\s*=.*$`, "mu");
+      next = pattern.test(next)
+        ? next.replace(pattern, assignment)
+        : `${next.trimEnd()}\n${assignment}\n`;
+    }
     if (next !== current) await writeFile(configPath, next, "utf8");
+  }
+
+  private async ensureCompactUserdataImage(): Promise<void> {
+    const imagePath = this.userdataImagePath();
+    if (!imagePath) return;
+    const expectedBytes = COMPACT_USERDATA_IMAGE_BYTES;
+    try {
+      const current = await stat(imagePath);
+      if (current.size === expectedBytes) return;
+      throw new Error(`ANDROID_RUNTIME_COMPACT_USERDATA_INVALID: expected ${expectedBytes} bytes, found ${current.size}`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+
+    const tool = join(
+      this.options.paths.sdk,
+      "platform-tools",
+      this.options.platform === "win32" ? "mke2fs.exe" : "mke2fs",
+    );
+    if (!existsSync(tool)) throw new Error(`ANDROID_RUNTIME_COMPACT_USERDATA_TOOL_MISSING: ${tool}`);
+    const partial = `${imagePath}.part`;
+    await rm(partial, { force: true });
+    const result = await this.options.commandRunner.run(tool, [
+      "-t", "ext4",
+      "-b", "4096",
+      "-m", "0",
+      "-L", "data",
+      "-F",
+      partial,
+      String(expectedBytes / COMPACT_USERDATA_BLOCK_SIZE),
+    ], {
+      env: this.commandEnvironment(),
+      timeoutMs: 120_000,
+    });
+    if (result.exitCode !== 0) {
+      await rm(partial, { force: true });
+      throw new Error(`ANDROID_RUNTIME_COMPACT_USERDATA_CREATE_FAILED: ${result.stderr || result.stdout}`);
+    }
+    const created = await stat(partial).catch(() => undefined);
+    if (!created || created.size !== expectedBytes) {
+      await rm(partial, { force: true });
+      throw new Error(`ANDROID_RUNTIME_COMPACT_USERDATA_CREATE_FAILED: expected ${expectedBytes} bytes`);
+    }
+    await rename(partial, imagePath);
   }
 
   public async environmentDoctor(): Promise<AndroidEnvironmentDoctorResult> {
@@ -376,18 +467,30 @@ export class AndroidRuntimeBootstrapper implements AndroidRuntimeBootstrapperPor
   }
 
   private async hasRequiredRuntimeFiles(): Promise<boolean> {
-    const requiredRuntimePaths = [
+    const requiredRuntimePaths: string[] = [
       this.sdkManagerPath(),
       this.avdManagerPath(),
       join(this.options.paths.sdk, "platform-tools", this.options.platform === "win32" ? "adb.exe" : "adb"),
       this.emulatorPath(),
       join(this.options.paths.sdk, "system-images", `android-${ANDROID_RUNTIME_API}`, "google_apis", "x86_64"),
-      join(this.options.paths.avd, `${ANDROID_RUNTIME_AVD_NAME}.avd`),
+      join(this.options.paths.avd, `${this.avdNameValue}.avd`),
       this.hostApkPath(),
     ];
+    const compactImage = this.userdataImagePath();
+    if (compactImage) {
+      requiredRuntimePaths.push(compactImage);
+      requiredRuntimePaths.push(join(this.options.paths.sdk, "platform-tools", this.options.platform === "win32" ? "mke2fs.exe" : "mke2fs"));
+    }
     if (requiredRuntimePaths.some((path) => !existsSync(path))) return false;
+    if (compactImage) {
+      try {
+        if ((await stat(compactImage)).size !== COMPACT_USERDATA_IMAGE_BYTES) return false;
+      } catch {
+        return false;
+      }
+    }
     try {
-      const storedManifest = JSON.parse(await readFile(this.manifestPath, "utf8")) as unknown;
+     const storedManifest = JSON.parse(await readFile(this.manifestPath, "utf8")) as unknown;
       const managedHostHash = await sha256File(this.hostApkPath());
       const sourceHostHash = await sha256File(this.options.hostApkPath);
       if (this.integrityValidated) return true;
@@ -403,8 +506,9 @@ export class AndroidRuntimeBootstrapper implements AndroidRuntimeBootstrapperPor
         && componentHashes[3] === ANDROID_RUNTIME_SDK_COMPONENT_LOCKS.systemImage.sha256
         && managedHostHash === sourceHostHash;
       if (valid && (!isAndroidRuntimeManifest(storedManifest)
-        || storedManifest.host.sha256 !== sourceHostHash)) {
-        await writeFile(this.manifestPath, `${JSON.stringify(buildAndroidRuntimeManifest(sourceHostHash), null, 2)}\n`, "utf8");
+        || storedManifest.host.sha256 !== sourceHostHash
+        || storedManifest.android.avdName !== this.avdNameValue)) {
+        await writeFile(this.manifestPath, `${JSON.stringify(buildAndroidRuntimeManifest(sourceHostHash, "1.0.0", this.avdNameValue), null, 2)}\n`, "utf8");
       }
       this.integrityValidated = valid;
       return valid;
@@ -643,4 +747,8 @@ function errorCode(error: unknown): string {
     return (error as { code: string }).code;
   }
   return "ANDROID_RUNTIME_PROVISION_FAILED";
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }

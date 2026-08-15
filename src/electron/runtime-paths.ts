@@ -19,6 +19,8 @@ export interface RuntimePathResolverOptions {
   isPackaged: boolean;
   /** Windows LOCALAPPDATA. Kept separate from Electron's roaming userData. */
   localAppDataPath?: string;
+  /** Optional isolated root used by the Compact Android Runtime E2E. */
+  androidRuntimeRoot?: string;
 }
 
 /** Keeps development paths separate from read-only packaged resources. */
@@ -28,6 +30,7 @@ export class RuntimePathResolver {
   private readonly userDataPath: string;
   private readonly isPackaged: boolean;
   private readonly localAppDataPath: string | undefined;
+  private readonly androidRuntimeRoot: string | undefined;
 
   public constructor(options: RuntimePathResolverOptions) {
     this.appPath = options.appPath;
@@ -35,6 +38,7 @@ export class RuntimePathResolver {
     this.userDataPath = options.userDataPath;
     this.isPackaged = options.isPackaged;
     this.localAppDataPath = options.localAppDataPath;
+    this.androidRuntimeRoot = options.androidRuntimeRoot;
   }
 
   public getResourcePath(relativePath = ""): string {
@@ -66,9 +70,10 @@ export class RuntimePathResolver {
 
   /** Single source of truth for all QX-managed Android Runtime paths. */
   public getQxRuntimePaths(): QxRuntimePaths {
-    const runtimeRoot = this.localAppDataPath
+    const runtimeRoot = this.androidRuntimeRoot
+      ?? (this.localAppDataPath
       ? join(this.localAppDataPath, "QXMovie", "android-runtime")
-      : join(this.userDataPath, "android-runtime");
+      : join(this.userDataPath, "android-runtime"));
     const sdkRoot = join(runtimeRoot, "sdk");
     const runtimeStatePath = join(runtimeRoot, "state");
     const platformTools = join(sdkRoot, "platform-tools");

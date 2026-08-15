@@ -13,6 +13,12 @@ The local release-engineering work for R70 and G70-G75 is recorded. G73 still re
 - Portable mode uses a `data` directory beside the packaged executable when the executable is named `QX影视.exe`.
 - The installer bundles the fixed Windows x64 JRE, CPython, mpv and aria2 runtimes. A normal user does not need to install Java, Python, mpv or aria2.
 
+## Code signing
+
+See [CODE-SIGNING-POLICY.md](CODE-SIGNING-POLICY.md) for the release signing
+provider, maintainer/reviewer/approver roles, privacy statement, and the rules
+that distinguish signed production releases from unsigned test artifacts.
+
 ## First use
 
 1. Start the app and import your own source/configuration file or URL.

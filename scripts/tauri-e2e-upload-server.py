@@ -21,6 +21,8 @@ class Handler(BaseHTTPRequestHandler):
         targets = {
             "/upload/evidence.json": OUTPUT_ROOT / "tauri-clean-win11-local-e2e.json",
             "/upload/log.txt": OUTPUT_ROOT / "tauri-clean-win11-local-e2e.log",
+            "/upload/jianpian.json": OUTPUT_ROOT / "tauri-hls-20s-local-e2e.json",
+            "/upload/jianpian.log": OUTPUT_ROOT / "tauri-hls-20s-local-e2e.log",
         }
         target = targets.get(self.path)
         if target is None:

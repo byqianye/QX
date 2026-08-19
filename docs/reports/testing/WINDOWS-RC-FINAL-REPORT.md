@@ -23,7 +23,7 @@ The embedded Android Runtime, Host RPC, and real Jianpian Search -> Detail -> Pl
 | Portable | `C:\Users\qiany\Documents\ChatGPT\QX影视\release\rc\QX影视-RC-Portable-0.9.0-rc.1-x64.exe` | 167,899,244 | `A030E817457F9A311F922E7900DAE100CBB3B7676FB7B79B3A9B3AABCAFE0406` | NO |
 
 Checksum file: `release/rc/SHA256SUMS.txt`  
-Release notes: `RELEASE-NOTES-RC.md`, `WINDOWS-RC-RELEASE-NOTES.md`
+Release notes: `docs/reports/release/RELEASE-NOTES-RC.md`, `docs/reports/release/WINDOWS-RC-RELEASE-NOTES.md`
 
 ## QX Android Runtime paths
 

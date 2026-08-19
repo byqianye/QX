@@ -53,7 +53,7 @@ describe("Windows Release Candidate V1", () => {
   });
 
   it("documents unsigned RC and runtime first-use behavior", () => {
-    const notes = readFileSync(new URL("../RELEASE-NOTES-RC.md", import.meta.url), "utf8");
+    const notes = readFileSync(new URL("../docs/reports/release/RELEASE-NOTES-RC.md", import.meta.url), "utf8");
     expect(notes).toContain("0.9.0-rc.1");
     expect(notes).toContain("not downloaded on first application launch");
     expect(notes).toContain("csp_Jianpian");

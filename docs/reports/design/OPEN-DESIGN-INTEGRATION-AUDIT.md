@@ -147,9 +147,9 @@ Cloud 因 `AMR_INSUFFICIENT_BALANCE` 无法生成 artifact 后，用户明确选
 
 本地审查覆盖 App Shell、Home、Search、Detail、Source Panel、Player、Runtime、Settings，未启动应用、未生成新截图、未修改产品代码，也未把本地结果声明为 Cloud PASS。审查结果和 4 项 RELEASE_BLOCKER 见：
 
-- [OPEN-DESIGN-FINAL-REVIEW.md](C:/Users/qiany/Documents/ChatGPT/QX影视/OPEN-DESIGN-FINAL-REVIEW.md)
-- [OPEN-DESIGN-DESIGN-SYSTEM-REVIEW.md](C:/Users/qiany/Documents/ChatGPT/QX影视/OPEN-DESIGN-DESIGN-SYSTEM-REVIEW.md)
-- [OPEN-DESIGN-PAGE-REVIEW.md](C:/Users/qiany/Documents/ChatGPT/QX影视/OPEN-DESIGN-PAGE-REVIEW.md)
+- [docs/reports/design/OPEN-DESIGN-FINAL-REVIEW.md](C:/Users/qiany/Documents/ChatGPT/QX影视/docs/reports/design/OPEN-DESIGN-FINAL-REVIEW.md)
+- [docs/reports/design/OPEN-DESIGN-DESIGN-SYSTEM-REVIEW.md](C:/Users/qiany/Documents/ChatGPT/QX影视/docs/reports/design/OPEN-DESIGN-DESIGN-SYSTEM-REVIEW.md)
+- [docs/reports/design/OPEN-DESIGN-PAGE-REVIEW.md](C:/Users/qiany/Documents/ChatGPT/QX影视/docs/reports/design/OPEN-DESIGN-PAGE-REVIEW.md)
 
 该本地路径只完成了证据化设计审查，不改变以下 Cloud 事实：
 

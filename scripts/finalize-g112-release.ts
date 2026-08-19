@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 const projectRoot = resolve(import.meta.dirname, "..");
 const args = parseArgs(process.argv.slice(2));
 const evidenceDirectory = resolve(projectRoot, args["evidence-dir"] ?? "artifacts");
-const reportPath = resolve(projectRoot, args.report ?? "G112-REPORT.md");
+const reportPath = resolve(projectRoot, args.report ?? "docs/reports/goals/G112-REPORT.md");
 
 const requiredEvidence = [
   ["tauri-clean-win11-e2e.json", "tauri-clean-win11-e2e"],

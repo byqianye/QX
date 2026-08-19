@@ -23,4 +23,4 @@ Local Codex 初审提出的 4 项 RELEASE_BLOCKER 已落实：Detail 返回恢�
 
 由于 Open Design Cloud 当前因 `AMR_INSUFFICIENT_BALANCE` 失败且 `artifactCount=0`，尚未完成 Open Design 产物对照的逐页截图审查；本轮 after 截图使用 packaged fixture，真实 Jianpian 截图仍由 G105 的 Clean E2E 证据覆盖。G106-I 已完成集成审计，但没有伪造 Cloud 设计结果或逐页 review PASS。
 
-阻塞证据与必须的 Personal Workspace 操作见 [OPEN-DESIGN-INTEGRATION-AUDIT.md](C:/Users/qiany/Documents/ChatGPT/QX影视/OPEN-DESIGN-INTEGRATION-AUDIT.md)。
+阻塞证据与必须的 Personal Workspace 操作见 [docs/reports/design/OPEN-DESIGN-INTEGRATION-AUDIT.md](C:/Users/qiany/Documents/ChatGPT/QX影视/docs/reports/design/OPEN-DESIGN-INTEGRATION-AUDIT.md)。

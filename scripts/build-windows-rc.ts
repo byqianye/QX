@@ -24,8 +24,8 @@ if (files.some((path) => !existsSync(path))) throw new Error(`RC artifacts are m
 
 const sums = files.map((path) => `${hash(path)}  ${path.slice(output.length + 1)}`);
 writeFileSync(join(output, "SHA256SUMS.txt"), `${sums.join("\n")}\n`, "utf8");
-writeFileSync(join(output, "RELEASE-NOTES-RC.md"), readFileSync(join(projectRoot, "RELEASE-NOTES-RC.md"), "utf8"), "utf8");
-writeFileSync(join(projectRoot, "WINDOWS-RC-BUILD-REPORT.md"), [
+writeFileSync(join(output, "RELEASE-NOTES-RC.md"), readFileSync(join(projectRoot, "docs/reports/release/RELEASE-NOTES-RC.md"), "utf8"), "utf8");
+writeFileSync(join(projectRoot, "docs/reports/testing/WINDOWS-RC-BUILD-REPORT.md"), [
   "# QX影视 Windows Release Candidate V1",
   "",
   `Version: ${version}`,

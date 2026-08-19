@@ -4,6 +4,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const root = resolve(process.cwd());
+const goalReports = join(root, "docs", "reports", "goals");
 const failures: string[] = [];
 const warnings: string[] = [];
 const allowIncomplete = process.argv.includes("--allow-incomplete");
@@ -19,11 +20,11 @@ check("Tauri identifier", tauriConfig.identifier === "com.qx.yingshi.desktop");
 check("Tauri NSIS target", tauriConfig.bundle?.targets?.includes("nsis") === true);
 check("package semver", typeof packageJson.version === "string" && /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/u.test(packageJson.version));
 check("Tauri version matches package version", tauriConfig.version === packageJson.version);
-check("G107 report exists", existsSync(join(root, "G107-BASELINE-REPORT.md")));
-check("G108 report exists", existsSync(join(root, "G108-REPORT.md")));
-check("G109 report exists", existsSync(join(root, "G109-REPORT.md")));
-check("G110 report exists", existsSync(join(root, "G110-REPORT.md")));
-check("G111 report exists", existsSync(join(root, "G111-REPORT.md")));
+check("G107 report exists", existsSync(join(goalReports, "G107-BASELINE-REPORT.md")));
+check("G108 report exists", existsSync(join(goalReports, "G108-REPORT.md")));
+check("G109 report exists", existsSync(join(goalReports, "G109-REPORT.md")));
+check("G110 report exists", existsSync(join(goalReports, "G110-REPORT.md")));
+check("G111 report exists", existsSync(join(goalReports, "G111-REPORT.md")));
 check("old Electron remains during migration", existsSync(join(root, "src", "electron", "main.ts")));
 check("Tauri backend remains", existsSync(join(root, "src-tauri", "src", "lib.rs")));
 
@@ -77,7 +78,7 @@ for (const [label, relativePath] of [
 }
 
 for (const report of ["G108-REPORT.md", "G109-REPORT.md", "G110-REPORT.md", "G111-REPORT.md", "G112-REPORT.md"]) {
-  const text = readFileSync(join(root, report), "utf8");
+  const text = readFileSync(join(goalReports, report), "utf8");
   if (!/^Status:\s*complete\s*$/imu.test(text)) {
     const message = `${report} is not complete`;
     if (allowIncomplete) warnings.push(message);

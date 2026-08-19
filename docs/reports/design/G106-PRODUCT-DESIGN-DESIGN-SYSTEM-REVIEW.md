@@ -20,4 +20,4 @@
 
 ## 例外
 
-设置页的“未安装”与“检查中”并列是状态文案问题，不是 token 问题；详见 `G106-PRODUCT-DESIGN-ALTERNATIVE-AUDIT.md`。
+设置页的“未安装”与“检查中”并列是状态文案问题，不是 token 问题；详见 `docs/reports/design/G106-PRODUCT-DESIGN-ALTERNATIVE-AUDIT.md`。

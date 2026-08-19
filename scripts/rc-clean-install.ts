@@ -14,7 +14,7 @@ const result = await run(process.execPath, [join(projectRoot, "node_modules", "t
 });
 if (result.code !== 0) throw new Error(`RC clean install failed: ${JSON.stringify(result)}`);
 
-writeFileSync(join(projectRoot, "WINDOWS-RC-CLEAN-INSTALL.md"), [
+writeFileSync(join(projectRoot, "docs/reports/testing/WINDOWS-RC-CLEAN-INSTALL.md"), [
   "# Windows RC Clean Install",
   "",
   `Installer: ${installer}`,

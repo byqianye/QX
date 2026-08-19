@@ -43,4 +43,4 @@ No Android emulator, WSA, DEX-to-JAR converter, or unknown executable was introd
 - `npm test`: passed, 80 files and 455 tests.
 - `npm run electron:e2e:package`: passed, including sidecar PID exit checks after the Native Runtime integration.
 
-Full-suite, renderer build, Electron build, and packaged E2E verification all passed. See [SPIDER-RUNTIME-TEST-LOG.md](SPIDER-RUNTIME-TEST-LOG.md).
+Full-suite, renderer build, Electron build, and packaged E2E verification all passed. See [the test log](SPIDER-RUNTIME-TEST-LOG.md).

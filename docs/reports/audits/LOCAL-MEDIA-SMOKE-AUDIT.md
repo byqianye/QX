@@ -22,7 +22,7 @@ The fixture contains real MP4 `ftyp`, `moov`, and `mdat` boxes. The packaged pro
 
 ## Scope boundary
 
-This audit covers local-media and packaged UI smoke. Real Android `csp_Jianpian` search/detail/playerContent, LocalProxy, HLS, and headless-runtime isolation are recorded in `PREVIEW-SMOKE-FINAL-REPORT.md` and `PACKAGED-UI-FINAL-E2E.md`.
+This audit covers local-media and packaged UI smoke. Real Android `csp_Jianpian` search/detail/playerContent, LocalProxy, HLS, and headless-runtime isolation are recorded in `docs/reports/testing/PREVIEW-SMOKE-FINAL-REPORT.md` and `docs/reports/testing/PACKAGED-UI-FINAL-E2E.md`.
 
 ```text
 LOCAL_MEDIA_SMOKE = PASS

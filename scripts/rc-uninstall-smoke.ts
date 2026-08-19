@@ -15,7 +15,7 @@ const result = await run(process.execPath, [join(projectRoot, "node_modules", "t
 if (result.code !== 0) throw new Error(`RC uninstall smoke failed: ${JSON.stringify(result)}`);
 const output = result.stdout.trim();
 if (!output.includes('"userDataRetained": true')) throw new Error("RC uninstall smoke did not prove user data retention");
-writeFileSync(join(projectRoot, "WINDOWS-RC-UNINSTALL-TEST.md"), `# Windows RC Uninstall Smoke\n\n\`UNINSTALL = PASS\`\n\nUser data was retained by the default silent uninstall.\n\n\`\`\`json\n${output}\n\`\`\`\n`, "utf8");
+writeFileSync(join(projectRoot, "docs/reports/testing/WINDOWS-RC-UNINSTALL-TEST.md"), `# Windows RC Uninstall Smoke\n\n\`UNINSTALL = PASS\`\n\nUser data was retained by the default silent uninstall.\n\n\`\`\`json\n${output}\n\`\`\`\n`, "utf8");
 console.log(output);
 
 function run(executable: string, args: string[], variables: Record<string, string>): Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }> {

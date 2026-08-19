@@ -14,7 +14,7 @@
 | renderer | PASS | 静态 Vite 产物；无生产 localhost dev server；hls.js 随 renderer 打包 |
 | security | PASS | `contextIsolation=true`、`nodeIntegration=false`、`webSecurity=true` |
 | 无设备启动 | PASS | Preview smoke 使用不存在的 `QX_ANDROID_DEVICE_SERIAL`，应用仍完成既有 E2E |
-| 真实 Android 播放 | BLOCKED | 当前设备在 Host 初始化阻塞后变为 ADB `offline`；详见 `PACKAGED-PLAYBACK-REAL-TEST.md` |
+| 真实 Android 播放 | BLOCKED | 当前设备在 Host 初始化阻塞后变为 ADB `offline`；详见 `docs/reports/testing/PACKAGED-PLAYBACK-REAL-TEST.md` |
 
 Preview 产物只用于测试/预览，不声明签名、自动更新或独立 Windows Android Spider 能力。
 
@@ -91,7 +91,7 @@ Preview 产物只用于测试/预览，不声明签名、自动更新或独立 W
 4. `src/electron/runtime-paths.ts` 与 `src/electron/main.ts`：统一开发/打包资源路径和用户数据/日志路径。
 5. 生产日志模块与主进程错误钩子：记录启动上下文和 fatal error，避免记录 Cookie、Token 等敏感信息，并限制日志大小。
 6. 相关现有测试与打包 E2E 辅助脚本：改为读取独立 builder 配置和 `release/` 产物名称。
-7. `WINDOWS-BUILD-REPORT.md`、`WINDOWS-SMOKE-TEST.md`：在最终构建后生成。
+7. `docs/reports/testing/WINDOWS-BUILD-REPORT.md`、`docs/reports/testing/WINDOWS-SMOKE-TEST.md`：在最终构建后生成。
 
 ## 潜在问题与处理口径
 

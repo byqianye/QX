@@ -9,7 +9,7 @@ const portable = resolve(process.env.QX_RC_PORTABLE_PATH ?? join(projectRoot, "r
 if (!existsSync(portable)) throw new Error(`RC Portable artifact is missing: ${portable}`);
 const result = await run(process.execPath, [join(projectRoot, "node_modules", "tsx", "dist", "cli.mjs"), join(projectRoot, "scripts", "preview-smoke.ts"), portable], {});
 if (result.code !== 0) throw new Error(`RC Portable smoke failed: ${JSON.stringify(result)}`);
-writeFileSync(join(projectRoot, "WINDOWS-RC-PORTABLE-TEST.md"), `# Windows RC Portable Smoke\n\n\`PORTABLE = PASS\`\n\nArtifact: ${portable}\n\n\`\`\`json\n${result.stdout.trim()}\n\`\`\`\n`, "utf8");
+writeFileSync(join(projectRoot, "docs/reports/testing/WINDOWS-RC-PORTABLE-TEST.md"), `# Windows RC Portable Smoke\n\n\`PORTABLE = PASS\`\n\nArtifact: ${portable}\n\n\`\`\`json\n${result.stdout.trim()}\n\`\`\`\n`, "utf8");
 console.log(result.stdout);
 
 function run(executable: string, args: string[], variables: Record<string, string>): Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }> {

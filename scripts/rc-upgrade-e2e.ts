@@ -43,7 +43,7 @@ try {
   if (!uninstaller) throw new Error("RC uninstaller missing after upgrade");
   const uninstall = await run(uninstaller, ["/S"], {});
   assertCode("post-upgrade uninstall", uninstall, 0);
-  writeFileSync(join(projectRoot, "WINDOWS-RC-UPGRADE-TEST.md"), [
+  writeFileSync(join(projectRoot, "docs/reports/testing/WINDOWS-RC-UPGRADE-TEST.md"), [
     "# Windows RC Upgrade E2E",
     "",
     `RC1 installer: ${oldInstaller}`,

@@ -8,7 +8,7 @@
 - 已生成当前 UI 基线截图，覆盖导入页、设置页、启动状态和明暗主题，保存在 `tmp/g106-baseline/`。
 - 已按 Open Design 流程完成 brief 确认、Cloud 登录状态检查、代理检查和项目创建。
 - 已正式提交一次 Open Design Cloud 设计委托。
-- 已完成 G106-I 的集成、工作区和项目绑定审计，详见 [OPEN-DESIGN-INTEGRATION-AUDIT.md](C:/Users/qiany/Documents/ChatGPT/QX影视/OPEN-DESIGN-INTEGRATION-AUDIT.md)。
+- 已完成 G106-I 的集成、工作区和项目绑定审计，详见 [docs/reports/design/OPEN-DESIGN-INTEGRATION-AUDIT.md](C:/Users/qiany/Documents/ChatGPT/QX影视/docs/reports/design/OPEN-DESIGN-INTEGRATION-AUDIT.md)。
 
 ## 历史阻塞原因（已解决）
 
@@ -53,9 +53,9 @@ Open Design Cloud 返回 `AMR_WORKSPACE_SCOPE_REQUIRED`：项目需要先从 Per
 
 用户明确要求“用本地”后，已使用 Local Codex 对真实仓库和既有界面证据完成只读 FINAL DESIGN REVIEW。报告已保存为：
 
-- [OPEN-DESIGN-FINAL-REVIEW.md](C:/Users/qiany/Documents/ChatGPT/QX影视/OPEN-DESIGN-FINAL-REVIEW.md)
-- [OPEN-DESIGN-DESIGN-SYSTEM-REVIEW.md](C:/Users/qiany/Documents/ChatGPT/QX影视/OPEN-DESIGN-DESIGN-SYSTEM-REVIEW.md)
-- [OPEN-DESIGN-PAGE-REVIEW.md](C:/Users/qiany/Documents/ChatGPT/QX影视/OPEN-DESIGN-PAGE-REVIEW.md)
+- [docs/reports/design/OPEN-DESIGN-FINAL-REVIEW.md](C:/Users/qiany/Documents/ChatGPT/QX影视/docs/reports/design/OPEN-DESIGN-FINAL-REVIEW.md)
+- [docs/reports/design/OPEN-DESIGN-DESIGN-SYSTEM-REVIEW.md](C:/Users/qiany/Documents/ChatGPT/QX影视/docs/reports/design/OPEN-DESIGN-DESIGN-SYSTEM-REVIEW.md)
+- [docs/reports/design/OPEN-DESIGN-PAGE-REVIEW.md](C:/Users/qiany/Documents/ChatGPT/QX影视/docs/reports/design/OPEN-DESIGN-PAGE-REVIEW.md)
 
 本地审查结论：视觉基线可保留，发现 4 项 RELEASE_BLOCKER：Detail 返回丢上下文、Search 空态/清筛回 Home、Source Panel 暴露内部 source key、ConfirmDialog 缺完整焦点安全。随后已按最小范围落实这 4 项修正，并用新增回归测试、全量测试、类型检查和重建后的 packaged smoke 验证。播放器重复控制条、内部 Runtime 文案和 Settings 层级保留为后续 POLISH，不扩大本 Goal 范围。
 

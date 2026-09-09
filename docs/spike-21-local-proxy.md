@@ -27,7 +27,7 @@ Spike 20 的内嵌播放器不能直接携带 `Referer`、`User-Agent`、`Cookie
 ## SSRF 防护
 
 - 只接受 `http:` 和 `https:`，拒绝 `file:`、`ftp:`、`data:` 和带 URL 凭据的地址。
-- 初始 URL、playlist 子资源和每一跳 redirect 都必须保持会话 origin；跨 origin redirect 被拒绝。
+- 初始 URL、playlist 子资源和普通 redirect 都必须保持会话 origin；跨 origin redirect 默认被拒绝。已确认的光盘 AppQi Lirose HLS 只允许一个精确的公开 TS handoff 例外：初始分片必须来自 `cibn-edge-5g.1ljx.com/ufile/flv/qq/*.ts`，目标必须是 `omts.tc.qq.com` 的带非空 `token`、`.ts` 路径，且只转发 `User-Agent`；其他 host、路径、二次跳转和鉴权头仍拒绝。
 - 非显式允许的 origin 会进行 DNS 解析并拒绝 loopback、私网、链路本地、保留地址、IPv4-mapped IPv6 私网地址和本地域名。
 - `QX_PLAYBACK_PROXY_ORIGINS` 只用于明确授权的本地 fixture/媒体 origin；Electron 启动时不会接受 renderer 传入 allowlist。
 

@@ -15,7 +15,7 @@
 | `csp_PanSearch` | Rust JSON/HTML HTTP | 首页 Next 数据 → 两个网盘搜索接口 | 搜索可用；该源无详情/播放链路 |
 | `csp_MiSou` | Rust JSON HTTP | 固定候选 `/api/disks` 的 home/category/search，真实搜索 canary 通过 | 目录和搜索已接入；详情/播放依赖 WangPan provider、凭据和本地代理，明确关闭 |
 | `csp_AppGet` | Rust 加密 HTTP | 离线 home/category/search/detail + 直链/vodParse/wmm.php 播放夹具；“番薯”“一碗”“蔬菜”“方舟”曾通过真实链路；“番薯”第 3 条 HLS 的指定第 6 集完成 Tauri WebView 20.514 秒播放；公开备用镜像 canary 完成读取→详情→`parse=0`→Range；公开原始配置进一步完成 250 站点导入、精确条目选择和 Tauri WebView 20 秒播放 | 合同已接入；默认肥猫主站 HTTP/HTTPS 当前均连接超时；公开备用镜像 `bind.315999.xyz/89.txt`（解析到 `app7.555618.xyz`）2026-08-18 取到 HTTP 206 首段 32 字节，并以同一 ext 完成真实首帧/20.410 秒播放，但不替换默认配置 |
-| `csp_AppQi` | Rust 加密 HTTP | 离线四个读取端点 + 直链/vodParse 播放夹具 | 光盘线上 home 返回 502；行动线上端点建连失败 |
+| `csp_AppQi` | Rust 加密 HTTP | 离线四个读取端点 + 直链/vodParse 播放夹具；2026-09-09 光盘《花开锦绣》专线通过当前测试安装包的真实 HLS 首帧与 20 秒播放 | 光盘与行动的上游可用性会变化；仅确认当前光盘样本和受控 Lirose TS handoff，不宣称所有内容或线路稳定 |
 | `csp_AppRJ` | Rust multipart JSON | `home → category → search → detail → player` 真实 canary；2026-08-24 当前 NBY media playlist 与首个 PNG+TS 包装段完成结构校验，桌面真实解码到 `1920×818` 并推进约 `5.96s` | 直链播放可用；只允许精确白名单 NBY parser，保留线路 UA；前端保留完整 `parseChain\|target\|UA\|vodName\|nid` 交接，代理仅允许 NBY 分片一次跳转到无凭据公开 `.png`。样本第二分片返回 404，尚未通过 20 秒桌面门槛 |
 | `csp_Jpys` | Rust 签名 JSON HTTP | 固定端点分类/搜索 → `video/detail` → `episode/url` 真实 canary | 已接入；请求使用静态确认的 `MD5→SHA-1` 签名，episode URL 直接 `parse=0`；不使用 Android 本地 Proxy |
 | `csp_GuaziTY` | Rust AES-CBC JSON HTTP | 四类体育分类 → 赛事详情 → `live_line` m3u8 → `parse=0`；当前清单/分片与桌面 20 秒播放通过 | 已接入；仅保留最近 24 小时且 `m_status < 2` 的赛事，播放地址和固定请求头均经边界校验；2026-08-24 篮球赛事 `8466314` 首分片取数通过，同一详情在 Tauri WebView 播放 `20.000929s`、`1920×1080`、`readyState=4`。配置 `searchable=0`，桌面采用 direct-detail；直播清单随后在分钟级失效为 404，因此只覆盖验收时刻样本 |

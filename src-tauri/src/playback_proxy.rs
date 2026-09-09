@@ -534,6 +534,11 @@ async fn send_upstream_request(
             .is_some_and(|url| url.path().starts_with("/nby/m3u8/play/ts/"))
         {
             redirected_nby_segment_url(initial_url, &current_url, location, redirect_count, headers)?
+        } else if reqwest::Url::parse(initial_url)
+            .ok()
+            .is_some_and(|url| is_lirose_segment_url(&url))
+        {
+            redirected_lirose_segment_url(initial_url, &current_url, location, redirect_count, headers)?
         } else {
             redirected_same_origin_url(initial_url, &current_url, location, redirect_count)?
         };
@@ -621,6 +626,66 @@ fn redirected_nby_segment_url(
     {
         return Err(PlaybackProxyError::Invalid(
             "cross-origin NBY redirects only allow User-Agent".to_string(),
+        ));
+    }
+    Ok(target.to_string())
+}
+
+fn is_lirose_segment_url(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && url
+            .host_str()
+            .is_some_and(|host| host.eq_ignore_ascii_case("cibn-edge-5g.1ljx.com"))
+        && url.path().starts_with("/ufile/flv/qq/")
+        && url.path().to_ascii_lowercase().ends_with(".ts")
+}
+
+fn redirected_lirose_segment_url(
+    initial_url: &str,
+    current_url: &str,
+    location: &str,
+    redirect_count: usize,
+    headers: &HeaderMap,
+) -> Result<String, PlaybackProxyError> {
+    let initial = reqwest::Url::parse(initial_url)
+        .map_err(|error| PlaybackProxyError::Invalid(error.to_string()))?;
+    if redirect_count > 0 || !is_lirose_segment_url(&initial) {
+        return Err(PlaybackProxyError::Invalid(
+            "upstream redirects are not allowed for this resource".to_string(),
+        ));
+    }
+    let current = reqwest::Url::parse(current_url)
+        .map_err(|error| PlaybackProxyError::Invalid(error.to_string()))?;
+    let target = current
+        .join(location)
+        .map_err(|error| PlaybackProxyError::Invalid(error.to_string()))?;
+    validate_resource_target(&target)?;
+    let same_origin = target.scheme() == initial.scheme()
+        && target.host_str() == initial.host_str()
+        && target.port_or_known_default() == initial.port_or_known_default();
+    if same_origin {
+        return Ok(target.to_string());
+    }
+    let public_handoff = target.scheme() == "https"
+        && target
+            .host_str()
+            .is_some_and(|host| host.eq_ignore_ascii_case("omts.tc.qq.com"))
+        && target.path().starts_with("///")
+        && target.path().to_ascii_lowercase().ends_with(".ts")
+        && target
+            .query_pairs()
+            .any(|(name, value)| name.eq_ignore_ascii_case("token") && !value.is_empty());
+    if !public_handoff {
+        return Err(PlaybackProxyError::Invalid(
+            "cross-origin Lirose redirects must target the public QQ TS handoff".to_string(),
+        ));
+    }
+    if headers
+        .keys()
+        .any(|name| name != reqwest::header::USER_AGENT)
+    {
+        return Err(PlaybackProxyError::Invalid(
+            "cross-origin Lirose redirects only allow User-Agent".to_string(),
         ));
     }
     Ok(target.to_string())
@@ -1297,7 +1362,8 @@ mod tests {
 
     use super::{
         exceeds_response_limit, insert_bounded_client, is_blocked_address, manifest_content_type,
-        media_type, proxy_resource_url, redirected_nby_segment_url, redirected_same_origin_url, rewrite_dash_manifest,
+        media_type, proxy_resource_url, redirected_lirose_segment_url, redirected_nby_segment_url,
+        redirected_same_origin_url, rewrite_dash_manifest,
         rewrite_hls_playlist, PlaybackProxyPayload, PlaybackProxyState, MAX_UPSTREAM_CLIENTS,
     };
 
@@ -1385,6 +1451,59 @@ mod tests {
         )
         .is_err());
         assert!(redirected_same_origin_url(initial, initial, "/path/again.m3u8", 1).is_err());
+    }
+
+    #[test]
+    fn bounds_lirose_segment_redirect_to_public_qq_handoff() {
+        let initial = "https://cibn-edge-5g.1ljx.com/ufile/flv/qq/path/segment-0.ts?tg=@lirose_tv";
+        let redirected = redirected_lirose_segment_url(
+            initial,
+            initial,
+            "https://omts.tc.qq.com///opaque/segment.ts?index=0&token=fixture",
+            0,
+            &HeaderMap::new(),
+        )
+        .expect("Lirose QQ handoff");
+        assert!(redirected.starts_with("https://omts.tc.qq.com///opaque/segment.ts?"));
+
+        assert!(redirected_lirose_segment_url(
+            initial,
+            initial,
+            "https://other.example.test///opaque/segment.ts?token=fixture",
+            0,
+            &HeaderMap::new(),
+        )
+        .is_err());
+        assert!(redirected_lirose_segment_url(
+            initial,
+            initial,
+            "https://omts.tc.qq.com///opaque/segment.ts?index=0",
+            0,
+            &HeaderMap::new(),
+        )
+        .is_err());
+        assert!(redirected_lirose_segment_url(
+            initial,
+            initial,
+            "https://omts.tc.qq.com///opaque/segment.ts?token=fixture",
+            1,
+            &HeaderMap::new(),
+        )
+        .is_err());
+
+        let mut credentialed = HeaderMap::new();
+        credentialed.insert(
+            reqwest::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer fixture"),
+        );
+        assert!(redirected_lirose_segment_url(
+            initial,
+            initial,
+            "https://omts.tc.qq.com///opaque/segment.ts?token=fixture",
+            0,
+            &credentialed,
+        )
+        .is_err());
     }
 
     #[test]

@@ -25,6 +25,27 @@
 
 ## 最近变更
 
+### 2026-09-09：光盘 Lirose HLS 分片重定向适配
+
+状态：`verified`
+
+范围：沿用现有播放代理安全边界，为光盘 AppQi 专线实际返回的 Lirose HLS 分片增加一个精确的公开 QQ TS handoff；普通跨域重定向、二次跳转、非 TS 路径和带鉴权请求头继续拒绝，没有新增源或运行时资源。
+
+修改文件：
+- `src-tauri/src/playback_proxy.rs`
+- `docs/spike-21-local-proxy.md`
+- `docs/source-contract-status.md`
+
+验证：
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib playback_proxy::tests -- --test-threads=1`：22 项通过，2 项忽略。
+- `npm run tauri:test-installer`：测试 release NSIS 构建通过。
+- `QX_TAURI_TEST_E2E=1 npm run tauri:test-installer:e2e`：安装、首页、来源列表、卸载通过。
+- 使用该安装包安装后的 release `qx-yingshi.exe` 执行 `光盘 / 花开锦绣 / 专线 / 第 1 集`：真实 HTTP、无 mock，首帧后连续播放 `20.381346s`，`1920×804`，`readyState=4`。
+
+证据：`artifacts/g142-guangpan-lirose-release-installed.json`、`artifacts/tauri-test-installer-e2e.json`。测试包 SHA256：`b0f88a7e65e3456e7e3e29931a702b4d04ed034c11a20bfdc5124f0a910f7a4c`。
+
+未完成事项和风险：上游偶尔会把同一专线分片转到其他站点并返回 402，此类响应仍会安全失败并交给现有线路回退；正式签名 release 仍需真实 `QX_COMPONENT_*` 环境变量，G130 稳定播放门槛仍未完成。
+
 ### 2026-09-09：按用户要求构建当前工作区测试安装包
 
 状态：`verified`

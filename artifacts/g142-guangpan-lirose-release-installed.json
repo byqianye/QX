@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "v1",
+  "evidenceType": "tauri-hls-20s-e2e",
+  "verified": true,
+  "realHttp": true,
+  "mockUsed": false,
+  "durationSeconds": 20.381346,
+  "observedAt": "2026-09-09T14:59:32.118Z",
+  "package": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-tauri-lirose-release-33f2f0d4245b42338bb619ef9c9f6e8e\\qx-yingshi.exe",
+  "source": {
+    "configUrl": "http://xn--z7x900a.net/",
+    "siteKey": "光盘",
+    "searchKey": null,
+    "detailId": "868710",
+    "homeTitle": null,
+    "lineIndex": 0,
+    "episodeIndex": 0
+  },
+  "observations": {
+    "homeCardCount": 262,
+    "homeFirstTitle": "欲望的陷阱2026",
+    "homePosterLoaded": true,
+    "homePosterNaturalWidth": 270,
+    "homePosterNaturalHeight": 385,
+    "navigationMode": "direct-detail",
+    "nativeSearchAndDetail": false,
+    "tauriPlaybackProxy": false,
+    "firstFrameObserved": true,
+    "progressBeforeSeconds": 0,
+    "progressAfterSeconds": 20.381346,
+    "durationSeconds": 2817.1300000000006,
+    "videoWidth": 1920,
+    "videoHeight": 804,
+    "readyState": 4,
+    "selectedLineIndex": "0",
+    "selectedLineName": "专线",
+    "selectedEpisodeIndex": "0",
+    "selectedEpisodeName": "1",
+    "mockUsed": false
+  }
+}

@@ -314,6 +314,10 @@ async fn serve_connection(
             return Err(error);
         }
     };
+    // A manifest may be reached through one same-origin redirect. Resolve
+    // every URI declared by that manifest against the URL that returned the
+    // body, rather than the pre-redirect URL supplied by the player.
+    let effective_upstream_url = response.url().to_string();
     if response.status().is_redirection() {
         write_error(&mut stream, 502, "Upstream redirects are not followed").await?;
         return Ok(());
@@ -326,9 +330,9 @@ async fn serve_connection(
         .unwrap_or("application/octet-stream")
         .to_string();
     let is_hls =
-        content_type.to_ascii_lowercase().contains("mpegurl") || media_type(&upstream_url) == "hls";
+        content_type.to_ascii_lowercase().contains("mpegurl") || media_type(&effective_upstream_url) == "hls";
     let is_dash = content_type.to_ascii_lowercase().contains("dash+xml")
-        || media_type(&upstream_url) == "dash";
+        || media_type(&effective_upstream_url) == "dash";
     let is_manifest = is_hls || is_dash;
     let manifest_content_type = manifest_content_type(is_hls, is_dash, &content_type);
     if let Some(content_length) = response.content_length() {
@@ -352,9 +356,9 @@ async fn serve_connection(
             PlaybackProxyError::Request(format!("media manifest is not UTF-8: {error}"))
         })?;
         let output = if is_hls {
-            rewrite_hls_playlist(&body, &upstream_url, base_url, token, &session.resources)?
+            rewrite_hls_playlist(&body, &effective_upstream_url, base_url, token, &session.resources)?
         } else {
-            rewrite_dash_manifest(&body, &upstream_url, base_url, token, &session.resources)?
+            rewrite_dash_manifest(&body, &effective_upstream_url, base_url, token, &session.resources)?
         };
         if output.len() > MAX_RESPONSE_BYTES {
             write_error(&mut stream, 413, "Rewritten manifest too large").await?;
@@ -1177,6 +1181,96 @@ mod tests {
         assert!(tokio::time::timeout(std::time::Duration::from_secs(2), response.chunk()).await.expect("downstream released after cancel").is_err());
         server.await.unwrap();
     }
+
+    #[tokio::test]
+    async fn resolves_manifest_resources_against_the_final_redirect_url() {
+        use tokio::io::AsyncWriteExt;
+
+        let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = upstream.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut redirect_stream, _) = upstream.accept().await.unwrap();
+            super::read_request_headers(&mut redirect_stream).await.unwrap();
+            redirect_stream
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nLocation: /ufile/main.m3u8\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            redirect_stream.shutdown().await.unwrap();
+
+            let (mut manifest_stream, _) = upstream.accept().await.unwrap();
+            super::read_request_headers(&mut manifest_stream).await.unwrap();
+            let manifest = "#EXTM3U\n#EXTINF:1,\nsegment.ts\n";
+            manifest_stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{manifest}",
+                        manifest.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            manifest_stream.shutdown().await.unwrap();
+        });
+
+        let proxy = PlaybackProxyState::default();
+        let origin = format!("http://media.example.test:{}", address.port());
+        let opened = proxy
+            .handle(&PlaybackProxyPayload {
+                action: "start".into(),
+                session_id: "final-redirect-base".into(),
+                url: Some(format!("{origin}/cloud/main.m3u8")),
+                headers: None,
+            })
+            .await
+            .unwrap();
+        let session = proxy.sessions.lock().unwrap().values().next().unwrap().clone();
+        session.targets.lock().unwrap().insert(
+            origin,
+            (address, std::time::Instant::now() + std::time::Duration::from_secs(60)),
+        );
+        proxy.clients.lock().unwrap().insert(
+            format!("media.example.test@{address}"),
+            reqwest::Client::builder()
+                .no_proxy()
+                .resolve("media.example.test", address)
+                .build()
+                .unwrap(),
+        );
+
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let playlist = client
+            .get(opened.proxy_url.unwrap())
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(playlist.contains("/__qx_playback/"));
+        let resources = session.resources.lock().unwrap();
+        assert_eq!(resources.len(), 1);
+        assert!(resources.values().any(|value| value.ends_with("/ufile/segment.ts")));
+        drop(resources);
+
+        proxy
+            .handle(&PlaybackProxyPayload {
+                action: "close".into(),
+                session_id: "final-redirect-base".into(),
+                url: None,
+                headers: None,
+            })
+            .await
+            .unwrap();
+        server.await.unwrap();
+    }
+
     #[tokio::test]
     async fn waits_for_complete_request_headers_before_responding() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};

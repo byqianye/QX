@@ -1647,7 +1647,15 @@ where
     match read_bounded_response(response).await {
         Ok(bytes) => Ok((status, bytes)),
         Err(BoundedResponseError::Request(_)) if status.is_success() => {
-            let retry = build(client).send().await.map_err(|error| error.to_string())?;
+            let retry_client = if direct_retry_allowed {
+                build_direct_client(timeout)?
+            } else {
+                client.clone()
+            };
+            let retry = build(&retry_client)
+                .send()
+                .await
+                .map_err(|error| error.to_string())?;
             let status = retry.status();
             let bytes = read_bounded_response(retry).await
                 .map_err(|error| error.message("APPGET_RESPONSE_TOO_LARGE"))?;
@@ -1693,16 +1701,21 @@ where
         Err(error) => error.to_string(),
     };
 
-    let direct = reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(timeout)
-        .build()
+    let direct = build_direct_client(timeout)
         .map_err(|error| format!("{first_description}; direct retry client failed: {error}"))?;
     build(&direct)
         .send()
         .await
         .map_err(|error| format!("{first_description}; direct retry failed: {error}"))
+}
+
+fn build_direct_client(timeout: Duration) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(timeout)
+        .build()
+        .map_err(|error| error.to_string())
 }
 
 fn valid_media_url(value: &str) -> Option<String> {
@@ -3614,6 +3627,52 @@ mod tests {
         let result = super::request_json_once(&config, "/api.php/getappapi.index/initV119", reqwest::Method::POST, Some(&json!({"device":"fixture"})), &HeaderMap::new(), Duration::from_secs(2), Arc::new(AtomicBool::new(false))).await;
         assert_eq!(result.unwrap()["recommend_list"][0]["vod_id"], "recovered");
         tokio::time::timeout(Duration::from_secs(3), fixture).await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn retries_a_successful_query_body_error_without_the_environment_proxy() {
+        let target = bind_loopback_tcp().await.expect("bind direct query target");
+        let target_address = target.local_addr().expect("direct query target address");
+        let proxy = bind_loopback_tcp().await.expect("bind query proxy");
+        let proxy_address = proxy.local_addr().expect("query proxy address");
+
+        let target_task = tokio::spawn(async move {
+            let (mut socket, _) = target.accept().await.expect("accept direct query retry");
+            let _ = read_request(&mut socket).await;
+            write_json(&mut socket, r#"{"ok":true}"#).await;
+        });
+        let proxy_task = tokio::spawn(async move {
+            let (mut socket, _) = proxy.accept().await.expect("accept proxy query");
+            let _ = read_request(&mut socket).await;
+            write_http_response(
+                &mut socket,
+                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n20\r\n{",
+                "write truncated proxy query response",
+            )
+            .await;
+        });
+
+        let client = reqwest::Client::builder()
+            .proxy(reqwest::Proxy::http(format!("http://{proxy_address}")).expect("query proxy"))
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(2))
+            .build()
+            .expect("build query proxy client");
+        let url = format!("http://127.0.0.1:{}/health", target_address.port());
+        let (status, bytes) = tokio::time::timeout(
+            Duration::from_secs(3),
+            super::read_query_with_retry(&client, Duration::from_secs(2), true, |client| {
+                client.get(url.clone())
+            }),
+        )
+        .await
+        .expect("direct query retry completes")
+        .expect("direct query retry succeeds");
+        assert_eq!(status, reqwest::StatusCode::OK);
+        assert_eq!(bytes, br#"{"ok":true}"#);
+
+        target_task.await.expect("direct query target completes");
+        proxy_task.await.expect("query proxy completes");
     }
 
     #[tokio::test]

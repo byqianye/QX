@@ -45,6 +45,27 @@
 
 未完成事项和风险：该包使用测试组件地址和自动导入 preset，只用于本机安装流程回归，不是正式签名发布包；G130 三源电影/剧集各十分钟稳定播放仍未完成。
 
+### 2026-09-09：Rust 源请求与播放代理适配
+
+状态：`verified`
+
+范围：修复环境代理返回 2xx 但响应体读取失败时的 AppQi 重试；修复 HLS/DASH 清单经过一次同源重定向后，仍以重定向前地址解析相对 URI 的问题。没有放宽代理的跨源重定向策略，也没有新增源。
+
+修改文件：
+- `src-tauri/src/app_get.rs`
+- `src-tauri/src/playback_proxy.rs`
+
+验证：
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib app_get::tests -- --test-threads=1`：40 项通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib playback_proxy::tests -- --test-threads=1`：21 项通过，2 项忽略。
+- `npm run typecheck`、`npm run test:tauri-renderer`：通过。
+- `npm run tauri:test-installer` 与 `QX_TAURI_TEST_E2E=1 npm run tauri:test-installer:e2e`：测试安装包构建、安装、首页、卸载通过。
+- 新构建的 release 可执行文件运行 `光盘 / 花开锦绣 / VIP` 线路连续播放超过 20 秒；切换到 `光盘` 后首页读取成功。
+
+证据：`artifacts/g140-guangpan-vip-release-proxy.json`、`artifacts/g141-guangpan-direct-release-proxy-after-fix.json`、`artifacts/tauri-test-installer-e2e.json`；当前测试安装包为 5,863,366 字节，SHA256 为 `f1ec60e1cee83fc5bbc955606ee4303bf3a0f898299561e46a694f88d2500a0e`。
+
+未完成事项和风险：`光盘` 默认 `专线` 的首个 HLS 分片当前会被上游重定向到 `omts.tc.qq.com`；这一步触发既有 `PLAYBACK_REDIRECT_REJECTED` 安全边界，所以该线路仍不能播放。源接口本身可返回详情、清单和 VIP 可播线路，问题不是安装包缺少资源。`npm run test:playback` 的并发限制用例仍有既有时序抖动，单独运行该用例通过。正式签名 release 仍需真实 `QX_COMPONENT_*` 环境变量。
+
 ### 2026-09-09：定位测试安装包与打包播放差异
 
 状态：`verified`（问题定位）

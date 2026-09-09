@@ -296,11 +296,16 @@ try {
         return [requested];
       })();
       const cards = [...document.querySelectorAll('[data-testid="core-source-switch-page"] .source-card')];
-      const card = cards.find((candidate) => {
+      const exactCard = cards.find((candidate) => {
+        const heading = candidate.querySelector('h3')?.textContent?.trim() ?? '';
+        const key = candidate.getAttribute('data-site-key') ?? '';
+        return heading === requested || key === requested;
+      });
+      const card = exactCard ?? cards.find((candidate) => {
         const heading = candidate.querySelector('h3')?.textContent?.trim() ?? '';
         const key = candidate.getAttribute('data-site-key') ?? '';
         const text = candidate.textContent ?? '';
-        return heading === requested || key === requested || aliases.some((alias) => text.includes(alias));
+        return aliases.some((alias) => text.includes(alias));
       });
       if (!(card instanceof HTMLElement)) throw new Error('requested source card missing');
       const select = card.querySelector('[data-action="core-select-source"]');

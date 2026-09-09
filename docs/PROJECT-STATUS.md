@@ -45,6 +45,23 @@
 
 未完成事项和风险：该包使用测试组件地址和自动导入 preset，只用于本机安装流程回归，不是正式签名发布包；G130 三源电影/剧集各十分钟稳定播放仍未完成。
 
+### 2026-09-09：定位测试安装包与打包播放差异
+
+状态：`verified`（问题定位）
+
+范围：对同一条 `光盘 / 花开锦绣` 播放链路分别运行测试安装包、当前 NSIS 安装包和 Debug + Vite 开发态，并用 `肥猫 / 凡人修仙传` 作为可播放对照；同时直接探测光盘 `AppQi` 搜索、详情、解析、HLS 清单和首个分片。
+
+修改文件：
+- `scripts/tauri-cdp-canary.ts`：来源切换优先按精确 key/标题选择，避免别名文本把 `光盘` 误选成其他来源。
+
+验证：
+- `光盘 / 花开锦绣` 在测试安装包、当前 NSIS 包和 Debug 开发态均出现相同的 `PLAYBACK_REDIRECT_REJECTED`，MP4 回退为 `413 Upstream response too large`，最终播放器报 `no supported source`。
+- `肥猫 / 凡人修仙传` 在测试安装包、当前 NSIS 包、release 直运行和 Debug 开发态均连续播放超过 20 秒，首帧和 1920×1080 画面正常。
+- 光盘接口当前返回 200；新解析出的 HLS 清单为同源 302 后 200，首个 TS 分片可在跟随上游 CDN 重定向后返回 200。应用受控代理按安全边界拒绝分片的跨源重定向，因此不是安装包资源缺失。
+- 证据：`artifacts/g131-installed-test-huakai-direct.json`、`artifacts/g131-installed-current-guangpan-868710.json`、`artifacts/g131-debug-dev-guangpan-huakai.json`、`artifacts/g131-installed-test-feimao-fanren.json`、`artifacts/g131-installed-current-feimao-fanren.json`、`artifacts/g131-current-release-feimao-fanren-noproxy.json`、`artifacts/g131-debug-dev-feimao-fanren-direct.json`。
+
+未完成事项和风险：`tauri-test-installer:e2e` 原本只验证安装、首页和来源列表，没有把第三方播放作为通过条件；光盘线路的上游重定向/短时授权仍可能变化。当前没有放宽代理的跨源重定向安全策略，也没有宣称 G130 稳定播放门槛完成。
+
 ### 2026-09-08：项目整理与最小包路径
 
 状态：`in_progress`

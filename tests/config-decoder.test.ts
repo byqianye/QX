@@ -16,7 +16,6 @@ const minimalConfig = {
     { key: "py", name: "Python", type: 3, api: "./demo.py" },
     { key: "json", name: "JSON", type: 1, api: "https://example.invalid/api" },
   ],
-  lives: [{ name: "Live", type: 0, url: "https://example.invalid/live.m3u" }],
 };
 
 describe("TVBox configuration boundary", () => {
@@ -25,7 +24,6 @@ describe("TVBox configuration boundary", () => {
 
     expect(summarizeConfig(config)).toMatchObject({
       siteCount: 4,
-      liveCount: 1,
       engineCounts: { java: 1, quickjs: 1, python: 1, http: 1 },
     });
   });
@@ -41,6 +39,37 @@ describe("TVBox configuration boundary", () => {
   it("rejects malformed or non-object configurations", () => {
     expect(() => parseTvBoxConfig("not-json")).toThrow(/JSON/);
     expect(() => parseTvBoxConfig(JSON.stringify([minimalConfig]))).toThrow(/object/);
+  });
+
+  it("accepts public catalog comments without touching URL fragments", () => {
+    const payload = `{
+      // optional spider
+      # public catalog note
+      /* a block comment between fields */
+      "sites": [
+        {
+          "key": "肥猫",
+          "api": "csp_AppGet",
+          "ext": "https://bind.315999.xyz/89.txt|#getapp@TMD@2025|120",
+          "note": "keep https://example.invalid/#fragment // inside strings"
+        } // trailing line comment
+      ]
+    }`;
+
+    expect(parseTvBoxConfig(payload)).toEqual({
+      sites: [
+        {
+          key: "肥猫",
+          api: "csp_AppGet",
+          ext: "https://bind.315999.xyz/89.txt|#getapp@TMD@2025|120",
+          note: "keep https://example.invalid/#fragment // inside strings",
+        },
+      ],
+    });
+  });
+
+  it("keeps malformed comment envelopes rejected", () => {
+    expect(() => parseTvBoxConfig('{"sites":[]} /* unterminated')).toThrow(/JSON/);
   });
 
   it("decodes the FongMi AES-CBC envelope", () => {

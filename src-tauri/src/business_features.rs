@@ -102,11 +102,13 @@ pub fn handle(
             )?;
             snapshot(&connection, "history")
         }
-        ("favorites", "snapshot") => snapshot(&connection, "favorites"),
+        ("favorites", "snapshot") => {
+            snapshot_for_source(&connection, "favorites", payload.source_id.as_deref())
+        }
         ("favorites", "toggle") => toggle_favorite(&connection, payload),
         ("favorites", "delete") => {
             remove_record(&connection, "favorite", &payload.id)?;
-            snapshot(&connection, "favorites")
+            snapshot_for_source(&connection, "favorites", payload.source_id.as_deref())
         }
         ("favorites", "move") => {
             let group_id = required_string(&payload.value, "groupId")?;
@@ -120,14 +122,16 @@ pub fn handle(
             value["groupId"] = Value::String(group_id);
             value["updatedAt"] = json!(now_millis());
             upsert_record(&connection, "favorite", &payload.id, None, &value)?;
-            snapshot(&connection, "favorites")
+            snapshot_for_source(&connection, "favorites", payload.source_id.as_deref())
         }
         ("favorites", "reorder") => reorder_favorites(&connection, payload),
         ("favorites", "group-create") => create_group(&connection, payload),
         ("favorites", "group-rename") => rename_group(&connection, payload),
         ("favorites", "group-delete") => delete_group(&connection, payload),
         ("favorites", "group-reorder") => reorder_groups(&connection, payload),
-        ("follow", "snapshot") => snapshot(&connection, "follow"),
+        ("follow", "snapshot") => {
+            snapshot_for_source(&connection, "follow", payload.source_id.as_deref())
+        }
         ("follow", "upsert") => {
             let value = normalize_follow_value(&payload.value)?;
             upsert_record(
@@ -137,14 +141,21 @@ pub fn handle(
                 payload.source_id.as_deref(),
                 &value,
             )?;
-            snapshot(&connection, "follow")
+            snapshot_for_source(&connection, "follow", payload.source_id.as_deref())
         }
         ("follow", "delete") => {
             remove_record(&connection, "follow", &payload.id)?;
-            snapshot(&connection, "follow")
+            snapshot_for_source(&connection, "follow", payload.source_id.as_deref())
         }
-        ("follow", "mark-watched") => mark_follow(&connection, &payload.id, true),
-        ("follow", "mark-unwatched") => mark_follow(&connection, &payload.id, false),
+        ("follow", "mark-watched") => {
+            mark_follow(&connection, &payload.id, true, payload.source_id.as_deref())
+        }
+        ("follow", "mark-unwatched") => mark_follow(
+            &connection,
+            &payload.id,
+            false,
+            payload.source_id.as_deref(),
+        ),
         _ => Err(FeatureError::Invalid(format!(
             "unsupported business feature action: {}:{}",
             payload.feature, payload.action
@@ -153,6 +164,14 @@ pub fn handle(
 }
 
 fn snapshot(connection: &Connection, feature: &str) -> Result<FeatureSnapshot, FeatureError> {
+    snapshot_for_source(connection, feature, None)
+}
+
+fn snapshot_for_source(
+    connection: &Connection,
+    feature: &str,
+    current_source_id: Option<&str>,
+) -> Result<FeatureSnapshot, FeatureError> {
     let state = match feature {
         "history" => {
             let mut items = records(connection, "history")?;
@@ -168,6 +187,24 @@ fn snapshot(connection: &Connection, feature: &str) -> Result<FeatureSnapshot, F
         }
         "favorites" => {
             ensure_default_group(connection)?;
+            let recent_by_content = records(connection, "history")?
+                .into_iter()
+                .filter_map(|value| {
+                    let source_id = optional_string(&value, "sourceId")?;
+                    let vod_id = optional_string(&value, "vodId")?;
+                    let updated_at = value.get("updatedAt").and_then(Value::as_i64)?;
+                    Some(((source_id, vod_id), updated_at))
+                })
+                .fold(
+                    BTreeMap::<(String, String), i64>::new(),
+                    |mut recent, (identity, updated_at)| {
+                        recent
+                            .entry(identity)
+                            .and_modify(|known| *known = (*known).max(updated_at))
+                            .or_insert(updated_at);
+                        recent
+                    },
+                );
             let mut items = records(connection, "favorite")?;
             items.sort_by(|left, right| {
                 string(left, "groupId")
@@ -175,12 +212,25 @@ fn snapshot(connection: &Connection, feature: &str) -> Result<FeatureSnapshot, F
                     .then(number(left, "sortOrder").cmp(&number(right, "sortOrder")))
                     .then(number(right, "addedAt").cmp(&number(left, "addedAt")))
             });
-            let groups = records(connection, "favorite_group")?;
+            let mut groups = records(connection, "favorite_group")?;
+            groups.sort_by(|left, right| {
+                number(left, "sortOrder")
+                    .cmp(&number(right, "sortOrder"))
+                    .then(number(left, "createdAt").cmp(&number(right, "createdAt")))
+                    .then(string(left, "groupId").cmp(&string(right, "groupId")))
+            });
             let items = items
                 .into_iter()
                 .map(|mut value| {
-                    value["sourceAvailable"] = json!(true);
-                    value["recentWatchedAt"] = Value::Null;
+                    let source_id = string(&value, "sourceId");
+                    let vod_id = string(&value, "vodId");
+                    value["sourceAvailable"] = json!(current_source_id
+                        .filter(|candidate| !candidate.trim().is_empty())
+                        .is_some_and(|candidate| candidate == source_id));
+                    value["recentWatchedAt"] = recent_by_content
+                        .get(&(source_id, vod_id))
+                        .copied()
+                        .map_or(Value::Null, |updated_at| json!(updated_at));
                     value
                 })
                 .collect::<Vec<_>>();
@@ -201,7 +251,10 @@ fn snapshot(connection: &Connection, feature: &str) -> Result<FeatureSnapshot, F
             let items = records(connection, "follow")?
                 .into_iter()
                 .map(|mut value| {
-                    value["sourceAvailable"] = json!(true);
+                    let source_id = string(&value, "sourceId");
+                    value["sourceAvailable"] = json!(current_source_id
+                        .filter(|candidate| !candidate.trim().is_empty())
+                        .is_some_and(|candidate| candidate == source_id));
                     value["status"] = if value
                         .get("checkError")
                         .and_then(Value::as_str)
@@ -292,7 +345,7 @@ fn toggle_favorite(
             &value,
         )?;
     }
-    snapshot(connection, "favorites")
+    snapshot_for_source(connection, "favorites", payload.source_id.as_deref())
 }
 
 fn reorder_favorites(
@@ -319,13 +372,16 @@ fn reorder_favorites(
     {
         return Err(FeatureError::Invalid("FAVORITE_SORT_INVALID".to_string()));
     }
-    for (index, id) in ids.iter().enumerate() {
-        let value = by_id.get_mut(id).expect("validated favorite id");
-        value["sortOrder"] = json!(index as i64);
-        value["updatedAt"] = json!(now_millis());
-        upsert_record(connection, "favorite", id, None, value)?;
-    }
-    snapshot(connection, "favorites")
+    in_transaction(connection, |transaction| {
+        for (index, id) in ids.iter().enumerate() {
+            let value = by_id.get_mut(id).expect("validated favorite id");
+            value["sortOrder"] = json!(index as i64);
+            value["updatedAt"] = json!(now_millis());
+            upsert_record(transaction, "favorite", id, None, value)?;
+        }
+        Ok(())
+    })?;
+    snapshot_for_source(connection, "favorites", payload.source_id.as_deref())
 }
 
 fn create_group(
@@ -357,7 +413,7 @@ fn create_group(
         None,
         &json!({ "groupId": id, "name": name, "sortOrder": sort_order, "createdAt": now_millis(), "updatedAt": now_millis() }),
     )?;
-    snapshot(connection, "favorites")
+    snapshot_for_source(connection, "favorites", payload.source_id.as_deref())
 }
 
 fn rename_group(
@@ -375,7 +431,7 @@ fn rename_group(
     value["name"] = Value::String(required_string(&payload.value, "name")?);
     value["updatedAt"] = json!(now_millis());
     upsert_record(connection, "favorite_group", &id, None, &value)?;
-    snapshot(connection, "favorites")
+    snapshot_for_source(connection, "favorites", payload.source_id.as_deref())
 }
 
 fn delete_group(
@@ -388,7 +444,8 @@ fn delete_group(
             "FAVORITE_DEFAULT_GROUP_PROTECTED".to_string(),
         ));
     }
-    let count = records(connection, "favorite")?
+    let favorites = records(connection, "favorite")?;
+    let count = favorites
         .iter()
         .filter(|value| string(value, "groupId") == id)
         .count();
@@ -398,26 +455,28 @@ fn delete_group(
             "FAVORITE_GROUP_DISPOSITION_REQUIRED".to_string(),
         ));
     }
-    for value in records(connection, "favorite")? {
-        if string(&value, "groupId") != id {
-            continue;
+    in_transaction(connection, |transaction| {
+        for value in favorites {
+            if string(&value, "groupId") != id {
+                continue;
+            }
+            if disposition.as_deref() == Some("delete") {
+                remove_record(transaction, "favorite", &string(&value, "favoriteId"))?;
+            } else {
+                let mut moved = value;
+                moved["groupId"] = json!(DEFAULT_GROUP_ID);
+                upsert_record(
+                    transaction,
+                    "favorite",
+                    &string(&moved, "favoriteId"),
+                    None,
+                    &moved,
+                )?;
+            }
         }
-        if disposition.as_deref() == Some("delete") {
-            remove_record(connection, "favorite", &string(&value, "favoriteId"))?;
-        } else {
-            let mut moved = value;
-            moved["groupId"] = json!(DEFAULT_GROUP_ID);
-            upsert_record(
-                connection,
-                "favorite",
-                &string(&moved, "favoriteId"),
-                None,
-                &moved,
-            )?;
-        }
-    }
-    remove_record(connection, "favorite_group", &id)?;
-    snapshot(connection, "favorites")
+        remove_record(transaction, "favorite_group", &id)
+    })?;
+    snapshot_for_source(connection, "favorites", payload.source_id.as_deref())
 }
 
 fn reorder_groups(
@@ -438,19 +497,23 @@ fn reorder_groups(
             "FAVORITE_GROUP_SORT_INVALID".to_string(),
         ));
     }
-    for (index, id) in ids.iter().enumerate() {
-        let mut value = record(connection, "favorite_group", id)?
-            .ok_or_else(|| FeatureError::Invalid("FAVORITE_GROUP_SORT_INVALID".to_string()))?;
-        value["sortOrder"] = json!(index as i64);
-        upsert_record(connection, "favorite_group", id, None, &value)?;
-    }
-    snapshot(connection, "favorites")
+    in_transaction(connection, |transaction| {
+        for (index, id) in ids.iter().enumerate() {
+            let mut value = record(transaction, "favorite_group", id)?
+                .ok_or_else(|| FeatureError::Invalid("FAVORITE_GROUP_SORT_INVALID".to_string()))?;
+            value["sortOrder"] = json!(index as i64);
+            upsert_record(transaction, "favorite_group", id, None, &value)?;
+        }
+        Ok(())
+    })?;
+    snapshot_for_source(connection, "favorites", payload.source_id.as_deref())
 }
 
 fn mark_follow(
     connection: &Connection,
     id: &str,
     watched: bool,
+    current_source_id: Option<&str>,
 ) -> Result<FeatureSnapshot, FeatureError> {
     let mut value = record(connection, "follow", id)?
         .ok_or_else(|| FeatureError::Invalid("FOLLOW_NOT_FOUND".to_string()))?;
@@ -468,7 +531,7 @@ fn mark_follow(
         );
     }
     upsert_record(connection, "follow", id, None, &value)?;
-    snapshot(connection, "follow")
+    snapshot_for_source(connection, "follow", current_source_id)
 }
 
 fn ensure_default_group(connection: &Connection) -> Result<(), FeatureError> {
@@ -539,6 +602,20 @@ fn clear_records(connection: &Connection, entity: &str) -> Result<(), FeatureErr
         remove_record(connection, entity, &record_id(entity, &value))?;
     }
     Ok(())
+}
+
+fn in_transaction<T>(
+    connection: &Connection,
+    operation: impl FnOnce(&Connection) -> Result<T, FeatureError>,
+) -> Result<T, FeatureError> {
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|error| FeatureError::Storage(error.to_string()))?;
+    let result = operation(&transaction)?;
+    transaction
+        .commit()
+        .map_err(|error| FeatureError::Storage(error.to_string()))?;
+    Ok(result)
 }
 
 fn record_id(entity: &str, value: &Value) -> String {
@@ -683,6 +760,7 @@ fn map_business_error(error: business_data::BusinessDataError) -> FeatureError {
 #[cfg(test)]
 mod tests {
     use super::{handle, FeaturePayload};
+    use rusqlite::Connection;
     use serde_json::{json, Value};
     use std::fs::remove_file;
 
@@ -800,6 +878,273 @@ mod tests {
             Some(0)
         );
         let _ = rusqlite::Connection::open(&path).expect("database remains readable");
+        let _ = remove_file(path);
+    }
+
+    #[test]
+    fn returns_favorite_groups_in_the_persisted_manual_order() {
+        let path = std::env::temp_dir().join(format!(
+            "qx-business-feature-groups-{}.sqlite3",
+            uuid::Uuid::new_v4()
+        ));
+        for (id, name) in [("group-a", "A"), ("group-b", "B")] {
+            handle(
+                &path,
+                &FeaturePayload {
+                    action: "group-create".to_string(),
+                    feature: "favorites".to_string(),
+                    id: id.to_string(),
+                    source_id: None,
+                    value: json!({ "name": name }),
+                },
+            )
+            .expect("favorite group creates");
+        }
+
+        let snapshot = handle(
+            &path,
+            &FeaturePayload {
+                action: "group-reorder".to_string(),
+                feature: "favorites".to_string(),
+                id: String::new(),
+                source_id: None,
+                value: json!({ "groupIds": ["group-b", "group-a", "default"] }),
+            },
+        )
+        .expect("favorite groups reorder");
+        let group_ids = snapshot.state["favorites"]["groups"]
+            .as_array()
+            .expect("favorite groups")
+            .iter()
+            .filter_map(|group| group["groupId"].as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(group_ids, vec!["group-b", "group-a", "default"]);
+        let _ = remove_file(path);
+    }
+
+    #[test]
+    fn derives_favorite_history_and_source_availability_without_dropping_the_record() {
+        let path = std::env::temp_dir().join(format!(
+            "qx-business-feature-favorite-snapshot-{}.sqlite3",
+            uuid::Uuid::new_v4()
+        ));
+        for (id, source_id, vod_id, updated_at) in [
+            ("history-older", "source-1", "vod-1", 10),
+            ("history-newer", "source-1", "vod-1", 30),
+            ("history-other", "source-2", "vod-1", 90),
+        ] {
+            handle(
+                &path,
+                &FeaturePayload {
+                    action: "upsert".to_string(),
+                    feature: "history".to_string(),
+                    id: id.to_string(),
+                    source_id: Some(source_id.to_string()),
+                    value: json!({
+                        "identity": id,
+                        "sourceId": source_id,
+                        "vodId": vod_id,
+                        "updatedAt": updated_at,
+                    }),
+                },
+            )
+            .expect("history upsert");
+        }
+        handle(
+            &path,
+            &FeaturePayload {
+                action: "toggle".to_string(),
+                feature: "favorites".to_string(),
+                id: "favorite-1".to_string(),
+                source_id: Some("source-1".to_string()),
+                value: json!({ "sourceId": "source-1", "vodId": "vod-1", "title": "Title" }),
+            },
+        )
+        .expect("favorite toggle");
+
+        let available = handle(
+            &path,
+            &FeaturePayload {
+                action: "snapshot".to_string(),
+                feature: "favorites".to_string(),
+                id: String::new(),
+                source_id: Some("source-1".to_string()),
+                value: Value::Null,
+            },
+        )
+        .expect("favorite snapshot with current source");
+        assert_eq!(
+            available.state["favorites"]["items"][0]["recentWatchedAt"],
+            30
+        );
+        assert_eq!(
+            available.state["favorites"]["items"][0]["sourceAvailable"],
+            true
+        );
+
+        let unknown = handle(
+            &path,
+            &FeaturePayload {
+                action: "snapshot".to_string(),
+                feature: "favorites".to_string(),
+                id: String::new(),
+                source_id: None,
+                value: Value::Null,
+            },
+        )
+        .expect("favorite snapshot without source context");
+        assert_eq!(
+            unknown.state["favorites"]["items"][0]["sourceAvailable"],
+            false
+        );
+        assert_eq!(
+            unknown.state["favorites"]["items"].as_array().map(Vec::len),
+            Some(1)
+        );
+        let _ = remove_file(path);
+    }
+
+    #[test]
+    fn derives_follow_latest_episode_from_the_ordered_episode_list() {
+        let path = std::env::temp_dir().join(format!(
+            "qx-business-feature-follow-order-{}.sqlite3",
+            uuid::Uuid::new_v4()
+        ));
+        let snapshot = handle(
+            &path,
+            &FeaturePayload {
+                action: "upsert".to_string(),
+                feature: "follow".to_string(),
+                id: "follow-1".to_string(),
+                source_id: Some("source-1".to_string()),
+                value: json!({
+                    "identity": "follow-1",
+                    "sourceId": "source-1",
+                    "vodId": "vod-1",
+                    "episodes": [
+                        { "id": "episode-9", "name": "Episode 9" },
+                        { "id": "episode-10", "name": "Episode 10" }
+                    ],
+                }),
+            },
+        )
+        .expect("follow upsert");
+
+        assert_eq!(
+            snapshot.state["follow"]["items"][0]["latestEpisodeId"],
+            "episode-10"
+        );
+        assert_eq!(
+            snapshot.state["follow"]["items"][0]["latestEpisodeName"],
+            "Episode 10"
+        );
+        let _ = remove_file(path);
+    }
+
+    #[test]
+    fn derives_follow_source_availability_without_dropping_the_record() {
+        let path = std::env::temp_dir().join(format!(
+            "qx-business-feature-follow-source-{}.sqlite3",
+            uuid::Uuid::new_v4()
+        ));
+        handle(
+            &path,
+            &FeaturePayload {
+                action: "upsert".to_string(),
+                feature: "follow".to_string(),
+                id: "follow-1".to_string(),
+                source_id: Some("source-1".to_string()),
+                value: json!({
+                    "identity": "follow-1",
+                    "sourceId": "source-1",
+                    "vodId": "vod-1",
+                    "episodes": [{ "id": "episode-1", "name": "Episode 1" }],
+                }),
+            },
+        )
+        .expect("follow upsert");
+
+        let unavailable = handle(
+            &path,
+            &FeaturePayload {
+                action: "snapshot".to_string(),
+                feature: "follow".to_string(),
+                id: String::new(),
+                source_id: Some("source-2".to_string()),
+                value: Value::Null,
+            },
+        )
+        .expect("follow snapshot with another source");
+        assert_eq!(
+            unavailable.state["follow"]["items"][0]["sourceAvailable"],
+            false
+        );
+        assert_eq!(
+            unavailable.state["follow"]["items"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+        let _ = remove_file(path);
+    }
+
+    #[test]
+    fn rolls_back_favorite_reorder_when_a_batch_write_fails() {
+        let path = std::env::temp_dir().join(format!(
+            "qx-business-feature-favorite-transaction-{}.sqlite3",
+            uuid::Uuid::new_v4()
+        ));
+        for (id, vod_id) in [("favorite-a", "vod-a"), ("favorite-b", "vod-b")] {
+            handle(
+                &path,
+                &FeaturePayload {
+                    action: "toggle".to_string(),
+                    feature: "favorites".to_string(),
+                    id: id.to_string(),
+                    source_id: Some("source-1".to_string()),
+                    value: json!({ "sourceId": "source-1", "vodId": vod_id, "title": vod_id }),
+                },
+            )
+            .expect("favorite toggle");
+        }
+        let connection = Connection::open(&path).expect("database");
+        connection
+            .execute_batch(
+                "CREATE TRIGGER fail_favorite_a_update
+                 BEFORE UPDATE ON business_records
+                 WHEN NEW.entity = 'favorite' AND NEW.record_id = 'favorite-a'
+                 BEGIN
+                   SELECT RAISE(ABORT, 'fixture reorder failure');
+                 END;",
+            )
+            .expect("failure trigger");
+        drop(connection);
+
+        let error = handle(
+            &path,
+            &FeaturePayload {
+                action: "reorder".to_string(),
+                feature: "favorites".to_string(),
+                id: String::new(),
+                source_id: Some("source-1".to_string()),
+                value: json!({ "groupId": "default", "favoriteIds": ["favorite-b", "favorite-a"] }),
+            },
+        )
+        .expect_err("second reorder update fails");
+        assert!(format!("{error:?}").contains("fixture reorder failure"));
+
+        let connection = Connection::open(&path).expect("database reopens");
+        let serialized: String = connection
+            .query_row(
+                "SELECT value_json FROM business_records WHERE entity = 'favorite' AND record_id = 'favorite-b'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("favorite row");
+        let favorite: Value = serde_json::from_str(&serialized).expect("favorite JSON");
+        assert_eq!(favorite["sortOrder"], 1);
+        drop(connection);
         let _ = remove_file(path);
     }
 }

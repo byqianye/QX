@@ -15,6 +15,7 @@ import {
   DesktopSpiderUiServer,
 } from "../src/desktop/spider-ui.js";
 import type { SpiderResponse } from "../src/spider/rpc.js";
+import { RendererApi } from "../renderer/src/api.js";
 import {
   applyRendererEnvelope,
   createRendererState,
@@ -26,7 +27,9 @@ import CategoryTabs from "../renderer/src/CategoryTabs.vue";
 import EmbeddedPlayer from "../renderer/src/EmbeddedPlayer.vue";
 import CastPanel from "../renderer/src/CastPanel.vue";
 import MediaCard from "../renderer/src/MediaCard.vue";
+import PosterImage from "../renderer/src/PosterImage.vue";
 import DetailDrawer from "../renderer/src/DetailDrawer.vue";
+import DownloadsView from "../renderer/src/DownloadsView.vue";
 import ConfirmDialog from "../renderer/src/ConfirmDialog.vue";
 import PlaybackSelector from "../renderer/src/PlaybackSelector.vue";
 import PlayerControls from "../renderer/src/PlayerControls.vue";
@@ -35,10 +38,9 @@ import SpiderView from "../renderer/src/SpiderView.vue";
 import SourceSwitcher from "../renderer/src/SourceSwitcher.vue";
 import TopSearchBar from "../renderer/src/TopSearchBar.vue";
 import { displaySource } from "../renderer/src/safe-display.js";
-import LiveSourcesView from "../renderer/src/LiveSourcesView.vue";
-import { EMPTY_LIVE_UI_STATE, type LiveUiState } from "../src/live/live-types.js";
 import { EMPTY_DANMAKU_UI_STATE } from "../src/danmaku/danmaku-types.js";
 import type { CastUiState } from "../src/cast/cast-types.js";
+import * as tauriRpc from "../renderer/src/tauri-rpc.js";
 
 const shakaMocks = vi.hoisted(() => ({
   installAll: vi.fn(),
@@ -241,6 +243,40 @@ describe("Vue renderer", () => {
     expect(wrapper.emitted("localPlay")).toEqual([["local-item-1", undefined]]);
   });
 
+  it("uses Chinese labels for download tabs and task statuses", () => {
+    const state = createRendererState().downloads;
+    state.tasks = [
+      {
+        id: "download-1",
+        sourceId: null,
+        contentId: null,
+        title: "下载任务",
+        targetDirectoryId: "directory-1",
+        suggestedFilename: "fixture.mp4",
+        requestReference: "https://media.example.test/fixture.mp4",
+        status: "downloading",
+        totalBytes: 100,
+        completedBytes: 25,
+        speed: 10,
+        createdAt: 1,
+        startedAt: 1,
+        completedAt: null,
+        updatedAt: 1,
+        error: null,
+      },
+    ];
+    state.targetDirectories = [{ id: "directory-1", displayName: "下载目录", createdAt: 1, updatedAt: 1, taskCount: 1 }];
+    const wrapper = mount(DownloadsView, { props: { state, pending: null } });
+
+    expect(wrapper.get("h2").text()).toBe("下载");
+    expect(wrapper.get('[data-action="downloads-active"]').text()).toBe("进行中");
+    expect(wrapper.get('[data-action="downloads-completed"]').text()).toBe("已完成");
+    expect(wrapper.get('[data-action="downloads-failed"]').text()).toBe("失败");
+    expect(wrapper.get(".download-row-main .meta").text()).toContain("下载中");
+    expect(wrapper.text()).not.toContain("downloading");
+    wrapper.unmount();
+  });
+
   it("renders DLNA discovery and session controls with device status", async () => {
     const device = {
       deviceId: "uuid:fixture-renderer",
@@ -400,7 +436,8 @@ describe("Vue renderer", () => {
 
     expect(wrapper.get('[data-testid="source-switcher"]').text()).toContain("豆瓣影视");
     expect(wrapper.get('[data-testid="app-sidebar"]').text()).toContain("豆瓣影视");
-    expect(wrapper.get(".workspace-header h1").text()).toBe("豆瓣影视");
+    expect(wrapper.find(".workspace-header").exists()).toBe(false);
+    expect(wrapper.find('[data-testid="status"]').exists()).toBe(true);
     expect(wrapper.text()).not.toContain("csp_Douban");
     expect(wrapper.get('[data-testid="empty-state"]').text()).toContain("没有找到匹配内容");
     expect(wrapper.get('[data-testid="empty-state"] .button-secondary').text()).toBe("清除搜索");
@@ -472,6 +509,7 @@ describe("Vue renderer", () => {
     const wrapper = mount(App);
     await flushPromises();
     expect(wrapper.get('[data-testid="config-import-form"]')).toBeTruthy();
+    expect((wrapper.get("#config-input").element as HTMLTextAreaElement).value).toBe("http://xn--z7x900a.net/");
     expect(wrapper.get('[data-testid="first-launch-guide"]')).toBeTruthy();
     expect(wrapper.get('[data-testid="first-launch-guide"]').text()).not.toMatch(/本地媒体|Jellyfin|Emby/u);
     await wrapper.get('[data-action="confirm-import"]').trigger("click");
@@ -547,7 +585,7 @@ describe("Vue renderer", () => {
       recentDetailId: null,
       diagnostic: { code: "STATE_PERSISTENCE_CORRUPT", message: "已回退安全默认值" },
     };
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => envelope }));
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({ ok: true, json: async () => envelope }));
     vi.stubGlobal("fetch", fetchMock);
     vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
 
@@ -557,8 +595,8 @@ describe("Vue renderer", () => {
 
     expect(wrapper.get('[data-testid="vue-renderer"]').attributes("data-theme")).toBe("dark");
     expect(wrapper.get('[data-testid="desktop-spider-ui"]').attributes("data-theme")).toBe("dark");
-    await vi.waitFor(() => expect(wrapper.find('[data-testid="epg-sources"]').exists()).toBe(true));
-    expect(wrapper.findAll('[data-testid="settings-section"]')).toHaveLength(8);
+    expect(wrapper.findAll('[data-testid="settings-section"]')).toHaveLength(7);
+    expect(wrapper.text()).not.toMatch(/直播|节目单/);
     expect(wrapper.get('[data-testid="about-panel"]')).toBeTruthy();
     expect(wrapper.get('[data-testid="cache-management"]')).toBeTruthy();
     expect(wrapper.get('[data-testid="storage-management"]')).toBeTruthy();
@@ -591,6 +629,41 @@ describe("Vue renderer", () => {
     wrapper.unmount();
   });
 
+  it("persists the actual workspace scroll container", async () => {
+    const envelope = readyEnvelope();
+    envelope.persistence = {
+      theme: "light",
+      navigation: "home",
+      siteKey: "douban",
+      category: null,
+      search: null,
+      scrollTop: 180,
+      recentDetailId: null,
+    };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({ ok: true, json: async () => envelope }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+    await flushPromises();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushPromises();
+
+    const container = wrapper.get(".workspace-content").element as HTMLElement;
+    expect(container.scrollTop).toBe(180);
+    Object.defineProperty(container, "scrollTop", { configurable: true, writable: true, value: 260 });
+    wrapper.unmount();
+    await flushPromises();
+
+    const calls = fetchMock.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit | undefined]>;
+    const scrollCall = calls.find(([path, init]) => String(path) === "/api/view-state"
+      && init?.body === JSON.stringify({ scrollTop: 260 }));
+    expect(scrollCall?.[1]).toEqual(expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ scrollTop: 260 }),
+    }));
+  });
+
   it("keeps request failures actionable and copies the same redacted diagnostic", async () => {
     const writeText = vi.fn(async (_text: string) => undefined);
     vi.stubGlobal("navigator", { clipboard: { writeText } });
@@ -610,7 +683,7 @@ describe("Vue renderer", () => {
     wrapper.unmount();
   });
 
-  it("reopens a persisted search page only when the imported site key matches", async () => {
+  it("starts at home after confirmation instead of reopening the last search page", async () => {
     const persisted = {
       theme: "light" as const,
       navigation: "search" as const,
@@ -635,6 +708,13 @@ describe("Vue renderer", () => {
     confirmed.persistence = persisted;
     const opened = readyEnvelope();
     opened.persistence = persisted;
+    const home = readyEnvelope();
+    home.state = {
+      ...home.state!,
+      page: "home",
+      items: [],
+    };
+    home.persistence = persisted;
     const searched = readyEnvelope();
     searched.state = {
       ...searched.state!,
@@ -646,6 +726,7 @@ describe("Vue renderer", () => {
       "/api/state": initial,
       "/api/import/confirm": confirmed,
       "/api/open": opened,
+      "/api/home": home,
       "/api/search": searched,
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => ({
@@ -662,8 +743,9 @@ describe("Vue renderer", () => {
 
     const calledPaths = (fetchMock.mock.calls as unknown as Array<[string]>).map(([path]) => path);
     expect(calledPaths).toContain("/api/open");
-    expect(calledPaths).toContain("/api/search");
-    expect(wrapper.get('[data-testid="vod-list"]').text()).toContain("恢复后的搜索结果");
+    expect(calledPaths).toContain("/api/home");
+    expect(calledPaths).not.toContain("/api/search");
+    expect(wrapper.text()).not.toContain("恢复后的搜索结果");
     wrapper.unmount();
   });
 
@@ -707,6 +789,87 @@ describe("Vue renderer", () => {
     wrapper.unmount();
   });
 
+  it("flushes the latest player position and volume before switching playback lines", async () => {
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(() => Promise.resolve());
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
+
+    const initial = formalDesignEnvelope();
+    initial.state = {
+      ...initial.state!,
+      playbackCatalog: {
+        lines: [
+          { index: 0, name: "主线路", protocol: "HLS", status: "ready", episodes: [{ index: 0, name: "正片", id: "episode-1" }] },
+          { index: 1, name: "备用线路", protocol: "MP4", status: "ready", episodes: [{ index: 0, name: "正片", id: "episode-1-backup" }] },
+        ],
+      },
+      playbackSelection: { lineIndex: 0, episodeIndex: 0 },
+      playbackSession: {
+        id: "session-1",
+        host: "embedded",
+        lineIndex: 0,
+        episodeIndex: 0,
+        lineName: "主线路",
+        episodeName: "正片",
+        media: { detailId: "fixture:movie-1", title: "星际航线", url: "https://media.example.test/video.mp4" },
+      },
+      player: {
+        ...initial.state!.player,
+        status: "playing",
+        source: { parse: 0, url: "https://media.example.test/video.mp4", headers: {}, mediaType: "mp4" },
+        currentTime: 44,
+        duration: 100,
+        volume: 0.35,
+        muted: true,
+      },
+    };
+    const switched: RendererEnvelope = {
+      ...initial,
+      state: {
+        ...initial.state!,
+        playbackSelection: { lineIndex: 1, episodeIndex: 0 },
+        playbackSession: { ...initial.state!.playbackSession!, id: "session-2", lineIndex: 1, lineName: "备用线路" },
+      },
+    };
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
+      calls.push({ path, body });
+      const response = path === "/api/player/sync"
+        ? { state: initial.state }
+        : path === "/api/player"
+          ? switched
+          : initial;
+      return { ok: true, json: async () => response };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const wrapper = mount(App);
+    await flushPromises();
+    await flushPromises();
+    const video = wrapper.get('[data-testid="embedded-player"]').element as HTMLVideoElement;
+    Object.defineProperty(video, "currentTime", { configurable: true, writable: true, value: 44 });
+    Object.defineProperty(video, "duration", { configurable: true, writable: true, value: 100 });
+    video.volume = 0.35;
+    video.muted = true;
+    video.dispatchEvent(new Event("timeupdate"));
+    video.dispatchEvent(new Event("volumechange"));
+    await nextTick();
+
+    const lineButtons = wrapper.findAll('[data-action="playback-line"]');
+    expect(lineButtons).toHaveLength(2);
+    await lineButtons[1]!.trigger("click");
+    await flushPromises();
+
+    const syncIndex = calls.findIndex((call) => call.path === "/api/player/sync");
+    const switchIndex = calls.findIndex((call) => call.path === "/api/player");
+    expect(syncIndex).toBeGreaterThanOrEqual(0);
+    expect(switchIndex).toBeGreaterThan(syncIndex);
+    expect(calls[syncIndex]?.body).toMatchObject({ currentTime: 44, volume: 0.35, muted: true });
+    wrapper.unmount();
+  });
+
   it("renders selectable lines, episodes and the complete embedded-player control surface", async () => {
     const selector = mount(PlaybackSelector, {
       attachTo: document.body,
@@ -722,7 +885,7 @@ describe("Vue renderer", () => {
         retryable: false,
       },
     });
-    expect(selector.find('[data-play-id="direct-mp4"]').exists()).toBe(true);
+    expect(selector.find('[data-play-id="direct-mp4"]').exists()).toBe(false);
     await selector.find('[data-play-id="episode-1"]').trigger("click");
     expect(selector.emitted("episode")).toEqual([[0, 0]]);
 
@@ -745,6 +908,7 @@ describe("Vue renderer", () => {
     });
     expect(player.get('[data-testid="player-seek"]')).toBeTruthy();
     expect(player.get('[data-testid="player-time"]')).toBeTruthy();
+    expect(player.get('[data-action="player-detach"]')).toBeTruthy();
     expect(player.get('[data-action="player-mute"]').text()).toContain("静音");
     await player.get('[data-action="player-mute"]').trigger("click");
     expect(player.get('[data-action="player-mute"]').text()).toContain("取消静音");
@@ -752,7 +916,302 @@ describe("Vue renderer", () => {
     selector.unmount();
   });
 
-  it("uses the live line index when the parent selection has not caught up", () => {
+  it("renders a full-size 16:9 stage with one in-page control layer", async () => {
+    const load = vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "canPlayType").mockReturnValue("");
+    const player = mount(EmbeddedPlayer, {
+      props: {
+        state: {
+          status: "loading",
+          source: { parse: 0, url: "http://127.0.0.1/video.mp4", headers: {} },
+          currentTime: 0,
+          duration: 0,
+          volume: 1,
+          muted: false,
+          fullscreen: false,
+          error: null,
+        },
+      },
+    });
+
+    const stage = player.get('[data-testid="embedded-player-stage"]');
+    expect(stage.attributes("data-aspect-ratio")).toBe("16:9");
+    expect(player.get<HTMLVideoElement>('[data-testid="embedded-player"]').element.controls).toBe(false);
+    expect(stage.get('[data-testid="player-controls-overlay"]')).toBeTruthy();
+    expect(stage.findAll('[data-component="PlayerControls"]')).toHaveLength(1);
+    const loadCallsBeforeUnmount = load.mock.calls.length;
+    const pauseCallsBeforeUnmount = pause.mock.calls.length;
+    player.unmount();
+    expect(load.mock.calls.length).toBeGreaterThan(loadCallsBeforeUnmount);
+    expect(pause.mock.calls.length).toBeGreaterThan(pauseCallsBeforeUnmount);
+  });
+
+  it("uses one stateful play control for play, resume, and pause", async () => {
+    const controls = mount(PlayerControls, {
+      props: {
+        status: "loading",
+        currentTime: 0,
+        duration: 60,
+        volume: 1,
+        muted: false,
+      },
+    });
+
+    expect(controls.findAll(".player-playback-toggle")).toHaveLength(1);
+    expect(controls.get(".player-playback-toggle").attributes("data-action")).toBe("player-play");
+    expect(controls.get(".player-playback-toggle").attributes("aria-label")).toBe("播放");
+    await controls.get(".player-playback-toggle").trigger("click");
+    expect(controls.emitted("play")).toHaveLength(1);
+
+    await controls.setProps({ status: "paused" } as Record<string, unknown>);
+    await controls.get(".player-playback-toggle").trigger("click");
+    expect(controls.emitted("resume")).toHaveLength(1);
+
+    await controls.setProps({ status: "playing" } as Record<string, unknown>);
+    expect(controls.get(".player-playback-toggle").attributes("data-action")).toBe("player-pause");
+    expect(controls.get(".player-playback-toggle").attributes("aria-label")).toBe("暂停");
+    await controls.get(".player-playback-toggle").trigger("click");
+    expect(controls.emitted("pause")).toHaveLength(1);
+    controls.unmount();
+  });
+
+  it("fullscreen keeps the complete player stage and follows Escape and fullscreen errors", async () => {
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "canPlayType").mockReturnValue("");
+    const player = mount(EmbeddedPlayer, {
+      props: {
+        state: {
+          status: "paused",
+          source: { parse: 0, url: "http://127.0.0.1/video.mp4", headers: {} },
+          currentTime: 0,
+          duration: 0,
+          volume: 1,
+          muted: false,
+          fullscreen: false,
+          error: null,
+        },
+      },
+    });
+    const stage = player.get<HTMLElement>('[data-testid="embedded-player-stage"]');
+    const originalFullscreenElement = Object.getOwnPropertyDescriptor(document, "fullscreenElement");
+    const originalExitFullscreen = Object.getOwnPropertyDescriptor(document, "exitFullscreen");
+    const requestFullscreen = vi.fn(async () => {
+      Object.defineProperty(document, "fullscreenElement", { configurable: true, value: stage.element });
+      document.dispatchEvent(new Event("fullscreenchange"));
+    });
+    Object.defineProperty(stage.element, "requestFullscreen", { configurable: true, value: requestFullscreen });
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
+    Object.defineProperty(document, "exitFullscreen", {
+      configurable: true,
+      value: vi.fn(async () => {
+        Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
+        document.dispatchEvent(new Event("fullscreenchange"));
+      }),
+    });
+
+    try {
+      await player.get('[data-action="player-fullscreen"]').trigger("click");
+      await flushPromises();
+      expect(requestFullscreen).toHaveBeenCalledTimes(1);
+      expect(stage.attributes("data-fullscreen")).toBe("true");
+      expect(player.get('[data-action="player-fullscreen"]').attributes("aria-label")).toBe("退出全屏");
+
+      Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
+      document.dispatchEvent(new Event("fullscreenchange"));
+      await nextTick();
+      expect(stage.attributes("data-fullscreen")).toBe("false");
+      expect(player.get('[data-action="player-fullscreen"]').attributes("aria-label")).toBe("全屏");
+
+      document.dispatchEvent(new Event("fullscreenerror"));
+      await nextTick();
+      expect(player.get('[data-testid="player-fullscreen-error"]').text()).toContain("全屏");
+    } finally {
+      player.unmount();
+      if (originalFullscreenElement) Object.defineProperty(document, "fullscreenElement", originalFullscreenElement);
+      else Reflect.deleteProperty(document, "fullscreenElement");
+      if (originalExitFullscreen) Object.defineProperty(document, "exitFullscreen", originalExitFullscreen);
+      else Reflect.deleteProperty(document, "exitFullscreen");
+    }
+  });
+
+  it("restores the last audible volume and unmutes when the slider moves above zero", async () => {
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "canPlayType").mockReturnValue("");
+    const player = mount(EmbeddedPlayer, {
+      props: {
+        state: {
+          status: "paused",
+          source: { parse: 0, url: "http://127.0.0.1/video.mp4", headers: {} },
+          currentTime: 0,
+          duration: 0,
+          volume: 0.4,
+          muted: false,
+          fullscreen: false,
+          error: null,
+        },
+      },
+    });
+    const video = player.get<HTMLVideoElement>('[data-testid="embedded-player"]').element;
+    const volume = player.get<HTMLInputElement>('[data-action="player-volume"]');
+
+    await player.get('[data-action="player-mute"]').trigger("click");
+    expect(video.muted).toBe(true);
+    expect(video.volume).toBeCloseTo(0.4);
+    await player.get('[data-action="player-mute"]').trigger("click");
+    expect(video.muted).toBe(false);
+    expect(video.volume).toBeCloseTo(0.4);
+
+    await volume.setValue("0");
+    expect(video.volume).toBe(0);
+    expect(player.get('[data-action="player-mute"]').attributes("aria-label")).toBe("取消静音");
+    await player.get('[data-action="player-mute"]').trigger("click");
+    expect(video.muted).toBe(false);
+    expect(video.volume).toBeCloseTo(0.4);
+
+    await player.get('[data-action="player-mute"]').trigger("click");
+    expect(video.muted).toBe(true);
+    await volume.setValue("0.25");
+    expect(video.muted).toBe(false);
+    expect(video.volume).toBeCloseTo(0.25);
+    expect(player.emitted("sync")?.at(-1)?.[0]).toMatchObject({ volume: 0.25, muted: false });
+    player.unmount();
+  });
+
+  it("keeps custom volume controls synchronized with native fullscreen volume changes", async () => {
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "canPlayType").mockReturnValue("");
+    const player = mount(EmbeddedPlayer, {
+      props: {
+        state: {
+          status: "loading",
+          source: { parse: 0, url: "http://127.0.0.1/video.mp4", headers: {} },
+          currentTime: 0,
+          duration: 0,
+          volume: 1,
+          muted: false,
+          fullscreen: false,
+          error: null,
+        },
+      },
+    });
+    const video = player.get<HTMLVideoElement>('[data-testid="embedded-player"]').element;
+    video.volume = 0.42;
+    video.dispatchEvent(new Event("volumechange"));
+    await nextTick();
+    expect(player.get<HTMLInputElement>('[data-action="player-volume"]').element.value).toBe("0.42");
+    expect(player.emitted("sync")?.at(-1)?.[0]).toMatchObject({ volume: 0.42 });
+
+    await player.get<HTMLInputElement>('[data-action="player-volume"]').setValue("0.25");
+    expect(player.emitted("sync")?.at(-1)?.[0]).toMatchObject({ volume: 0.25 });
+    player.unmount();
+  });
+
+  it("auto-hides the in-page controls while playing and restores them on pointer movement", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
+      vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+      vi.spyOn(HTMLMediaElement.prototype, "canPlayType").mockReturnValue("");
+      const player = mount(EmbeddedPlayer, {
+        props: {
+          state: {
+            status: "loading",
+            source: { parse: 0, url: "http://127.0.0.1/video.mp4", headers: {} },
+            currentTime: 0,
+            duration: 0,
+            volume: 1,
+            muted: false,
+            fullscreen: false,
+            error: null,
+          },
+        },
+      });
+
+      const stage = player.get('[data-testid="embedded-player-stage"]');
+      player.get<HTMLVideoElement>('[data-testid="embedded-player"]').element.dispatchEvent(new Event("playing"));
+      await nextTick();
+      expect(stage.classes()).not.toContain("is-controls-hidden");
+      vi.advanceTimersByTime(2_500);
+      await nextTick();
+      expect(stage.classes()).toContain("is-controls-hidden");
+      await stage.trigger("pointermove");
+      expect(stage.classes()).not.toContain("is-controls-hidden");
+      player.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not hide controls while keyboard focus remains inside the player", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
+      vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+      vi.spyOn(HTMLMediaElement.prototype, "canPlayType").mockReturnValue("");
+      const player = mount(EmbeddedPlayer, {
+        attachTo: document.body,
+        props: {
+          state: {
+            status: "loading",
+            source: { parse: 0, url: "http://127.0.0.1/video.mp4", headers: {} },
+            currentTime: 0,
+            duration: 0,
+            volume: 1,
+            muted: false,
+            fullscreen: false,
+            error: null,
+          },
+        },
+      });
+      const stage = player.get('[data-testid="embedded-player-stage"]');
+      player.get<HTMLVideoElement>('[data-testid="embedded-player"]').element.dispatchEvent(new Event("playing"));
+      await nextTick();
+      const playbackButton = player.get<HTMLButtonElement>(".player-playback-toggle");
+      playbackButton.element.focus();
+      await nextTick();
+
+      vi.advanceTimersByTime(2_500);
+      await nextTick();
+      expect(stage.classes()).not.toContain("is-controls-hidden");
+
+      playbackButton.element.blur();
+      await nextTick();
+      vi.advanceTimersByTime(2_500);
+      await nextTick();
+      expect(stage.classes()).toContain("is-controls-hidden");
+      player.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renders episodes only for the selected playback source", () => {
+    const selector = mount(PlaybackSelector, {
+      props: {
+        catalog: {
+          lines: [
+            { index: 0, name: "主线", episodes: [{ index: 0, name: "主线第一集", id: "primary-episode" }] },
+            { index: 1, name: "备用线", episodes: [{ index: 0, name: "备用线第一集", id: "backup-episode" }] },
+          ],
+        },
+        selection: { lineIndex: 1, episodeIndex: 0 },
+        lineIndex: 1,
+        order: "forward",
+        retryable: false,
+      },
+    });
+
+    expect(selector.findAll('[data-component="EpisodeGrid"]')).toHaveLength(1);
+    expect(selector.find('[data-play-id="backup-episode"]').exists()).toBe(true);
+    expect(selector.find('[data-play-id="primary-episode"]').exists()).toBe(false);
+    selector.unmount();
+  });
+
+  it("uses the current line index when the parent selection has not caught up", () => {
     const selector = mount(PlaybackSelector, {
       props: {
         catalog: {
@@ -771,7 +1230,7 @@ describe("Vue renderer", () => {
     expect(selector.find('[data-testid="current-line"]').text()).toContain("backup");
     expect(selector.find('[data-action="playback-line"][data-line-index="1"]').attributes("aria-selected")).toBe("true");
     expect(selector.find('[data-play-id="direct-mp4"]').isVisible()).toBe(true);
-    expect(selector.find('[data-play-id="episode-1"]').isVisible()).toBe(false);
+    expect(selector.find('[data-play-id="episode-1"]').exists()).toBe(false);
     selector.unmount();
   });
 
@@ -845,14 +1304,17 @@ describe("Vue renderer", () => {
     vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
     vi.spyOn(HTMLMediaElement.prototype, "canPlayType").mockReturnValue("maybe");
     vi.spyOn(Hls, "isSupported").mockReturnValue(true);
-    const loadSource = vi.spyOn(Hls.prototype, "loadSource").mockImplementation(() => undefined);
+    let hlsConfig: Hls["config"] | undefined;
+    const loadSource = vi.spyOn(Hls.prototype, "loadSource").mockImplementation(function (this: Hls) {
+      hlsConfig = this.config;
+    });
     const attachMedia = vi.spyOn(Hls.prototype, "attachMedia").mockImplementation(() => undefined);
     const player = mount(EmbeddedPlayer, {
       props: {
         state: {
           status: "loading",
           source: { parse: 0, url: "http://127.0.0.1:43123/video.m3u8", headers: {}, mediaType: "hls" },
-          currentTime: 0,
+          currentTime: 33,
           duration: 0,
           volume: 1,
           muted: false,
@@ -869,6 +1331,16 @@ describe("Vue renderer", () => {
     expect(attachMedia).toHaveBeenCalledWith(video.element);
     expect(video.element.crossOrigin).toBe("anonymous");
     expect(video.element.getAttribute("src")).toBeNull();
+    expect(hlsConfig).toMatchObject({
+      enableWorker: true,
+      startFragPrefetch: true,
+      maxBufferLength: 30,
+      maxBufferSize: 48 * 1000 * 1000,
+      maxMaxBufferLength: 60,
+      backBufferLength: 30,
+      capLevelToPlayerSize: true,
+      startPosition: 33,
+    });
     player.unmount();
   });
 
@@ -1011,6 +1483,30 @@ describe("Vue renderer", () => {
     controls.unmount();
   });
 
+  it("shows the hovered seek time and a best-effort frame preview", async () => {
+    const controls = mount(PlayerControls, {
+      props: {
+        currentTime: 0,
+        duration: 120,
+        volume: 1,
+        muted: false,
+        previewUrl: "http://127.0.0.1/video.mp4",
+      },
+    });
+    const seek = controls.get<HTMLInputElement>('[data-testid="player-seek"]');
+    Object.defineProperty(seek.element, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, width: 100, top: 0, right: 100, bottom: 10, height: 10 }),
+    });
+    const pointerMove = new Event("pointermove", { bubbles: true });
+    Object.defineProperty(pointerMove, "clientX", { value: 50 });
+    seek.element.dispatchEvent(pointerMove);
+    await nextTick();
+    expect(controls.get('[data-testid="player-seek-preview"]').text()).toContain("1:00");
+    expect(controls.get('.player-seek-preview-video').attributes("src")).toBe("http://127.0.0.1/video.mp4");
+    controls.unmount();
+  });
+
   it("moves the single player host without leaving an embedded video behind", async () => {
     const envelope = formalDesignEnvelope();
     envelope.state = {
@@ -1061,9 +1557,64 @@ describe("Vue renderer", () => {
     expect(child.get('[data-testid="player-window-line"]').text()).toContain("主线路");
     expect(child.get('[data-testid="embedded-player"]')).toBeTruthy();
     expect(child.get('[data-action="player-fullscreen"]')).toBeTruthy();
+    expect(child.find('[data-action="player-detach"]').exists()).toBe(false);
     await child.get('[data-action="player-attach"]').trigger("click");
     await flushPromises();
     expect(fetchMock).toHaveBeenCalledWith("/api/player/attach", expect.objectContaining({ method: "POST" }));
+    child.unmount();
+  });
+
+  it("reattaches the main player when the detached window reports completion", async () => {
+    const envelope = readyEnvelope();
+    vi.spyOn(tauriRpc, "isTauriRuntime").mockReturnValue(true);
+    vi.spyOn(RendererApi.prototype, "getState").mockResolvedValue(envelope);
+    const post = vi.spyOn(RendererApi.prototype, "post").mockResolvedValue(envelope);
+    const wrapper = mount(App);
+    await flushPromises();
+    post.mockClear();
+
+    window.dispatchEvent(new Event("qx-player-attached"));
+    await flushPromises();
+
+    expect(post).toHaveBeenCalledWith("/api/player/attach");
+    wrapper.unmount();
+  });
+
+  it("marks a detached Tauri attach request for main-window notification", async () => {
+    vi.spyOn(tauriRpc, "isTauriRuntime").mockReturnValue(true);
+    const playerWindowRequest = vi.spyOn(tauriRpc, "requestPlayerWindow").mockResolvedValue({
+      schemaVersion: "v1",
+      state: {
+        player: {
+          status: "paused",
+          source: { parse: 0, url: "http://127.0.0.1/video.mp4", headers: {} },
+          currentTime: 42,
+          duration: 90,
+          volume: 0.35,
+          muted: true,
+          fullscreen: false,
+          error: null,
+        },
+        session: {
+          id: "session-1",
+          host: "detached",
+          lineIndex: 0,
+          episodeIndex: 0,
+          lineName: "主线路",
+          episodeName: "正片",
+          media: { detailId: "fixture:movie-1", title: "星际航线", url: "http://127.0.0.1/video.mp4" },
+        },
+      },
+    });
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    const child = mount(PlayerWindow);
+    await flushPromises();
+
+    await child.get('[data-action="player-attach"]').trigger("click");
+    await flushPromises();
+
+    expect(playerWindowRequest).toHaveBeenCalledWith({ action: "attach", value: { notifyMain: true } });
     child.unmount();
   });
 
@@ -1125,6 +1676,28 @@ describe("Vue renderer", () => {
     card.unmount();
   });
 
+  it("keeps search-only source results visible without exposing a broken detail action", async () => {
+    const card = mount(MediaCard, {
+      props: {
+        item: {
+          vod_id: "pan-result",
+          vod_name: "云盘搜索结果",
+          __qx_source_key: "pansearch",
+          __qx_source_name: "PanSearch",
+          __qx_detail_available: false,
+        },
+      },
+    });
+    const vodCard = card.get('[data-testid="vod-card"]');
+
+    expect(vodCard.attributes("role")).toBeUndefined();
+    expect(vodCard.attributes("tabindex")).toBeUndefined();
+    expect(vodCard.attributes("aria-disabled")).toBe("true");
+    await vodCard.trigger("click");
+    await vodCard.trigger("keydown", { key: "Enter" });
+    expect(card.emitted("open")).toBeUndefined();
+  });
+
   it("renders a media poster when vod_pic is present", () => {
     const card = mount(MediaCard, {
       props: {
@@ -1140,6 +1713,65 @@ describe("Vue renderer", () => {
     expect(poster.element.tagName).toBe("IMG");
     expect(poster.attributes("src")).toBe("https://image.example.invalid/poster.jpg");
     expect(poster.attributes("alt")).toBe("Poster fixture 海报");
+  });
+
+  it("uses the Tauri image cache for posters and keeps the original URL as fallback", async () => {
+    vi.spyOn(tauriRpc, "isTauriRuntime").mockReturnValue(true);
+    const cacheImage = vi.spyOn(tauriRpc, "requestDesktopService").mockResolvedValue({
+      schemaVersion: "v1",
+      state: {
+        status: "stored",
+        hit: false,
+        assetUrl: "data:image/png;base64,Y2FjaGVk",
+        errorCode: null,
+      },
+    });
+    const wrapper = mount(PosterImage, {
+      props: {
+        source: "https://image.example.invalid/poster.jpg",
+        alt: "缓存海报",
+        fallbackText: "缓存",
+        testId: "cached-poster",
+      },
+    });
+    await flushPromises();
+
+    expect(cacheImage).toHaveBeenCalledWith({
+      action: "cache-image",
+      value: {
+        type: "poster",
+        url: "https://image.example.invalid/poster.jpg",
+      },
+    });
+    expect(wrapper.get('[data-testid="cached-poster"]').attributes("src"))
+      .toBe("data:image/png;base64,Y2FjaGVk");
+
+    await wrapper.get('[data-testid="cached-poster"]').trigger("error");
+    expect(wrapper.get('[data-testid="cached-poster"]').attributes("src"))
+      .toBe("https://image.example.invalid/poster.jpg");
+    wrapper.unmount();
+
+    cacheImage.mockRejectedValueOnce(new Error("cache unavailable"));
+    const backdrop = mount(PosterImage, {
+      props: {
+        source: "https://image.example.invalid/backdrop.jpg",
+        alt: "缓存背景",
+        fallbackText: "背景",
+        testId: "cached-backdrop",
+        cacheType: "backdrop",
+      },
+    });
+    await flushPromises();
+    expect(cacheImage).toHaveBeenLastCalledWith({
+      action: "cache-image",
+      value: {
+        type: "backdrop",
+        url: "https://image.example.invalid/backdrop.jpg",
+      },
+    });
+    expect(backdrop.get('[data-testid="cached-backdrop"]').attributes("src"))
+      .toBe("https://image.example.invalid/backdrop.jpg");
+    backdrop.unmount();
   });
 
   it("uses the shared detail poster fallback and lets the user select a playback source", async () => {
@@ -1233,7 +1865,10 @@ describe("Vue renderer", () => {
       },
     });
     expect(emptyDrawer.find('[data-testid="playback-source-empty"]').exists()).toBe(true);
-    expect(emptyDrawer.find('[data-testid="playback-source-diagnostics"]').text()).toContain("多数来源因当前 Spider Runtime 尚未支持而被跳过");
+    const diagnostics = emptyDrawer.find('[data-testid="playback-source-diagnostics"]');
+    expect(diagnostics.text()).toContain("多数来源当前暂不支持，已跳过");
+    expect(diagnostics.text()).not.toContain("Android Runtime");
+    expect(emptyDrawer.find('[data-testid="android-runtime-ready"]').exists()).toBe(false);
     emptyDrawer.unmount();
   });
 
@@ -1273,7 +1908,6 @@ describe("Vue renderer", () => {
     expect(wrapper.find('[data-play-url]').exists()).toBe(false);
     expect(wrapper.findAll('[data-diagnostic-step]').length).toBeGreaterThan(0);
     expect(wrapper.findAll('[data-action$="-placeholder"]')).toHaveLength(0);
-    expect(wrapper.get('[data-action="live-sources"]')).toBeTruthy();
     expect(wrapper.get('[data-action="history"]')).toBeTruthy();
     expect(wrapper.get('[data-action="favorites"]')).toBeTruthy();
     expect(wrapper.get('[data-action="downloads"]')).toBeTruthy();
@@ -1281,18 +1915,12 @@ describe("Vue renderer", () => {
     await wrapper.get('[data-action="settings"]').trigger("click");
     await flushPromises();
     expect(wrapper.findAll('[data-testid="settings-section"]').length).toBeGreaterThanOrEqual(5);
-    expect(wrapper.get('[data-testid="epg-sources"]')).toBeTruthy();
-    expect(wrapper.get('[data-action="epg-source-preview"]')).toBeTruthy();
     expect(wrapper.find('[data-testid="media-grid"]').exists()).toBe(false);
     const themeMode = wrapper.get('[data-action="theme-mode"]');
     await themeMode.setValue("dark");
     expect(wrapper.get('[data-testid="desktop-spider-ui"]').attributes("data-theme")).toBe("dark");
     await themeMode.setValue("system");
     expect(wrapper.get('[data-testid="desktop-spider-ui"]').attributes("data-theme-mode")).toBe("system");
-    await wrapper.get('[data-action="live-sources"]').trigger("click");
-    await vi.waitFor(() => expect(wrapper.find('[data-testid="live-sources"]').exists()).toBe(true));
-    expect(wrapper.get('[data-testid="live-sources"]')).toBeTruthy();
-    expect(wrapper.get('[data-action="live-source-preview"]')).toBeTruthy();
     wrapper.unmount();
 
     const proxyState = applyRendererEnvelope(createRendererState(), {
@@ -1325,189 +1953,6 @@ describe("Vue renderer", () => {
     expect(unavailable.get('[data-testid="error-state"]').text()).toContain("当前线路暂时无法播放");
     expect(unavailable.find('[data-action="switch-line"]').exists()).toBe(true);
     unavailable.unmount();
-  });
-
-  it("renders Smart Channels and emits management intents", async () => {
-    const state: LiveUiState = {
-      ...EMPTY_LIVE_UI_STATE,
-      catalog: {
-        groups: [],
-        recent: [],
-        channels: [
-          {
-            id: "live-a",
-            sourceId: "source-a",
-            sourceName: "Source A",
-            name: "News",
-            group: null,
-            logo: null,
-            channelNumber: null,
-            streamCount: 1,
-            streams: [{ id: "stream-a", label: "Main", protocol: "HLS", status: "ready" }],
-            epgStatus: "unmapped",
-            currentProgramme: null,
-            nextProgramme: null,
-            health: null,
-          },
-          {
-            id: "live-b",
-            sourceId: "source-b",
-            sourceName: "Source B",
-            name: "News",
-            group: null,
-            logo: null,
-            channelNumber: null,
-            streamCount: 1,
-            streams: [{ id: "stream-b", label: "Main", protocol: "HLS", status: "ready" }],
-            epgStatus: "unmapped",
-            currentProgramme: null,
-            nextProgramme: null,
-            health: null,
-          },
-        ],
-      },
-      smartSuggestions: [{
-        id: "suggestion-news",
-        name: "News",
-        memberIds: ["live-a", "live-b"],
-        reason: "exact-tvg-id",
-        confidence: "exact",
-      }],
-      smartChannels: [{
-        id: "smart-news",
-        name: "News Smart",
-        logo: null,
-        group: "Favorites",
-        sortOrder: 0,
-        preferredMemberId: "member-a",
-        currentMemberId: "member-a",
-        currentSourceName: "Source A",
-        available: true,
-        members: [
-          {
-            id: "member-a",
-            smartChannelId: "smart-news",
-            liveChannelId: "live-a",
-            priority: 0,
-            enabled: true,
-            channelName: "News",
-            sourceName: "Source A",
-            available: true,
-            healthScore: 90,
-          },
-          {
-            id: "member-b",
-            smartChannelId: "smart-news",
-            liveChannelId: "live-b",
-            priority: 1,
-            enabled: true,
-            channelName: "News",
-            sourceName: "Source B",
-            available: true,
-            healthScore: null,
-          },
-        ],
-        epg: {
-          mode: "unmapped",
-          sourceId: null,
-          channelId: null,
-          sourceName: null,
-          channelName: null,
-          currentProgramme: null,
-          nextProgramme: null,
-        },
-      }],
-    };
-    const wrapper = mount(LiveSourcesView, { props: { state, pending: null, danmaku: EMPTY_DANMAKU_UI_STATE } });
-
-    await wrapper.get('[data-action="live-tab-smart"]').trigger("click");
-    expect(wrapper.get('[data-testid="smart-channel-create"]')).toBeTruthy();
-    expect(wrapper.get('[data-testid="smart-channel-suggestions"]')).toBeTruthy();
-    expect(wrapper.get('[data-testid="smart-channel-list"]')).toBeTruthy();
-
-    await wrapper.get('[data-action="smart-suggestion-create"]').trigger("click");
-    expect(wrapper.emitted("smartCreate")).toEqual([[
-      { name: "News", group: null, memberIds: ["live-a", "live-b"] },
-    ]]);
-    await wrapper.get('input[type="number"]').setValue("7");
-    expect(wrapper.emitted("smartMemberUpdate")).toEqual([[
-      { smartChannelId: "smart-news", memberId: "member-a", priority: 7 },
-    ]]);
-    await wrapper.get('[data-action="smart-channel-play"]').trigger("click");
-    expect(wrapper.emitted("smartPlay")).toEqual([[
-      { smartChannelId: "smart-news", memberId: "member-a" },
-    ]]);
-    await wrapper.get('[data-action="smart-channel-member-enable"]').trigger("click");
-    expect(wrapper.emitted("smartMemberUpdate")).toEqual([
-      [{ smartChannelId: "smart-news", memberId: "member-a", priority: 7 }],
-      [{ smartChannelId: "smart-news", memberId: "member-a", enabled: false }],
-    ]);
-    wrapper.unmount();
-  });
-
-  it("renders live health details and failover actions", async () => {
-    const candidate = {
-      id: "live:channel-a:line-1",
-      channelId: "channel-a",
-      streamId: "line-1",
-      sourceId: "source-a",
-      sourceName: "Source A",
-      channelName: "News",
-      streamLabel: "线路 1",
-      memberId: null,
-      smartChannelId: null,
-      healthScore: 42,
-    };
-    const state: LiveUiState = {
-      ...EMPTY_LIVE_UI_STATE,
-      health: {
-        streamId: "line-1",
-        sourceId: "source-a",
-        startupSuccess: { value: true, samples: 1 },
-        firstFrameMs: { value: 320, samples: 1 },
-        playlistRefreshFailure: { value: 0, samples: 1 },
-        segmentFailure: { value: 2, samples: 2 },
-        bufferCount: { value: 1, samples: 1 },
-        bufferDuration: { value: 9_000, samples: 1 },
-        fatalError: { value: 0, samples: 1 },
-        disconnectCount: { value: 0, samples: 1 },
-        uptimeMs: { value: 10_000, samples: 1 },
-        lastSuccessAt: 1_000,
-        lastFailureAt: 2_000,
-        consecutiveFailures: 2,
-        score: 42,
-        scoreReasons: ["segment failures 2"],
-        cooldownUntil: 3_000,
-      },
-      failover: {
-        ...EMPTY_LIVE_UI_STATE.failover,
-        status: "prompt",
-        trigger: "segment-errors",
-        reason: "连续分片失败",
-        current: candidate,
-        next: { ...candidate, id: "live:channel-a:line-2", streamId: "line-2", streamLabel: "线路 2" },
-        attempts: 0,
-        maxAttempts: 3,
-        tried: [candidate.id],
-        manualOverrideUntil: 4_000,
-      },
-    };
-    const wrapper = mount(LiveSourcesView, { props: { state, pending: null, danmaku: EMPTY_DANMAKU_UI_STATE } });
-
-    expect(wrapper.get('[data-testid="live-health-summary"]').text()).toContain("评分 42");
-    expect(wrapper.get('[data-testid="live-failover-prompt"]').text()).toContain("连续分片失败");
-    expect(wrapper.get('[data-testid="live-debug-panel"]').text()).toContain("Manual override");
-    await wrapper.get('[data-action="live-failover-mode"]').setValue("auto");
-    await wrapper.get('[data-action="live-failover-approve"]').trigger("click");
-    await wrapper.get('[data-action="live-failover-cancel"]').trigger("click");
-    await wrapper.get('[data-action="live-failover-stay"]').trigger("click");
-    await wrapper.get('[data-action="live-failover-return"]').trigger("click");
-    expect(wrapper.emitted("failoverMode")).toEqual([["auto"]]);
-    expect(wrapper.emitted("failoverApprove")).toHaveLength(1);
-    expect(wrapper.emitted("failoverCancel")).toHaveLength(1);
-    expect(wrapper.emitted("failoverStay")).toHaveLength(1);
-    expect(wrapper.emitted("failoverReturn")).toHaveLength(1);
-    wrapper.unmount();
   });
 
   it("renders the formal history page and confirms destructive actions", async () => {

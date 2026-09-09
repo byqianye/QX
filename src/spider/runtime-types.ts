@@ -12,7 +12,7 @@ import type {
 } from "../source/media-source.js";
 import type { JarInspectionResult } from "./jar-inspector.js";
 
-export type SpiderRuntimeKind = "cms" | "javascript" | "native" | "android-dex" | "python" | "unsupported";
+export type SpiderRuntimeKind = "cms" | "javascript" | "native" | "python" | "unsupported";
 
 export interface RuntimeSupport {
   runtime: SpiderRuntimeKind;
@@ -55,8 +55,6 @@ export interface SpiderRuntimeManagerPort {
   getRuntime(site: TvBoxSite): Promise<SpiderRuntime>;
   /** Invalidates only one cached runtime after a source-local transient failure. */
   destroyRuntime?(site: TvBoxSite): Promise<void>;
-  /** Ensures any Android DEX sources are ready before search timers begin. */
-  prepareForSources?(sites: readonly TvBoxSite[]): Promise<void>;
   destroy?(): Promise<void>;
 }
 

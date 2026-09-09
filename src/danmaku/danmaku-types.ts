@@ -1,6 +1,6 @@
 export type DanmakuType = "scroll" | "top" | "bottom" | "reverse";
 export type DanmakuFormat = "auto" | "json" | "xml" | "items";
-export type DanmakuTimelineKind = "vod" | "live";
+export type DanmakuTimelineKind = "vod";
 
 export const DANMAKU_MAX_PAYLOAD_BYTES = 8 * 1024 * 1024;
 export const DANMAKU_MAX_ITEMS = 100_000;

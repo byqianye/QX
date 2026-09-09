@@ -11,19 +11,13 @@ import { defaultConfigUrl } from "./config-probe.js";
 
 const classProbeSource = fileURLToPath(new URL("./JvmClassProbe.java", import.meta.url));
 
-export type JarArtifact = "android-dex-jar" | "jvm-jar" | "unknown";
+export type JarArtifact = "jvm-jar" | "unknown";
 
 export interface JvmClassProbeResult {
   status: "loaded" | "not-found" | "error" | "not-run";
   targetClass: string;
   javacExecutable: string | null;
   output: string | null;
-}
-
-export interface AndroidRuntimeProbeResult {
-  adbAvailable: boolean;
-  devices: string[];
-  error: string | null;
 }
 
 export function selectCspSite(config: TvBoxConfig): TvBoxSite {
@@ -42,7 +36,6 @@ export function resolveCspTargetClass(api: string | undefined): string {
 export function identifyJarArtifact(bytes: Buffer): JarArtifact {
   const zipMagic = bytes.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
   if (!zipMagic) return "unknown";
-  if (bytes.includes(Buffer.from("classes.dex", "ascii"))) return "android-dex-jar";
   if (bytes.includes(Buffer.from(".class", "ascii"))) return "jvm-jar";
   return "unknown";
 }
@@ -65,7 +58,6 @@ export async function runJavaProbe(url = process.env.QX_SPIKE_CONFIG_URL ?? defa
   const artifactType = identifyJarArtifact(bytes);
   const javaExecutable = resolveJavaExecutable();
   const javaVersion = javaExecutable ? readVersion(javaExecutable) : null;
-  const androidRuntime = inspectAndroidRuntime();
   const workDir = await mkdtemp(join(tmpdir(), "qx-csp-douban-probe-"));
 
   try {
@@ -80,9 +72,7 @@ export async function runJavaProbe(url = process.env.QX_SPIKE_CONFIG_URL ?? defa
           output: "Java executable was not found",
         };
 
-    const reason = artifactType === "android-dex-jar"
-      ? "ANDROID_DEX_NOT_LOADABLE_BY_JVM"
-      : !javaExecutable
+    const reason = !javaExecutable
         ? "JAVA_RUNTIME_NOT_FOUND"
         : jvmClassLoad.status !== "loaded"
           ? "JVM_CLASS_NOT_LOADABLE"
@@ -110,7 +100,6 @@ export async function runJavaProbe(url = process.env.QX_SPIKE_CONFIG_URL ?? defa
       javaExecutable,
       javaVersion,
       jvmClassLoad,
-      androidRuntime,
     };
   } finally {
     await rm(workDir, { recursive: true, force: true });
@@ -122,25 +111,6 @@ export function resolveJavaExecutable(): string | null {
     if (works(candidate, ["--version"])) return candidate;
   }
   return null;
-}
-
-export function inspectAndroidRuntime(adb = process.env.QX_ADB ?? "adb"): AndroidRuntimeProbeResult {
-  const result = spawnSync(adb, ["devices"], { encoding: "utf8", windowsHide: true });
-  if (result.error || result.status !== 0) {
-    return {
-      adbAvailable: false,
-      devices: [],
-      error: result.error?.message ?? String(result.stderr ?? "adb failed").trim(),
-    };
-  }
-
-  const devices = String(result.stdout ?? "")
-    .split(/\r?\n/)
-    .map((line) => line.trim().split(/\s+/))
-    .filter((parts) => parts.length >= 2 && parts[1] === "device")
-    .map((parts) => parts[0] as string);
-
-  return { adbAvailable: true, devices, error: null };
 }
 
 function runJvmClassProbe(

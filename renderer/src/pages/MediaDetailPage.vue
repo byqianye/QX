@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { useRoute } from "vue-router";
 
 import EmptyState from "../EmptyState.vue";
 import ErrorState from "../ErrorState.vue";
@@ -10,7 +10,6 @@ import PosterImage from "../PosterImage.vue";
 import { useCoreRouteContext } from "../core-route-context.js";
 
 const route = useRoute();
-const router = useRouter();
 const context = useCoreRouteContext(inject);
 const state = context.state;
 const pending = context.pending;
@@ -49,14 +48,38 @@ const selectedEpisode = computed(() => {
     ?? selectedLine.value?.episodes[0]
     ?? null;
 });
-
-function goBack(): void {
-  if (window.history.length > 1) router.back();
-  else context.navigate("home");
-}
+const resumeCandidate = computed(() => {
+  const candidate = state.value.historyResume;
+  if (!candidate || !candidate.canResume || String(candidate.vodId) !== detailId.value) return null;
+  if (candidate.lineIndex === null || candidate.episodeIndex === null) return null;
+  return candidate;
+});
 
 function playFirst(): void {
+  if (resumeCandidate.value) return;
   if (selectedLine.value && selectedEpisode.value) context.play(selectedLine.value.index, selectedEpisode.value.index);
+}
+
+function playEpisode(lineIndex: number, episodeIndex: number): void {
+  if (resumeCandidate.value) return;
+  context.play(lineIndex, episodeIndex);
+}
+
+function continueResume(): void {
+  const candidate = resumeCandidate.value;
+  if (!candidate || candidate.lineIndex === null || candidate.episodeIndex === null) return;
+  context.play(candidate.lineIndex, candidate.episodeIndex, "continue");
+}
+
+function playFromBeginning(): void {
+  const candidate = resumeCandidate.value;
+  if (!candidate || candidate.lineIndex === null || candidate.episodeIndex === null) return;
+  context.play(candidate.lineIndex, candidate.episodeIndex, "beginning");
+}
+
+function formatResumePosition(position: number): string {
+  const seconds = Math.max(0, Math.floor(position));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
 function selectPlaybackSource(siteKey: string, vodId: string): void {
@@ -66,10 +89,8 @@ function selectPlaybackSource(siteKey: string, vodId: string): void {
 
 <template>
   <section class="core-page media-detail-page" data-testid="core-media-detail-page">
-    <button type="button" class="text-button core-back-button" data-action="core-detail-back" @click="goBack">返回</button>
-
     <LoadingState v-if="pending === 'detail' && !hasMatchingDetail" label="正在读取媒体详情" />
-    <EmptyState v-else-if="!hasMatchingDetail" title="暂时没有详情" message="当前路由没有对应的媒体内容。" action-label="返回首页" @action="context.navigate('home')" />
+    <EmptyState v-else-if="!hasMatchingDetail" title="暂时没有详情" message="当前路由没有对应的媒体内容。" :show-action="false" />
 
     <template v-else-if="detail">
       <header class="detail-page-hero">
@@ -87,8 +108,8 @@ function selectPlaybackSource(siteKey: string, vodId: string): void {
           <p class="detail-page-summary">{{ detail.vod_content || "暂无简介" }}</p>
           <div class="button-row">
             <button type="button" class="button-primary" data-action="core-detail-play" :disabled="!selectedLine || !selectedEpisode" @click="playFirst">播放</button>
-            <button type="button" class="button-secondary" data-action="core-detail-favorite" :disabled="pending !== null" @click="context.favoriteToggle">{{ state.favoriteDetail ? "已收藏" : "收藏" }}</button>
-            <button type="button" class="button-secondary" data-action="core-detail-follow" :disabled="pending !== null" @click="context.followToggle">{{ state.followDetail ? "已在追更" : "加入追更" }}</button>
+            <button type="button" class="button-secondary" :class="{ 'is-selected': Boolean(state.favoriteDetail) }" data-action="core-detail-favorite" :aria-pressed="Boolean(state.favoriteDetail)" :disabled="pending !== null" @click="context.favoriteToggle">{{ state.favoriteDetail ? "已收藏" : "收藏" }}</button>
+            <button type="button" class="button-secondary" :class="{ 'is-selected': Boolean(state.followDetail) }" data-action="core-detail-follow" :aria-pressed="Boolean(state.followDetail)" :disabled="pending !== null" @click="context.followToggle">{{ state.followDetail ? "已在追更" : "加入追更" }}</button>
           </div>
         </div>
       </header>
@@ -101,6 +122,17 @@ function selectPlaybackSource(siteKey: string, vodId: string): void {
 
       <section v-if="state.detail.playbackCatalog" class="detail-page-section">
         <div class="core-section-heading"><div><span class="section-kicker">播放选择</span><h3>线路与选集</h3></div></div>
+        <section v-if="resumeCandidate" class="panel history-resume-prompt" data-testid="core-history-resume-prompt">
+          <span class="section-kicker">播放进度</span>
+          <h3>{{ resumeCandidate.title }}</h3>
+          <p class="meta">{{ resumeCandidate.episodeName ?? "当前集数" }} · 已播放 {{ formatResumePosition(resumeCandidate.position) }}<span v-if="resumeCandidate.completed"> · 已看完</span></p>
+          <p>要从上次位置继续，还是从头开始？</p>
+          <div class="button-row">
+            <button type="button" class="button-primary" data-action="core-history-resume" @click="continueResume">继续播放</button>
+            <button type="button" class="button-secondary" data-action="core-history-beginning" @click="playFromBeginning">从头播放</button>
+            <button type="button" class="text-button" data-action="core-history-delete-progress" @click="context.historyDeleteProgress(resumeCandidate.identity)">删除进度</button>
+          </div>
+        </section>
         <PlaybackSelector
           :catalog="state.detail.playbackCatalog"
           :selection="state.detail.playbackSelection"
@@ -109,7 +141,7 @@ function selectPlaybackSource(siteKey: string, vodId: string): void {
           :retryable="retryable"
           @line="context.setLine"
           @order="context.setOrder"
-          @episode="context.play"
+          @episode="playEpisode"
           @retry="context.retry"
         />
       </section>
@@ -131,10 +163,10 @@ function selectPlaybackSource(siteKey: string, vodId: string): void {
       v-if="state.error.error"
       :error="state.error.error"
       :show-technical="false"
+      :show-back="false"
       :pending="pending !== null"
       @retry="context.retry"
-      @switch-line="context.switchSource"
-      @back="goBack"
+      @switch-line="context.openSources"
       @settings="context.navigate('sources')"
     />
   </section>

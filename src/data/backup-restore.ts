@@ -394,8 +394,6 @@ function summarizeRows(count: (table: string) => number): BackupSummary {
     history: count("history"),
     favorites: count("favorites"),
     following: count("follow_items"),
-    liveSources: count("live_sources"),
-    smartChannels: count("smart_channels"),
   };
 }
 
@@ -803,8 +801,6 @@ function normalizeSummary(value: unknown): BackupSummary {
     history: number("history"),
     favorites: number("favorites"),
     following: number("following"),
-    liveSources: number("liveSources"),
-    smartChannels: number("smartChannels"),
   };
 }
 

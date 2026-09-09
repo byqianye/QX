@@ -11,8 +11,6 @@ import type { FollowItem, FollowUiState } from "../../src/follow/follow-types.js
 import type { CacheUiState } from "../../src/cache/cache-types.js";
 import type { StorageUiState } from "../../src/storage/storage-types.js";
 import { EMPTY_BACKUP_UI_STATE, type BackupUiState } from "../../src/backup-types.js";
-import { EMPTY_LIVE_UI_STATE } from "../../src/live/live-types.js";
-import type { LiveUiState } from "../../src/live/live-types.js";
 import { EMPTY_DANMAKU_UI_STATE } from "../../src/danmaku/danmaku-types.js";
 import type { DanmakuUiState } from "../../src/danmaku/danmaku-types.js";
 import { EMPTY_LOCAL_MEDIA_UI_STATE } from "../../src/local-media/local-media-types.js";
@@ -43,7 +41,7 @@ export type SpiderStatus =
   | "destroyed";
 
 export type RendererThemeMode = "system" | "light" | "dark";
-export type RendererNavigation = "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" | "live" | "local" | "downloads";
+export type RendererNavigation = "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" | "local" | "downloads";
 export type PlayerHostMode = "embedded" | "detached";
 export const PLAYBACK_RESTORE_MAX_DRIFT_SECONDS = 2;
 
@@ -95,6 +93,7 @@ export interface RendererPersistenceState {
   theme: RendererThemeMode;
   navigation: RendererNavigation;
   siteKey: string | null;
+  configSource?: string | null;
   category: { typeId: string; page: number; filters?: Record<string, string> } | null;
   search: { key: string; page: number } | null;
   scrollTop: number;
@@ -106,6 +105,7 @@ export interface RendererViewStatePatch {
   theme?: RendererThemeMode;
   navigation?: RendererNavigation;
   siteKey?: string | null;
+  configSource?: string | null;
   category?: { typeId: string; page: number; filters?: Record<string, string> } | null;
   search?: { key: string; page: number } | null;
   scrollTop?: number;
@@ -126,7 +126,6 @@ export interface RendererError {
 
 export interface ImportSummary {
   siteCount: number;
-  liveCount: number;
   parseCount: number;
   ruleCount: number;
   hasSpider: boolean;
@@ -194,6 +193,13 @@ export interface BrowseState {
   items: Record<string, unknown>[];
   categories: BrowseCategory[];
   filters: BrowseFilter[];
+  searchProgress?: SearchProgress | null;
+}
+
+export interface SearchProgress {
+  query: string;
+  status: "running" | "complete" | "cancelled";
+  sources: Array<{ key: string; name: string; status: "queued" | "running" | "success" | "empty" | "failed" | "unsupported" | "cancelled"; count: number; errorCode?: string }>;
 }
 
 export interface BrowseCategory {
@@ -275,6 +281,9 @@ export interface PlayerState {
   volume: number;
   muted: boolean;
   fullscreen: boolean;
+  playbackRate?: number;
+  resumePaused?: boolean;
+  startedAt?: number;
   error: RendererError | null;
   parse?: PlayerParseState;
 }
@@ -286,6 +295,7 @@ export interface PlayerMediaSync {
   duration?: number;
   volume?: number;
   muted?: boolean;
+  playbackRate?: number;
   error?: RendererError;
   event?: PlaybackMediaEvent;
 }
@@ -332,11 +342,11 @@ export interface RendererState {
   downloads: DownloadUiState;
   push: PushUiState;
   cast: CastUiState;
-  live: LiveUiState;
   error: ErrorState;
 }
 
 export interface ApiSpiderState {
+  searchProgress?: SearchProgress | null;
   page: BrowseState["page"];
   source: string;
   sourceId?: string | null;
@@ -373,7 +383,6 @@ export interface ApiSpiderState {
   storage?: StorageUiState;
   backup?: BackupUiState;
   danmaku?: DanmakuUiState;
-  live?: LiveUiState;
   localMedia?: LocalMediaUiState;
   downloads?: DownloadUiState;
   push?: PushUiState;
@@ -385,7 +394,6 @@ export interface RendererEnvelope {
   configHistory?: ConfigCatalogHistorySnapshot | null;
   state?: ApiSpiderState | null;
   persistence?: RendererPersistenceState | null;
-  live?: LiveUiState | null;
   localMedia?: LocalMediaUiState | null;
   downloads?: DownloadUiState | null;
   push?: PushUiState | null;
@@ -455,7 +463,6 @@ export function createRendererState(): RendererState {
     downloads: cloneDownloadState(EMPTY_DOWNLOAD_UI_STATE),
     push: clonePushState(EMPTY_PUSH_UI_STATE),
     cast: cloneCastState(EMPTY_CAST_UI_STATE),
-    live: cloneLiveUiState(EMPTY_LIVE_UI_STATE),
     error: { error: null },
   };
 }
@@ -466,11 +473,6 @@ export function applyRendererEnvelope(
 ): RendererState {
   const importState = envelope.import ? stateStage("import", () => cloneImportState(envelope.import!)) : current.import;
   const state = envelope.state;
-  const live = envelope.live
-    ? stateStage("live", () => cloneLiveUiState(envelope.live!))
-    : state?.live
-      ? stateStage("live", () => cloneLiveUiState(state.live!))
-      : current.live;
   const localMedia = envelope.localMedia
     ? stateStage("local-media", () => cloneLocalMediaState(envelope.localMedia!))
     : state?.localMedia
@@ -500,7 +502,6 @@ export function applyRendererEnvelope(
       ...current,
       ready: true,
       import: importState,
-      live,
       localMedia,
       downloads,
       push,
@@ -526,6 +527,7 @@ export function applyRendererEnvelope(
     },
     browse: {
       page: state.page,
+      searchProgress: state.searchProgress ?? null,
       loading: state.loading,
       items: stateStage("browse-items", () => state.items.map((item) => ({ ...item }))),
       categories: stateStage("browse-categories", () => (state.categories ?? current.browse.categories).map((category) => ({ ...category }))),
@@ -565,7 +567,6 @@ export function applyRendererEnvelope(
     downloads,
     push,
     cast,
-    live,
     error: { error: toAppError(stateError) },
   };
 }
@@ -577,130 +578,6 @@ function stateStage<T>(stage: string, callback: () => T): T {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`TAURI_STATE_INVALID:${stage}:${message}`);
   }
-}
-
-function cloneLiveUiState(value: LiveUiState): LiveUiState {
-  const catalog = value.catalog ?? EMPTY_LIVE_UI_STATE.catalog;
-  const epg = value.epg ?? EMPTY_LIVE_UI_STATE.epg;
-  const failover = value.failover ?? EMPTY_LIVE_UI_STATE.failover;
-  return {
-    sources: listOrEmpty(value.sources).map((source) => ({ ...source })),
-    preview: value.preview
-      ? {
-          ...value.preview,
-          source: { ...value.preview.source },
-          channelNames: [...listOrEmpty(value.preview.channelNames)],
-          issues: listOrEmpty(value.preview.issues).map((issue) => ({ ...issue })),
-          stats: {
-            ...value.preview.stats,
-            protocolCounts: { ...value.preview.stats.protocolCounts },
-          },
-        }
-      : null,
-    loading: value.loading,
-    error: value.error ? { ...value.error } : null,
-    catalog: {
-      groups: listOrEmpty(catalog.groups).map((group) => ({ ...group })),
-      channels: listOrEmpty(catalog.channels).map((channel) => ({
-        ...channel,
-        streams: listOrEmpty(channel.streams).map((stream) => ({
-          ...stream,
-          health: stream.health
-            ? {
-                ...stream.health,
-                startupSuccess: { ...stream.health.startupSuccess },
-                firstFrameMs: { ...stream.health.firstFrameMs },
-                playlistRefreshFailure: { ...stream.health.playlistRefreshFailure },
-                segmentFailure: { ...stream.health.segmentFailure },
-                bufferCount: { ...stream.health.bufferCount },
-                bufferDuration: { ...stream.health.bufferDuration },
-                fatalError: { ...stream.health.fatalError },
-                disconnectCount: { ...stream.health.disconnectCount },
-                uptimeMs: { ...stream.health.uptimeMs },
-                scoreReasons: [...stream.health.scoreReasons],
-              }
-            : null,
-        })),
-        currentProgramme: channel.currentProgramme ? { ...channel.currentProgramme } : null,
-        nextProgramme: channel.nextProgramme ? { ...channel.nextProgramme } : null,
-      })),
-      recent: listOrEmpty(catalog.recent).map((recent) => ({ ...recent })),
-    },
-    session: value.session
-      ? { ...value.session, error: value.session.error ? { ...value.session.error } : null }
-      : null,
-    player: value.player
-      ? {
-          ...value.player,
-          source: value.player.source
-            ? { ...value.player.source, headers: { ...value.player.source.headers } }
-            : null,
-          error: value.player.error ? { ...value.player.error } : null,
-        }
-      : null,
-    health: value.health
-      ? {
-          ...value.health,
-          startupSuccess: { ...value.health.startupSuccess },
-          firstFrameMs: { ...value.health.firstFrameMs },
-          playlistRefreshFailure: { ...value.health.playlistRefreshFailure },
-          segmentFailure: { ...value.health.segmentFailure },
-          bufferCount: { ...value.health.bufferCount },
-          bufferDuration: { ...value.health.bufferDuration },
-          fatalError: { ...value.health.fatalError },
-          disconnectCount: { ...value.health.disconnectCount },
-          uptimeMs: { ...value.health.uptimeMs },
-          scoreReasons: [...value.health.scoreReasons],
-        }
-      : null,
-    failover: {
-      ...value.failover,
-      tried: [...value.failover.tried],
-      current: value.failover.current ? { ...value.failover.current } : null,
-      next: value.failover.next ? { ...value.failover.next } : null,
-    },
-    epg: {
-      sources: listOrEmpty(epg.sources).map((source) => ({ ...source })),
-      preview: epg.preview
-        ? {
-            ...epg.preview,
-            source: { ...epg.preview.source },
-            channelNames: [...listOrEmpty(epg.preview.channelNames)],
-            issues: listOrEmpty(epg.preview.issues).map((issue) => ({ ...issue })),
-            stats: { ...epg.preview.stats },
-          }
-        : null,
-      loading: epg.loading,
-      error: epg.error ? { ...epg.error } : null,
-      retention: { ...epg.retention },
-      mappings: listOrEmpty(epg.mappings).map((mapping) => ({
-        ...mapping,
-        aliases: [...listOrEmpty(mapping.aliases)],
-        candidates: listOrEmpty(mapping.candidates).map((candidate) => ({ ...candidate })),
-        mapping: mapping.mapping ? { ...mapping.mapping } : null,
-      })),
-      timeline: epg.timeline
-        ? {
-            ...epg.timeline,
-            items: listOrEmpty(epg.timeline.items).map((item) => ({ ...item })),
-          }
-        : null,
-    },
-    smartChannels: listOrEmpty(value.smartChannels).map((channel) => ({
-      ...channel,
-      members: listOrEmpty(channel.members).map((member) => ({ ...member })),
-      epg: {
-        ...channel.epg,
-        currentProgramme: channel.epg.currentProgramme ? { ...channel.epg.currentProgramme } : null,
-        nextProgramme: channel.epg.nextProgramme ? { ...channel.epg.nextProgramme } : null,
-      },
-    })),
-    smartSuggestions: listOrEmpty(value.smartSuggestions).map((suggestion) => ({
-      ...suggestion,
-      memberIds: [...listOrEmpty(suggestion.memberIds)],
-    })),
-    activeSmartChannel: value.activeSmartChannel ? { ...value.activeSmartChannel } : null,
-  };
 }
 
 function listOrEmpty<T>(value: readonly T[] | null | undefined): readonly T[] {

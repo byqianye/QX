@@ -6,19 +6,21 @@
   "build": {
     "beforeDevCommand": "npm run tauri:prepare-sidecar:dev && npm run dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm run android-host:build && npm run tauri:prepare-sidecar && npm run renderer:build",
+    "beforeBuildCommand": "npm run renderer:build",
     "frontendDist": "../dist/renderer"
   },
   "app": {
     "windows": [
-      {
-        "label": "main",
-        "title": "QX影视",
+        {
+          "label": "main",
+          "create": false,
+          "title": "QX影视",
         "width": 1440,
         "height": 900,
         "minWidth": 1024,
-        "minHeight": 640,
-        "resizable": true
+        "minHeight": 720,
+        "resizable": true,
+        "decorations": false
       }
     ],
     "security": {
@@ -30,11 +32,11 @@
     "active": true,
     "targets": ["nsis"],
     "icon": ["../build/assets/qx-yingshi.ico"],
-    "resources": {
-      "../android-spider-host/app/build/outputs/apk/debug/app-debug.apk": "android-host/android-spider-host.apk",
-      "../build/android-runtime-manifest.json": "android-host/android-runtime-manifest.json"
-    },
+    "resources": {},
     "windows": {
+      "nsis": {
+        "installerHooks": "../build/tauri-installer.nsh"
+      },
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
       }

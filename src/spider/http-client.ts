@@ -19,7 +19,7 @@ export interface HttpDesktopClientOptions {
 /**
  * Desktop client for FongMi type 0/1/4 sites. It speaks the CMS HTTP
  * contract and returns the same SpiderResponse shape as the sidecar clients.
- * It deliberately does not execute page JavaScript or Android Spider code.
+ * It deliberately does not execute page JavaScript or external Spider code.
  */
 export class HttpDesktopClient implements DesktopSpiderClientPort {
   private readonly api: string;

@@ -5,13 +5,13 @@ import type { PlaybackFallbackMode, PlaybackFallbackState, PlaybackHealthMetric,
 const props = defineProps<{
   health: PlaybackHealthSnapshot;
   fallback: PlaybackFallbackState;
+  compact?: boolean;
 }>();
 
 const emit = defineEmits<{
   cancel: [];
   approve: [];
   mode: [value: PlaybackFallbackMode];
-  back: [];
   debug: [];
 }>();
 
@@ -36,7 +36,9 @@ function modeChanged(value: string): void {
 </script>
 
 <template>
-  <section class="panel playback-health-panel" data-testid="playback-health-panel">
+  <section class="panel playback-health-panel" :class="{ 'is-compact': props.compact }" data-testid="playback-health-panel">
+    <details :open="props.compact ? undefined : true" class="playback-health-details">
+    <summary v-if="props.compact">播放信息与线路恢复</summary>
     <div class="playback-health-heading">
       <div>
         <span class="section-kicker">流健康</span>
@@ -67,6 +69,7 @@ function modeChanged(value: string): void {
       </div>
     </div>
 
+    </details>
     <div v-if="props.fallback.status !== 'idle' && props.fallback.status !== 'disabled'" class="playback-fallback-status" data-testid="playback-fallback-status">
       <strong>当前失败：{{ props.fallback.trigger ?? "播放异常" }}</strong>
       <span v-if="props.fallback.reason">原因：{{ props.fallback.reason }}</span>
@@ -79,8 +82,7 @@ function modeChanged(value: string): void {
     <div class="button-row">
       <button v-if="props.fallback.status === 'prompt'" type="button" class="button-primary" data-action="playback-fallback-approve" @click="emit('approve')">尝试下一条</button>
       <button v-if="props.fallback.status === 'prompt' || props.fallback.status === 'trying'" type="button" class="button-secondary" data-action="playback-fallback-cancel" @click="emit('cancel')">取消</button>
-      <button type="button" class="button-secondary" data-action="playback-fallback-back" @click="emit('back')">返回</button>
-      <button type="button" class="button-secondary" data-action="playback-fallback-debug" @click="emit('debug')">查看调试</button>
+      <button v-if="!props.compact" type="button" class="button-secondary" data-action="playback-fallback-debug" @click="emit('debug')">查看调试</button>
     </div>
   </section>
 </template>

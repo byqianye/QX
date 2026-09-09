@@ -112,20 +112,14 @@ export class SpiderRuntimeDetector {
           }), artifact.inspection, artifact.path, artifact.artifactUrl ?? resolved.jarUrl);
         }
         if (artifact.inspection?.runtimeRequirement === "android-dex") {
-          return supported("android-dex", "android_dex_artifact_ready", runtimeCapabilities("android-dex", {
-            home: false,
-            category: false,
-            search: true,
-            detail: true,
-            player: true,
-          }), artifact.inspection, artifact.path, artifact.artifactUrl ?? resolved.jarUrl);
+          return unsupported("unsupported", "unsupported_artifact_runtime", undefined, artifact.inspection, artifact.path, artifact.artifactUrl ?? resolved.jarUrl);
         }
         if (artifact.inspection?.runtimeRequirement === "mixed") {
-          return unsupported("android-dex", "mixed_spider_runtime_not_available", undefined, artifact.inspection, artifact.path, artifact.artifactUrl ?? resolved.jarUrl);
+          return unsupported("unsupported", "unsupported_artifact_runtime", undefined, artifact.inspection, artifact.path, artifact.artifactUrl ?? resolved.jarUrl);
         }
         return unsupported("unsupported", "unsupported_site_type", undefined, artifact.inspection, artifact.path, artifact.artifactUrl ?? resolved.jarUrl);
       }
-      return unsupported("android-dex", "android_dex_artifact_missing");
+      return unsupported("unsupported", "unsupported_artifact_runtime");
     }
     return unsupported("unsupported", "unsupported_site_type");
   }

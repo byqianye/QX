@@ -26,9 +26,18 @@ import {
   type SnifferViolation,
 } from "../src/electron/isolated-sniffer.js";
 import type { SpiderResponse } from "../src/spider/rpc.js";
-import { CacheRepository, HistoryRepository, PlaybackProgressRepository, SettingsRepository } from "../src/data/repositories.js";
+import {
+  CacheRepository,
+  FavoritesRepository,
+  FollowRepository,
+  HistoryRepository,
+  PlaybackProgressRepository,
+  SettingsRepository,
+} from "../src/data/repositories.js";
 import { SqliteDataLayer } from "../src/data/sqlite.js";
 import { HistoryProgressService } from "../src/history/history-progress.js";
+import { FavoritesService } from "../src/favorites/favorites-service.js";
+import { FollowService } from "../src/follow/follow-service.js";
 import { CacheService } from "../src/cache/cache-service.js";
 import { DataDirectoryResolver, DataStorageService } from "../src/data/data-directory.js";
 import { LocalMediaService } from "../src/local-media/local-media-service.js";
@@ -66,43 +75,9 @@ describe("desktop Spider UI", () => {
 
     const html = renderDesktopSpiderUi(ui.state);
     expect(html).toContain('data-testid="import-warning"');
-    expect(html).toContain('data-testid="android-credentials"');
     expect(html).toContain("确认并信任");
     expect(html).toContain("Douban：无正片播放源");
     expect(html).toMatch(/data-testid="play-button"[^>]*disabled/);
-  });
-
-  it("marks a ready Android Runtime in playback-source diagnostics", async () => {
-    const fixture = new FixtureSession();
-    const ui = new DesktopSpiderUiController({ session: fixture });
-    ui.confirmImport();
-    await ui.open("douban", "fixture-endpoint");
-    await ui.detail("meta-1");
-    ui.setPlaybackSourceResolution({
-      query: "Fixture Detail",
-      searchedSites: [],
-      successfulSites: [],
-      failedSites: [],
-      diagnostics: {
-        configSiteCount: 2,
-        searchableSites: 1,
-        runtimeSupportedSites: 1,
-        runtimePreparation: "ready",
-        runtimeWaitDurationMs: 100,
-        unsupportedSiteCount: 0,
-        searchedSites: [],
-        searchSuccessSites: [],
-        searchFailedSites: [],
-        searchResultCount: 0,
-        matchedCandidateCount: 0,
-        detailSuccessCount: 0,
-        playableCandidateCount: 0,
-        sites: [],
-      },
-      candidates: [],
-    } satisfies PlaybackSourceResolution);
-
-    expect(renderDesktopSpiderUi(ui.state)).toContain('data-testid="android-runtime-ready"');
   });
 
   it("keeps the list poster when detail metadata omits the poster", async () => {
@@ -337,7 +312,7 @@ describe("desktop Spider UI", () => {
     const fixture = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
     const ui = new DesktopSpiderUiController({
       session: fixture,
-      playbackProxyOrigins: ["http://127.0.0.1:43123"],
+      playbackProxyOrigins: ["http://127.0.0.1:43123", "https://media.example.invalid"],
     });
 
     ui.confirmImport();
@@ -367,9 +342,11 @@ describe("desktop Spider UI", () => {
     expect(ui.state.playbackSelection).toEqual({ lineIndex: 0, episodeIndex: 1 });
     expect(fixture.destroyed).toBe(false);
 
+    ui.syncPlayerState({ status: "playing", currentTime: 44, duration: 100, volume: 0.35, muted: true });
     await ui.playEpisode(1, 0);
     expect(fixture.calls).toContain("player:备用线:direct-mp4:");
     expect(ui.state.playbackSelection).toEqual({ lineIndex: 1, episodeIndex: 0 });
+    expect(ui.state.player).toMatchObject({ currentTime: 44, volume: 0.35, muted: true });
     expect(fixture.calls.filter((call) => call.startsWith("open:")).length).toBe(1);
     await ui.close();
   });
@@ -408,6 +385,124 @@ describe("desktop Spider UI", () => {
     await secondUi.playEpisode(0, 0, [], undefined, "continue");
     expect(secondUi.state.player.currentTime).toBe(44);
     await secondUi.close();
+  });
+
+  it("restores the exact history item selected through the legacy HTTP route", async () => {
+    const history = createHistoryService();
+    const first = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
+    const firstUi = new DesktopSpiderUiController({
+      session: first,
+      history,
+      playbackProxyOrigins: ["https://media.example.invalid"],
+    });
+    first.confirmImport();
+    await firstUi.open("playable", "fixture-endpoint");
+    await firstUi.detail("fixture:movie-1");
+    await firstUi.playEpisode(0, 0);
+    firstUi.syncPlayerState({ status: "playing", currentTime: 20, duration: 100 });
+    await firstUi.stopPlayer();
+    await firstUi.playEpisode(0, 1);
+    firstUi.syncPlayerState({ status: "playing", currentTime: 40, duration: 100 });
+    await firstUi.stopPlayer();
+    const firstEpisode = history.uiState().items.find((item) => item.episodeId === "direct-hls");
+    if (!firstEpisode) throw new Error("Expected first episode history");
+    await firstUi.close();
+
+    const second = new FixtureSession("inline:playable", "csp_PlayableFixture", true);
+    const secondUi = new DesktopSpiderUiController({
+      session: second,
+      history,
+      playbackProxyOrigins: ["https://media.example.invalid"],
+    });
+    second.confirmImport();
+    await secondUi.open("playable", "fixture-endpoint");
+    await secondUi.detail("fixture:movie-1");
+    const server = new DesktopSpiderUiServer({
+      ui: secondUi,
+      siteKey: "playable",
+      ext: "fixture-endpoint",
+      history,
+    });
+    servers.push(server);
+    await server.start();
+
+    const opened = await post(server.url, "/api/history/open", { identity: firstEpisode.identity });
+    expect(opened.state.historyResume).toMatchObject({
+      identity: firstEpisode.identity,
+      position: 20,
+      episodeIndex: 0,
+    });
+    await secondUi.close();
+  });
+
+  it("persists history, favorites and follow for details that use the generic id fields", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "qx-desktop-generic-id-"));
+    historyDirectories.push(directory);
+    const layer = SqliteDataLayer.create(join(directory, "qx-yingshi.db"));
+    historyLayers.push(layer);
+    const history = new HistoryProgressService({
+      db: layer,
+      history: new HistoryRepository(layer),
+      progress: new PlaybackProgressRepository(layer),
+      settings: new SettingsRepository(layer),
+    });
+    const favorites = new FavoritesService({
+      db: layer,
+      favorites: new FavoritesRepository(layer),
+      history: new HistoryRepository(layer),
+    });
+    const follow = new FollowService({
+      db: layer,
+      follow: new FollowRepository(layer),
+      history: new HistoryRepository(layer),
+    });
+    const fixture = new GenericIdFixtureSession();
+    const ui = new DesktopSpiderUiController({
+      session: fixture,
+      history,
+      favorites,
+      follow,
+      playbackProxyOrigins: ["https://media.example.invalid"],
+    });
+
+    fixture.confirmImport();
+    await ui.open("playable", "fixture-endpoint");
+    await ui.detail("generic-movie-1");
+    ui.toggleFavorite();
+    ui.toggleFollow();
+    await ui.playEpisode(0, 0);
+    ui.syncPlayerState({ status: "playing", currentTime: 18, duration: 120 });
+    await ui.stopPlayer();
+
+    expect(favorites.uiState().items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ vodId: "generic-movie-1", title: "Generic Detail" }),
+    ]));
+    expect(follow.uiState().items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ vodId: "generic-movie-1", title: "Generic Detail" }),
+    ]));
+    expect(history.uiState().items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ vodId: "generic-movie-1", title: "Generic Detail", position: 18 }),
+    ]));
+
+    const reloadedFavorites = new FavoritesService({
+      db: layer,
+      favorites: new FavoritesRepository(layer),
+      history: new HistoryRepository(layer),
+    });
+    const reloadedFollow = new FollowService({
+      db: layer,
+      follow: new FollowRepository(layer),
+      history: new HistoryRepository(layer),
+    });
+    const reloadedHistory = new HistoryProgressService({
+      db: layer,
+      history: new HistoryRepository(layer),
+      progress: new PlaybackProgressRepository(layer),
+      settings: new SettingsRepository(layer),
+    });
+    expect(reloadedFavorites.uiState().items).toHaveLength(1);
+    expect(reloadedFollow.uiState().items).toHaveLength(1);
+    expect(reloadedHistory.uiState().items).toHaveLength(1);
   });
 
   it("preserves the selected episode and detail when playback fails", async () => {
@@ -573,47 +668,6 @@ describe("desktop Spider UI", () => {
     expect(fixture.destroyed).toBe(true);
   });
 
-  it("exposes Android UC credential status and mutation routes without returning the token", async () => {
-    const fixture = new FixtureSession();
-    const ui = new DesktopSpiderUiController({ session: fixture });
-    let configured = false;
-    let token = "";
-    const server = new DesktopSpiderUiServer({
-      ui,
-      siteKey: "douban",
-      ext: "fixture-endpoint",
-      androidCredentials: {
-        status: async () => ({ provider: "uc", configured }),
-        setAccessToken: (value) => { token = value; configured = true; },
-        clear: () => { token = ""; configured = false; },
-      },
-    });
-    servers.push(server);
-    await server.start();
-
-    const missing = await fetch(new URL("/api/android/credentials/status", server.url));
-    expect(missing.status).toBe(200);
-    expect(await missing.json()).toEqual({ provider: "uc", configured: false });
-
-    const saved = await fetch(new URL("/api/android/credentials/set", server.url), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ accessToken: "test-access-token" }),
-    });
-    expect(saved.status).toBe(200);
-    expect(await saved.json()).toEqual({ provider: "uc", configured: true });
-    expect(token).toBe("test-access-token");
-
-    const cleared = await fetch(new URL("/api/android/credentials/clear", server.url), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    });
-    expect(cleared.status).toBe(200);
-    expect(await cleared.json()).toEqual({ provider: "uc", configured: false });
-    expect(token).toBe("");
-  });
-
   it("rewrites source posters to the local image route in API state", async () => {
     const fixture = new PosterFixtureSession();
     const ui = new DesktopSpiderUiController({ session: fixture });
@@ -773,7 +827,7 @@ describe("desktop Spider UI", () => {
             size: 12,
             createdAt: "2026-08-08T00:00:00.000Z",
             includeCache,
-            summary: { settings: 1, history: 2, favorites: 3, following: 4, liveSources: 5, smartChannels: 6 },
+            summary: { settings: 1, history: 2, favorites: 3, following: 4 },
           },
         };
       },
@@ -786,7 +840,7 @@ describe("desktop Spider UI", () => {
           createdAt: "2026-08-08T00:00:00.000Z",
           sections: ["database"],
           databaseSchemaVersion: 10,
-          summary: { settings: 1, history: 2, favorites: 3, following: 4, liveSources: 5, smartChannels: 6 },
+          summary: { settings: 1, history: 2, favorites: 3, following: 4 },
           includeCache: false,
           compatibility: "compatible",
         },
@@ -1092,6 +1146,25 @@ class FixtureSession implements DesktopSpiderSessionPort {
     this.destroyed = true;
     this.view.status = "destroyed";
     this.view.sidecarRunning = false;
+  }
+}
+
+class GenericIdFixtureSession extends FixtureSession {
+  public constructor() {
+    super("inline:generic-id", "csp_PlayableFixture", true);
+  }
+
+  public override async detailContent(ids: string[]): Promise<SpiderResponse> {
+    this.calls.push(`detail:${ids.join(",")}`);
+    return ok({
+      list: [{
+        id: ids[0],
+        name: "Generic Detail",
+        poster: "https://img.example.invalid/generic.jpg",
+        vod_play_from: "主线",
+        vod_play_url: "第一集$direct-hls",
+      }],
+    });
   }
 }
 

@@ -143,18 +143,8 @@ try {
     ...(useRealAria2 ? { QX_E2E_DOWNLOAD_URL: mediaFixture.mp4Url } : { QX_E2E_FAKE_ARIA2: "1" }),
     QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,
     QX_PLAYBACK_FALLBACK_MODE: "auto",
-    QX_LIVE_FAILOVER_MODE: "auto",
-    // Keep the failed A1 line cooling through the deterministic first/restart fixture flow.
-    QX_LIVE_FAILOVER_COOLDOWN_MS: "60000",
     QX_E2E_HLS_MASTER_URL: mediaFixture.hlsMasterUrl,
     QX_E2E_HLS_CHILD_URL: mediaFixture.hlsChildUrl,
-    QX_E2E_LIVE_URL: mediaFixture.liveUrl,
-    QX_E2E_LIVE_PLAYBACK_URL: mediaFixture.livePlaybackUrl,
-    QX_E2E_LIVE_SMART_URL: mediaFixture.liveSmartUrl,
-    QX_E2E_LIVE_FAILOVER_URL: mediaFixture.liveFailoverUrl,
-    QX_E2E_LIVE_FAILOVER_BACKUP_URL: mediaFixture.liveFailoverBackupUrl,
-    QX_E2E_LIVE_FAILOVER_BROKEN_URL: mediaFixture.liveFailoverBrokenUrl,
-    QX_E2E_EPG_URL: mediaFixture.epgUrl,
     QX_E2E_FAKE_MPV: "1",
     QX_SNIFF_ENABLED: "1",
     QX_E2E_SNIFF_URL: mediaFixture.sniffUrl,
@@ -169,8 +159,6 @@ try {
   assertPersistedHistoryPrivacy(userData);
   assertPersistedFavoritesPrivacy(userData);
   assertPersistedFollowPrivacy(userData);
-  assertPersistedLivePrivacy(userData);
-  assertPersistedEpgPrivacy(userData);
   assertPersistedCacheRoot(userData);
 
   const second = await runPackagedExecutable(executable, {
@@ -195,17 +183,8 @@ try {
     QX_E2E_EXPECTED_FOLLOW_ID: firstFollowIdentity,
     QX_PLAYBACK_PROXY_ORIGINS: mediaFixture.baseUrl,
     QX_PLAYBACK_FALLBACK_MODE: "auto",
-    QX_LIVE_FAILOVER_MODE: "auto",
-    QX_LIVE_FAILOVER_COOLDOWN_MS: "60000",
     QX_E2E_HLS_MASTER_URL: mediaFixture.hlsMasterUrl,
     QX_E2E_HLS_CHILD_URL: mediaFixture.hlsChildUrl,
-    QX_E2E_LIVE_URL: mediaFixture.liveUrl,
-    QX_E2E_LIVE_PLAYBACK_URL: mediaFixture.livePlaybackUrl,
-    QX_E2E_LIVE_SMART_URL: mediaFixture.liveSmartUrl,
-    QX_E2E_LIVE_FAILOVER_URL: mediaFixture.liveFailoverUrl,
-    QX_E2E_LIVE_FAILOVER_BACKUP_URL: mediaFixture.liveFailoverBackupUrl,
-    QX_E2E_LIVE_FAILOVER_BROKEN_URL: mediaFixture.liveFailoverBrokenUrl,
-    QX_E2E_EPG_URL: mediaFixture.epgUrl,
     QX_E2E_FAKE_MPV: "1",
     QX_SNIFF_ENABLED: "1",
     QX_E2E_SNIFF_URL: mediaFixture.sniffUrl,
@@ -218,8 +197,6 @@ try {
   assertPersistedHistoryPrivacy(userData);
   assertPersistedFavoritesPrivacy(userData);
   assertPersistedFollowPrivacy(userData);
-  assertPersistedLivePrivacy(userData);
-  assertPersistedEpgPrivacy(userData);
   assertPersistedCacheRoot(userData);
 
   console.log(JSON.stringify({
@@ -417,7 +394,7 @@ function assertPersistedFavoritesPrivacy(userDataPath: string): void {
     `).all();
     if (rows.length === 0) throw new Error("Packaged E2E favorite row was not persisted");
     const serialized = JSON.stringify(rows);
-    if (/token|cookie|authorization|bearer|__qx_playback|m3u8|\.mp4|\.mkv|\.webm|\.mpd|\/(?:live|stream|playback|playlist|session|proxy)(?:\/|["?])/i.test(serialized)) {
+    if (/token|cookie|authorization|bearer|__qx_playback|m3u8|\.mp4|\.mkv|\.webm|\.mpd|\/(?:stream|playback|playlist|session|proxy)(?:\/|["?])/i.test(serialized)) {
       throw new Error("Packaged E2E favorites privacy contract failed");
     }
   } finally {
@@ -437,7 +414,7 @@ function assertPersistedFollowPrivacy(userDataPath: string): void {
     `).all();
     if (rows.length === 0) throw new Error("Packaged E2E follow row was not persisted");
     const serialized = JSON.stringify(rows);
-    if (/token|cookie|authorization|bearer|__qx_playback|m3u8|\.mp4|\.mkv|\.webm|\.mpd|\/(?:live|stream|playback|playlist|session|proxy)(?:\/|["?])/i.test(serialized)) {
+    if (/token|cookie|authorization|bearer|__qx_playback|m3u8|\.mp4|\.mkv|\.webm|\.mpd|\/(?:stream|playback|playlist|session|proxy)(?:\/|["?])/i.test(serialized)) {
       throw new Error("Packaged E2E follow privacy contract failed");
     }
   } finally {
@@ -448,51 +425,6 @@ function assertPersistedFollowPrivacy(userDataPath: string): void {
 function assertPersistedCacheRoot(userDataPath: string): void {
   if (!existsSync(join(userDataPath, "cache")) || !existsSync(join(userDataPath, "qx-yingshi.db"))) {
     throw new Error("Packaged E2E cache root or user database was not preserved");
-  }
-}
-
-function assertPersistedLivePrivacy(userDataPath: string): void {
-  const database = new DatabaseSync(join(userDataPath, "qx-yingshi.db"), { readOnly: true });
-  try {
-    const sources = database.prepare("SELECT id, name, type, location, last_error FROM live_sources").all();
-    const channels = database.prepare("SELECT id, source_id, name, attributes_json FROM live_channels").all();
-    const streams = database.prepare("SELECT id, channel_id, url, headers_json FROM live_channel_streams").all();
-    const recent = database.prepare("SELECT channel_id, source_id, last_played_at, last_stream_id FROM live_recent").all();
-    const smartChannels = database.prepare("SELECT id, name, logo, group_name, sort_order, preferred_member_id, epg_source_id, epg_channel_id FROM smart_channels").all();
-    const smartMembers = database.prepare("SELECT id, smart_channel_id, live_channel_id, priority, enabled FROM smart_channel_members").all();
-    if (sources.length === 0 || channels.length === 0 || streams.length === 0 || recent.length === 0) {
-      throw new Error("Packaged E2E live source rows were not persisted");
-    }
-    const serialized = JSON.stringify({ sources, channels, streams, recent, smartChannels, smartMembers });
-    if (/token|cookie|authorization|bearer|api[_-]?key|password|secret/i.test(serialized)) {
-      throw new Error("Packaged E2E live source privacy contract failed");
-    }
-  } finally {
-    database.close();
-  }
-}
-
-function assertPersistedEpgPrivacy(userDataPath: string): void {
-  const database = new DatabaseSync(join(userDataPath, "qx-yingshi.db"), { readOnly: true });
-  try {
-    const sources = database.prepare(
-      "SELECT id, name, type, location, enabled, last_error, etag, last_modified, content_hash FROM epg_sources",
-    ).all();
-    const channels = database.prepare(
-      "SELECT id, source_id, external_id, display_name, display_names_json, normalized_name, icon FROM epg_channels",
-    ).all();
-    const programmes = database.prepare(
-      "SELECT id, source_id, channel_id, start_at, end_at, title, sub_title, description, categories_json, icon FROM epg_programmes",
-    ).all();
-    if (sources.length === 0 || channels.length === 0 || programmes.length === 0) {
-      throw new Error("Packaged E2E EPG rows were not persisted");
-    }
-    const serialized = JSON.stringify({ sources, channels, programmes });
-    if (/token|cookie|authorization|bearer|api[_-]?key|password|secret/i.test(serialized)) {
-      throw new Error("Packaged E2E EPG privacy contract failed");
-    }
-  } finally {
-    database.close();
   }
 }
 

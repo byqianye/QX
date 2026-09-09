@@ -4,14 +4,31 @@ QX影视 is a Windows x64 desktop player for media and live content that the use
 
 ## Current delivery status
 
-The local release-engineering work for R70 and G70-G75 is recorded. G73 still requires the planned Open Design visual review, and G76 still requires validation on a pristine Windows machine. Until both gates pass, this repository does not claim `release_candidate_ready` or stable production status.
+The release-engineering baseline is recorded under `docs/reports/`. The current
+G130 source and playback work is still in progress, so this repository does not
+claim stable third-party source coverage or stable production status. The
+authoritative task ledger is [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md).
 
 ## Windows package
+
+The smallest supported package is the Rust-backed Tauri Windows x64 NSIS package:
+
+```powershell
+npm ci
+npm run build:windows:minimal
+```
+
+The Tauri build compiles `src-tauri/src` into the application executable and keeps
+`bundle.resources` empty. It does not include Electron, Android runtime files,
+JRE, CPython, mpv, aria2 or third-party source configurations. See
+[the handoff entry](docs/PROJECT-HANDOFF.md), [the build guide](docs/BUILD.md), and
+[the current status ledger](docs/PROJECT-STATUS.md).
 
 - NSIS installer: per-user installation, Start Menu and Desktop shortcuts, no file associations.
 - User data is retained by default when uninstalling. The optional uninstall component can delete it only when explicitly selected.
 - Portable mode uses a `data` directory beside the packaged executable when the executable is named `QX影视.exe`.
-- The installer bundles the fixed Windows x64 JRE, CPython, mpv and aria2 runtimes. A normal user does not need to install Java, Python, mpv or aria2.
+- The Electron compatibility installer bundles fixed Windows x64 JRE, CPython, mpv and aria2 runtimes. A normal user does not need to install Java, Python, mpv or aria2 when using that path.
+- The minimal Tauri installer is the recommended path when package size matters; it statically links the Rust adapter and ships no optional runtime resources.
 
 ## Code signing
 

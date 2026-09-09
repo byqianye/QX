@@ -19,7 +19,6 @@ import {
   type PushConfirmationPolicy,
   type PushConflictMode,
   type PushConfirmationPreview,
-  type PushLiveChannelReference,
   type PushPlaybackSessionSnapshot,
   type PushRecentRecord,
   type PushRequest,
@@ -538,15 +537,7 @@ export class PushService {
       const itemId = normalizeIdentifier(request.localFileReference?.itemId, "本地媒体标识");
       return { ...request, ...base, localFileReference: { itemId } };
     }
-    if (Object.keys(base.headers).length > 0) throw new PushServiceError("PUSH_HEADERS_UNSUPPORTED", "live-channel 不接受外部请求头。", undefined);
-    const reference = request.sourceReference;
-    const channelId = normalizeIdentifier(reference?.channelId, "直播频道标识");
-    const streamId = optionalIdentifier(reference?.streamId);
-    return {
-      ...request,
-      ...base,
-      sourceReference: streamId ? { channelId, streamId } : { channelId },
-    };
+    throw new PushServiceError("PUSH_REQUEST_INVALID", "Push 类型不受支持。", undefined);
   }
 
   private async validateUrl(value: string): Promise<URL> {
@@ -749,16 +740,6 @@ export function parsePushUri(uri: string, requestedBy: PushRequester = "localhos
     if (!itemId) throw new PushServiceError("PUSH_REQUEST_INVALID", "local-file 缺少媒体标识。", undefined);
     return { ...base, type, localFileReference: { itemId } };
   }
-  if (type === "live-channel") {
-    const channelId = parsed.searchParams.get("channelId") ?? segments[0] ?? "";
-    const streamId = parsed.searchParams.get("streamId") ?? segments[1] ?? undefined;
-    if (!channelId) throw new PushServiceError("PUSH_REQUEST_INVALID", "live-channel 缺少频道标识。", undefined);
-    return {
-      ...base,
-      type,
-      sourceReference: streamId ? { channelId, streamId } : { channelId },
-    };
-  }
   const fixtureId = parsed.searchParams.get("fixtureId") ?? segments[0] ?? "";
   if (!fixtureId) throw new PushServiceError("PUSH_REQUEST_INVALID", "fixture 缺少标识。", undefined);
   const url = parsed.searchParams.get("url") ?? undefined;
@@ -880,12 +861,6 @@ function parseLocalFileReference(value: Record<string, unknown>): { itemId: stri
   return { itemId: normalizeIdentifier(value.itemId, "本地媒体标识") };
 }
 
-function parseLiveChannelReference(value: Record<string, unknown>): PushLiveChannelReference {
-  const channelId = normalizeIdentifier(value.channelId, "直播频道标识");
-  const streamId = optionalIdentifier(value.streamId);
-  return streamId ? { channelId, streamId } : { channelId };
-}
-
 function parsePushRequestBody(body: Record<string, unknown>, requestedBy: PushRequester = "localhost"): PushRequest {
   if (typeof body.uri === "string") return parsePushUri(body.uri, requestedBy);
   const input = isRecord(body.request) ? body.request : body;
@@ -911,10 +886,6 @@ function parsePushRequestBody(body: Record<string, unknown>, requestedBy: PushRe
     if (!isRecord(input.localFileReference)) throw new PushServiceError("PUSH_REQUEST_INVALID", "local-file 缺少引用。", undefined);
     return { ...base, type, localFileReference: parseLocalFileReference(input.localFileReference) };
   }
-  if (type === "live-channel") {
-    if (!isRecord(input.sourceReference)) throw new PushServiceError("PUSH_REQUEST_INVALID", "live-channel 缺少引用。", undefined);
-    return { ...base, type, sourceReference: parseLiveChannelReference(input.sourceReference) };
-  }
   if (typeof input.fixtureId !== "string") throw new PushServiceError("PUSH_REQUEST_INVALID", "fixture 缺少标识。", undefined);
   return {
     ...base,
@@ -925,7 +896,7 @@ function parsePushRequestBody(body: Record<string, unknown>, requestedBy: PushRe
 }
 
 function displayTitle(request: PushRequest): string {
-  return request.title?.trim() || (request.type === "live-channel" ? "直播频道" : request.type === "local-file" ? "本地媒体" : "Push 请求");
+  return request.title?.trim() || (request.type === "local-file" ? "本地媒体" : "Push 请求");
 }
 
 function createPreview(request: PushRequest, createdAt: number): PushConfirmationPreview {
@@ -966,7 +937,6 @@ function safePlaybackMessage(code: string): string {
     case "PUSH_FIXTURE_UNAVAILABLE": return "Push fixture 地址不可用。";
     case "PUSH_PLAYBACK_UNAVAILABLE": return "当前没有可用的播放会话。";
     case "PUSH_SOURCE_UNAVAILABLE": return "Push 来源不可用。";
-    case "PUSH_LIVE_UNAVAILABLE": return "直播播放服务不可用。";
     default: return "Push 播放失败。";
   }
 }

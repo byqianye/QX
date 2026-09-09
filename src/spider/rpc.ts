@@ -8,7 +8,6 @@ export const spiderMethods = [
   "detail",
   "search",
   "player",
-  "live",
   "localProxy",
   "destroy",
 ] as const;

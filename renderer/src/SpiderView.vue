@@ -11,6 +11,7 @@ import ErrorState from "./ErrorState.vue";
 import FavoritesView from "./FavoritesView.vue";
 import FollowView from "./FollowView.vue";
 import HistoryView from "./HistoryView.vue";
+import Icon from "./Icon.vue";
 import CacheManagement from "./CacheManagement.vue";
 import StorageManagement from "./StorageManagement.vue";
 import BackupRestore from "./BackupRestore.vue";
@@ -23,7 +24,6 @@ import TopSearchBar from "./TopSearchBar.vue";
 import PlaybackDebugPanel from "./PlaybackDebugPanel.vue";
 import DanmakuSettingsPanel from "./DanmakuSettingsPanel.vue";
 import PushSettingsPanel from "./PushSettingsPanel.vue";
-import AndroidRuntimeStatusPanel from "./AndroidRuntimeStatusPanel.vue";
 import CastPanel from "./CastPanel.vue";
 import { PlaybackDebugTimeline } from "./playback-debug.js";
 import { displaySource } from "./safe-display.js";
@@ -37,8 +37,6 @@ import type {
 } from "./state.js";
 
 const LazyDownloadsView = defineAsyncComponent({ loader: () => import("./DownloadsView.vue"), delay: 0 });
-const LazyEpgSourcesView = defineAsyncComponent({ loader: () => import("./EpgSourcesView.vue"), delay: 0 });
-const LazyLiveSourcesView = defineAsyncComponent({ loader: () => import("./LiveSourcesView.vue"), delay: 0 });
 const LazyLocalMediaView = defineAsyncComponent({ loader: () => import("./LocalMediaView.vue"), delay: 0 });
 
 const props = defineProps<{
@@ -50,6 +48,7 @@ const props = defineProps<{
   initialTheme?: RendererThemeMode;
   initialSearchQuery?: string;
   persistenceDiagnostic?: { code: string; message: string } | null;
+  embedded?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -110,42 +109,6 @@ const emit = defineEmits<{
   backupApply: [];
   backupClear: [];
   backupOpen: [];
-  livePreview: [input: Record<string, unknown>];
-  liveApply: [previewId: string];
-  liveRefresh: [sourceId: string];
-  liveToggle: [payload: { sourceId: string; enabled: boolean }];
-  liveRemove: [sourceId: string];
-  liveClear: [];
-  livePlay: [channelId: string, streamId?: string];
-  liveLine: [streamId: string];
-  liveStop: [];
-  liveSync: [value: PlayerMediaSync];
-  smartCreate: [payload: { name: string; group?: string | null; memberIds: string[] }];
-  smartUpdate: [payload: { smartChannelId: string; name?: string; group?: string | null; sortOrder?: number }];
-  smartDelete: [smartChannelId: string];
-  smartAddMember: [payload: { smartChannelId: string; liveChannelId: string; priority?: number }];
-  smartRemoveMember: [payload: { smartChannelId: string; memberId: string }];
-  smartMemberUpdate: [payload: { smartChannelId: string; memberId: string; priority?: number; enabled?: boolean }];
-  smartMemberReorder: [payload: { smartChannelId: string; memberIds: string[] }];
-  smartSelect: [payload: { smartChannelId: string; memberId: string | null }];
-  smartPlay: [payload: { smartChannelId: string; memberId?: string }];
-  smartEpg: [payload: { smartChannelId: string; epgSourceId: string | null; epgChannelId: string | null }];
-  liveFailoverMode: [mode: "off" | "ask" | "auto"];
-  liveFailoverApprove: [];
-  liveFailoverCancel: [];
-  liveFailoverStay: [];
-  liveFailoverReturn: [];
-  epgPreview: [input: Record<string, unknown>];
-  epgApply: [previewId: string];
-  epgRefresh: [sourceId: string];
-  epgToggle: [payload: { sourceId: string; enabled: boolean }];
-  epgRemove: [sourceId: string];
-  epgClear: [];
-  epgMappingConfirm: [payload: { liveChannelId: string; epgSourceId: string; epgChannelId: string }];
-  epgMappingClear: [payload: { liveChannelId: string; epgSourceId?: string }];
-  epgMappingConfirmHigh: [];
-  epgAliasSet: [payload: { liveChannelId: string; alias: string }];
-  epgAliasRemove: [payload: { liveChannelId: string; alias: string }];
   localOpenFile: [];
   localAddFolder: [];
   localRescan: [rootId?: string];
@@ -179,15 +142,15 @@ const emit = defineEmits<{
   castDisconnect: [];
 }>();
 
-const view = ref<"browse" | "history" | "favorites" | "follow" | "settings" | "live" | "local" | "downloads">(props.initialNavigation === "settings"
+const view = ref<"browse" | "history" | "favorites" | "follow" | "settings" | "local" | "downloads">(props.initialNavigation === "settings"
   ? "settings"
-  : props.initialNavigation === "live" ? "live"
   : props.initialNavigation === "history" ? "history"
     : props.initialNavigation === "favorites" ? "favorites"
       : props.initialNavigation === "follow" ? "follow"
         : props.initialNavigation === "local" ? "local"
           : props.initialNavigation === "downloads" ? "downloads" : "browse");
-const theme = ref<"system" | "light" | "dark">(props.initialTheme ?? "light");
+const theme = ref<"system" | "light" | "dark">(props.initialTheme ?? "dark");
+const sidebarCollapsed = ref(false);
 const systemTheme = ref<"light" | "dark">("light");
 const debugOpen = ref(false);
 const debugVersion = ref(0);
@@ -234,7 +197,7 @@ const selectedLine = computed(() => {
 
 const canStart = computed(() => props.state.spider.status === "idle"
   || (props.state.spider.status === "error" && !props.state.spider.sidecarRunning));
-const activePage = computed(() => view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow" || view.value === "live" || view.value === "local" || view.value === "downloads" ? view.value : props.state.browse.page);
+const activePage = computed(() => view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow" || view.value === "local" || view.value === "downloads" ? view.value : props.state.browse.page);
 const currentSourceName = computed(() => {
   const selected = props.state.import.sites.find((site) => site.key === props.state.import.selectedSiteKey);
   return selected?.name?.trim() || (props.state.spider.source.startsWith("inline:") ? "当前来源" : displaySource(props.state.spider.source));
@@ -281,21 +244,16 @@ watch(() => props.state.browse.page, (page) => {
 watch(theme, () => {
   emit("viewState", {
     theme: theme.value,
-    navigation: view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow" || view.value === "live" || view.value === "local" || view.value === "downloads"
+    navigation: view.value === "settings" || view.value === "history" || view.value === "favorites" || view.value === "follow" || view.value === "local" || view.value === "downloads"
       ? view.value
       : navigationFromPage(props.state.browse.page),
   });
 });
 
-function navigate(route: "home" | "category" | "history" | "favorites" | "follow" | "settings" | "live" | "local" | "downloads"): void {
+function navigate(route: "home" | "category" | "history" | "favorites" | "follow" | "settings" | "local" | "downloads"): void {
   if (route === "settings") {
     view.value = "settings";
     persistNavigation("settings");
-    return;
-  }
-  if (route === "live") {
-    view.value = "live";
-    persistNavigation("live");
     return;
   }
   if (route === "history") {
@@ -423,8 +381,10 @@ function navigationFromPage(page: string): RendererNavigation {
     :data-theme="resolvedTheme"
     :data-theme-mode="theme"
     class="app-shell"
+    :class="{ 'sidebar-collapsed': sidebarCollapsed, 'legacy-embedded': props.embedded }"
   >
     <AppSidebar
+      v-if="!props.embedded"
       :active-page="String(activePage)"
       :source="props.state.spider.source"
       :source-name="currentSourceName"
@@ -434,6 +394,7 @@ function navigationFromPage(page: string): RendererNavigation {
       :pending="props.pending !== null"
       :theme="theme"
       :follow-updates="props.state.follow.updateCount"
+      :collapsed="sidebarCollapsed"
       @navigate="navigate"
       @open="emit('open')"
       @switch="emit('switch')"
@@ -443,32 +404,30 @@ function navigationFromPage(page: string): RendererNavigation {
 
     <section class="workspace">
       <TopSearchBar
+        v-if="!props.embedded"
         :source="props.state.spider.source"
         :source-name="currentSourceName"
         :api="props.state.spider.api"
         :pending="props.pending !== null"
         :initial-query="props.initialSearchQuery"
+        :sidebar-collapsed="sidebarCollapsed"
         @search="submitSearch"
+        @toggle-sidebar="sidebarCollapsed = !sidebarCollapsed"
       />
 
-      <div class="workspace-content">
-        <header class="workspace-header">
-          <div>
-            <span class="section-kicker">{{ view === "live" ? "直播源管理" : view === "downloads" ? "下载任务" : view === "settings" ? "工作区设置" : view === "history" ? "播放历史" : view === "favorites" ? "收藏管理" : view === "follow" ? "追更状态" : "媒体工作台" }}</span>
-            <h1>{{ view === "live" ? "直播源" : view === "downloads" ? "Downloads" : view === "settings" ? "设置" : view === "history" ? "History" : view === "favorites" ? "Favorites" : view === "follow" ? "追更" : currentSourceName }}</h1>
-            <p data-testid="status" class="workspace-status" :class="{ loading: props.state.browse.loading || props.pending !== null }">
-              {{ statusLabels[props.state.spider.status] }}{{ props.state.browse.loading || props.pending !== null ? " · 加载中" : "" }}
-            </p>
-          </div>
-          <div class="workspace-header-meta">
-            <span class="status-chip" :data-status="props.state.spider.status">{{ props.state.spider.sidecarRunning ? "连接正常" : "未启动" }}</span>
-          </div>
-        </header>
+      <div class="workspace-content" :class="{ 'legacy-embedded-content': props.embedded }">
+        <p
+          data-testid="status"
+          class="sr-only"
+          aria-live="polite"
+        >
+          {{ statusLabels[props.state.spider.status] }}{{ props.state.browse.loading || props.pending !== null ? " · 加载中" : "" }}
+        </p>
 
         <PlaybackDebugPanel v-if="debugOpen" :snapshot="debugSnapshot" @close="closeDebug" />
 
         <SourceSwitcher
-          v-if="view !== 'live' && view !== 'local' && view !== 'downloads'"
+          v-if="view !== 'local' && view !== 'downloads' && view !== 'history' && view !== 'favorites' && view !== 'follow'"
           :source="props.state.spider.source"
           :source-name="currentSourceName"
           :api="props.state.spider.api"
@@ -514,38 +473,6 @@ function navigationFromPage(page: string): RendererNavigation {
             @player-detach="emit('localPlayerDetach')"
             @player-stop="emit('localPlayerStop')"
             @player-sync="emit('localPlayerSync', $event)"
-          />
-        </template>
-        <template v-else-if="view === 'live'">
-          <LazyLiveSourcesView
-            :state="props.state.live"
-            :pending="props.pending"
-            :danmaku="props.state.danmaku"
-            @preview="emit('livePreview', $event)"
-            @apply="emit('liveApply', $event)"
-            @refresh="emit('liveRefresh', $event)"
-            @toggle="emit('liveToggle', $event)"
-            @remove="emit('liveRemove', $event)"
-            @clear="emit('liveClear')"
-            @play="emit('livePlay', $event[0], $event[1])"
-            @line="emit('liveLine', $event)"
-            @stop="emit('liveStop')"
-            @sync="emit('liveSync', $event)"
-            @smart-create="emit('smartCreate', $event)"
-            @smart-update="emit('smartUpdate', $event)"
-            @smart-delete="emit('smartDelete', $event)"
-            @smart-add-member="emit('smartAddMember', $event)"
-            @smart-remove-member="emit('smartRemoveMember', $event)"
-            @smart-member-update="emit('smartMemberUpdate', $event)"
-            @smart-member-reorder="emit('smartMemberReorder', $event)"
-            @smart-select="emit('smartSelect', $event)"
-            @smart-play="emit('smartPlay', $event)"
-            @smart-epg="emit('smartEpg', $event)"
-            @failover-mode="emit('liveFailoverMode', $event)"
-            @failover-approve="emit('liveFailoverApprove')"
-            @failover-cancel="emit('liveFailoverCancel')"
-            @failover-stay="emit('liveFailoverStay')"
-            @failover-return="emit('liveFailoverReturn')"
           />
         </template>
         <template v-else-if="view === 'settings'">
@@ -601,27 +528,11 @@ function navigationFromPage(page: string): RendererNavigation {
             @clear="emit('backupClear')"
             @open="emit('backupOpen')"
           />
-          <LazyEpgSourcesView
-            :state="props.state.live.epg"
-            :pending="props.pending"
-            @preview="emit('epgPreview', $event)"
-            @apply="emit('epgApply', $event)"
-            @refresh="emit('epgRefresh', $event)"
-            @toggle="emit('epgToggle', $event)"
-            @remove="emit('epgRemove', $event)"
-            @clear="emit('epgClear')"
-            @mapping-confirm="emit('epgMappingConfirm', $event)"
-            @mapping-clear="emit('epgMappingClear', $event)"
-            @mapping-confirm-high="emit('epgMappingConfirmHigh')"
-            @alias-set="emit('epgAliasSet', $event)"
-            @alias-remove="emit('epgAliasRemove', $event)"
-          />
           <AboutPanel :storage="props.state.storage" />
 
           <details class="settings-advanced" data-testid="settings-advanced">
             <summary>高级 / 开发者选项</summary>
             <p class="settings-advanced-hint">诊断、运行时、代理等低频技术选项，默认折叠。</p>
-            <AndroidRuntimeStatusPanel />
             <SettingsSection title="LocalProxy" description="播放需要代理时，Electron 主进程负责管理代理会话与生命周期。">
               <div class="settings-row"><span>状态</span><strong>{{ props.state.playback.playback.available ? "按线路决定" : "等待播放线路" }}</strong></div>
               <button type="button" class="button-secondary" data-action="proxy-test">测试连接</button>
@@ -692,7 +603,6 @@ function navigationFromPage(page: string): RendererNavigation {
               :pending="props.pending !== null"
               @retry="emit('retry')"
               @switch-line="emit('switch')"
-              @back="navigate('home')"
               @settings="navigate('settings')"
               @open-debug="openDebug"
             />
@@ -804,7 +714,6 @@ function navigationFromPage(page: string): RendererNavigation {
               @cancel="emit('fallbackCancel')"
               @approve="emit('fallbackApprove')"
               @mode="emit('fallbackMode', $event)"
-              @back="navigate('home')"
               @debug="openDebug"
             />
           </section>

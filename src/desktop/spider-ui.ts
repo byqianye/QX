@@ -72,6 +72,7 @@ import type { SourceHealthService } from "../health/source-health.js";
 import {
   EMPTY_HISTORY_UI_STATE,
   type HistoryCatalogEpisode,
+  type HistoryItem,
   type HistoryResumeCandidate,
   type HistoryResumeMode,
   type HistoryUiState,
@@ -80,6 +81,7 @@ import {
   createHistoryContext,
   HistoryProgressService,
   historyIdentity,
+  safeHistoryIdentifier,
   sourceIdForHistory,
   sourceDisplayNameForHistory,
 } from "../history/history-progress.js";
@@ -112,15 +114,6 @@ import {
   FollowService,
 } from "../follow/follow-service.js";
 import {
-  LiveSourceError,
-  LiveSourceService,
-} from "../live/live-service.js";
-import { LivePlaybackError, LivePlaybackService } from "../live/live-playback.js";
-import { SmartChannelError, SmartChannelService } from "../live/smart-channels.js";
-import { EpgMappingError, EpgMatchingService } from "../epg/epg-matching-service.js";
-import { EpgSourceError, EpgService } from "../epg/epg-service.js";
-import { isEpgSourceType, type EpgSourceImportInput } from "../epg/epg-types.js";
-import {
   EMPTY_DANMAKU_UI_STATE,
   type DanmakuLoadInput,
   type DanmakuSettingsPatch,
@@ -130,8 +123,6 @@ import { LocalMediaError, LocalMediaService, type LocalMediaStream } from "../lo
 import { EMPTY_LOCAL_MEDIA_UI_STATE, type LocalMediaUiState } from "../local-media/local-media-types.js";
 import { DownloadError } from "../downloads/download-backend.js";
 import { DownloadService, DownloadServiceError } from "../downloads/download-service.js";
-import type { AndroidRuntimeStatus } from "../spider/android-runtime-diagnostics.js";
-import type { AndroidRuntimeMode } from "../spider/android-runtime-types.js";
 import { EMPTY_DOWNLOAD_UI_STATE, type DownloadUiState } from "../downloads/download-types.js";
 import { PushService, PushServiceError, type PushSubmissionResult } from "../push/push-service.js";
 import type { PushPlaybackSessionSnapshot, PushRequest, PushSourceReference, PushUrlRequest } from "../push/push-types.js";
@@ -144,21 +135,11 @@ import type {
   WebControlCastState,
   WebControlDetail,
   WebControlDownloads,
-  WebControlLiveState,
   WebControlNowPlaying,
   WebControlPushResult,
   WebControlSearchResult,
   WebControlSnapshot,
 } from "../web-control/web-control-types.js";
-import {
-  EMPTY_LIVE_UI_STATE,
-  isLiveSourceType,
-  type LivePlaybackBackend,
-  type LiveFailoverMode,
-  type LiveSourceImportInput,
-  type LiveSourceType,
-  type LiveUiState,
-} from "../live/live-types.js";
 
 const require = createRequire(import.meta.url);
 
@@ -594,30 +575,34 @@ export class DesktopSpiderUiController {
   }
 
   private favoriteInputForDetail(): FavoriteContentInput | null {
-    const vodId = optionalString(this.detailItem?.vod_id);
+    const detail = this.detailItem;
+    if (!detail) return null;
+    const vodId = firstText(detail, ["vod_id", "id", "video_id"]);
     if (!vodId) return null;
     const view = this.session.view;
-    const title = optionalString(this.detailItem?.vod_name) ?? vodId;
+    const title = firstText(detail, ["vod_name", "name", "title"]) ?? vodId;
     const metadata = {
-      area: optionalString(this.detailItem?.vod_area),
-      director: optionalString(this.detailItem?.vod_director),
-      actor: optionalString(this.detailItem?.vod_actor),
-      remarks: optionalString(this.detailItem?.vod_remarks),
+      area: firstText(detail, ["vod_area", "area"]),
+      director: firstText(detail, ["vod_director", "director"]),
+      actor: firstText(detail, ["vod_actor", "actor"]),
+      remarks: firstText(detail, ["vod_remarks", "remark", "remarks"]),
     };
     return {
       sourceId: sourceIdForHistory(view.source),
       vodId,
       title,
-      poster: optionalString(this.detailItem?.vod_pic),
-      year: optionalString(this.detailItem?.vod_year),
-      category: optionalString(this.detailItem?.vod_class),
+      poster: firstText(detail, ["vod_pic", "poster", "image"]),
+      year: firstText(detail, ["vod_year", "year"]),
+      category: firstText(detail, ["vod_class", "type_name", "category", "type"]),
       sourceName: sourceDisplayNameForHistory(view.source),
       metadata,
     };
   }
 
   private followInputForDetail(): FollowContentInput | null {
-    const vodId = optionalString(this.detailItem?.vod_id);
+    const detail = this.detailItem;
+    if (!detail) return null;
+    const vodId = firstText(detail, ["vod_id", "id", "video_id"]);
     if (!vodId) return null;
     const view = this.session.view;
     const episodes = this.playbackCatalog?.lines
@@ -625,12 +610,12 @@ export class DesktopSpiderUiController {
       .sort((left, right) => right.episodes.length - left.episodes.length)[0]
       ?.episodes
       .map((episode) => ({ id: episode.id, name: episode.name }))
-      ?? (this.detailItem ? followContentFromDetail(this.detailItem, sourceIdForHistory(view.source), vodId).episodes : []);
+      ?? followContentFromDetail(detail, sourceIdForHistory(view.source), vodId).episodes;
     return {
       sourceId: sourceIdForHistory(view.source),
       vodId,
-      title: optionalString(this.detailItem?.vod_name) ?? vodId,
-      poster: optionalString(this.detailItem?.vod_pic),
+      title: firstText(detail, ["vod_name", "name", "title"]) ?? vodId,
+      poster: firstText(detail, ["vod_pic", "poster", "image"]),
       episodes,
     };
   }
@@ -1008,6 +993,49 @@ export class DesktopSpiderUiController {
     return this.state;
   }
 
+  public restoreHistoryResume(item: HistoryItem): DesktopSpiderUiState {
+    if (!this.playbackCatalog || !this.historyService) return this.state;
+    const sourceId = sourceIdForHistory(this.session.view.source);
+    if (item.sourceId !== sourceId) return this.state;
+    const episodeId = item.episodeId ?? "";
+    const episodeNumber = typeof item.episode === "number" ? item.episode : 0;
+    const playbackLine = item.playbackLine ?? "";
+    const preferredLines = playbackLine
+      ? this.playbackCatalog.lines.filter((line) => line.name === playbackLine)
+      : [];
+    const lines = preferredLines.length > 0 ? preferredLines : this.playbackCatalog.lines;
+    for (const line of lines) {
+      const episodeIndex = line.episodes.findIndex((episode, index) => (
+        (episodeId && safeHistoryIdentifier(episode.id) === episodeId)
+        || (episodeNumber > 0 && index === episodeNumber - 1)
+        || (episodeNumber === 0 && index === 0)
+      ));
+      if (episodeIndex < 0) continue;
+      const episode = line.episodes[episodeIndex];
+      if (!episode) continue;
+      const latest = this.historyService.get(item.identity) ?? item;
+      this.playbackSelection = { lineIndex: line.index, episodeIndex };
+      this.historyResume = {
+        ...latest,
+        lineIndex: line.index,
+        episodeIndex,
+        lineName: line.name,
+        canResume: latest.position > 0 || latest.completed,
+      };
+      return this.state;
+    }
+    return this.state;
+  }
+
+  public restoreHistoryResumeForContent(vodId: string): DesktopSpiderUiState {
+    if (!this.historyService) return this.state;
+    const sourceId = sourceIdForHistory(this.session.view.source);
+    const item = this.historyService.uiState().items
+      .filter((candidate) => candidate.sourceId === sourceId && candidate.vodId === vodId)
+      .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+    return item ? this.restoreHistoryResume(item) : this.state;
+  }
+
   public async stopPlayer(): Promise<DesktopSpiderUiState> {
     this.fallbackCoordinator.cancel("用户停止播放");
     this.historyService?.stop();
@@ -1053,6 +1081,15 @@ export class DesktopSpiderUiController {
     request: PlaybackRequest,
     allowFallback: boolean,
   ): Promise<DesktopSpiderUiState> {
+    const previousSession = this.playbackSession;
+    const previousPlayer = this.playerController.state;
+    const carryCurrentTime = previousSession?.lineIndex !== null
+      && previousSession?.lineIndex !== undefined
+      && request.metadata?.lineIndex !== null
+      && request.metadata?.lineIndex !== undefined
+      && previousSession.lineIndex !== request.metadata.lineIndex
+      ? previousPlayer.currentTime
+      : 0;
     this.currentPlaybackRequest = request;
     this.currentHealthKey = healthKeyFor(request);
     if (request.metadata?.lineIndex !== null && request.metadata?.lineIndex !== undefined
@@ -1096,7 +1133,8 @@ export class DesktopSpiderUiController {
           this.playerController.recordStage("PLAYER_CONTENT");
           this.playerController.recordStage("MEDIA_RESOLVE");
           this.playerController.recordStage("PROXY_START");
-          if (this.pendingResumeSeconds > 0) this.playerController.seek(this.pendingResumeSeconds);
+          if (carryCurrentTime > 0) this.playerController.seek(carryCurrentTime);
+          else if (this.pendingResumeSeconds > 0) this.playerController.seek(this.pendingResumeSeconds);
           const sourceState = this.playerController.state.source;
           if (!sourceState) throw new Error("Playback source was not loaded");
           if (playback.danmaku !== undefined && this.danmakuService) {
@@ -1121,8 +1159,8 @@ export class DesktopSpiderUiController {
             lineName: request.metadata?.lineName ?? null,
             episodeName: request.metadata?.episodeName ?? null,
             media: {
-              detailId: optionalString(this.detailItem?.vod_id),
-              title: optionalString(this.detailItem?.vod_name),
+              detailId: this.detailItem ? firstText(this.detailItem, ["vod_id", "id", "video_id"]) : null,
+              title: this.detailItem ? firstText(this.detailItem, ["vod_name", "name", "title"]) : null,
               url: sourceState.url,
             },
           };
@@ -1287,14 +1325,16 @@ export class DesktopSpiderUiController {
   }
 
   private historyContextForRequest(request: PlaybackRequest) {
-    const vodId = optionalString(this.detailItem?.vod_id);
+    const detail = this.detailItem;
+    if (!detail) return null;
+    const vodId = firstText(detail, ["vod_id", "id", "video_id"]);
     if (!vodId) return null;
     return createHistoryContext({
       source: this.session.view.source,
       vodId,
       episodeId: request.id,
-      title: optionalString(this.detailItem?.vod_name),
-      poster: optionalString(this.detailItem?.vod_pic),
+      title: firstText(detail, ["vod_name", "name", "title"]),
+      poster: firstText(detail, ["vod_pic", "poster", "image"]),
       episode: request.metadata?.episodeIndex === null || request.metadata?.episodeIndex === undefined
         ? null
         : request.metadata.episodeIndex + 1,
@@ -1305,7 +1345,7 @@ export class DesktopSpiderUiController {
 
   private findDetailResume(): HistoryResumeCandidate | null {
     if (!this.historyService || !this.detailItem || !this.playbackCatalog) return null;
-    const vodId = optionalString(this.detailItem.vod_id);
+    const vodId = firstText(this.detailItem, ["vod_id", "id", "video_id"]);
     if (!vodId) return null;
     const episodes: HistoryCatalogEpisode[] = this.playbackCatalog.lines.flatMap((line) => line.episodes.map((episode) => ({
       lineIndex: line.index,
@@ -1734,33 +1774,11 @@ export interface DesktopSpiderUiServerOptions {
   follow?: FollowService;
   cache?: CacheService;
   storage?: DataStorageService;
-  androidCredentials?: {
-    status(): Promise<{ provider: "uc"; configured: boolean }>;
-    setAccessToken(token: string): void;
-    clear(): void;
-  };
-  androidRuntimeStatus?: () => AndroidRuntimeStatus | Promise<AndroidRuntimeStatus>;
-  androidRuntimeActions?: {
-    ensure(confirmed: boolean): Promise<unknown>;
-    enableWhpx(confirmed: boolean): Promise<unknown>;
-    setMode(mode: AndroidRuntimeMode): Promise<unknown>;
-    restart(): Promise<unknown>;
-    repair(confirmed: boolean): Promise<unknown>;
-    reinstall(confirmed: boolean): Promise<unknown>;
-    cancel?(): Promise<unknown>;
-    uninstall(): Promise<void>;
-    stop(): Promise<void>;
-  };
   danmaku?: DanmakuService;
   localMedia?: LocalMediaService;
   downloads?: DownloadService;
   push?: PushService;
   cast?: CastService;
-  live?: LiveSourceService;
-  livePlayback?: LivePlaybackService;
-  smartChannels?: SmartChannelService;
-  epg?: EpgService;
-  epgMatching?: EpgMatchingService;
   onStorageOpen?: () => void | Promise<void>;
   onStorageSwitch?: (mode: StorageMode) => void;
   onBackupCreate?: (includeCache: boolean) => Promise<BackupUiState>;
@@ -1802,19 +1820,11 @@ export class DesktopSpiderUiServer {
   private readonly cacheService: CacheService | undefined;
   private readonly posterProxy: PosterProxy;
   private readonly storageService: DataStorageService | undefined;
-  private readonly androidCredentials: DesktopSpiderUiServerOptions["androidCredentials"];
-  private readonly androidRuntimeStatus: DesktopSpiderUiServerOptions["androidRuntimeStatus"];
-  private readonly androidRuntimeActions: DesktopSpiderUiServerOptions["androidRuntimeActions"];
   private readonly danmakuService: DanmakuService | undefined;
   private readonly localMediaService: LocalMediaService | undefined;
   private readonly downloadService: DownloadService | undefined;
   private readonly pushService: PushService | undefined;
   private readonly castService: CastService | undefined;
-  private readonly liveService: LiveSourceService | undefined;
-  private readonly livePlayback: LivePlaybackService | undefined;
-  private readonly smartChannels: SmartChannelService | undefined;
-  private readonly epgService: EpgService | undefined;
-  private readonly epgMatching: EpgMatchingService | undefined;
   private readonly onStorageOpen: (() => void | Promise<void>) | undefined;
   private readonly onStorageSwitch: ((mode: StorageMode) => void) | undefined;
   private readonly onBackupCreate: ((includeCache: boolean) => Promise<BackupUiState>) | undefined;
@@ -1869,20 +1879,12 @@ export class DesktopSpiderUiServer {
     this.cacheService = options.cache;
     this.posterProxy = new PosterProxy({ ...(this.cacheService ? { cache: this.cacheService } : {}) });
     this.storageService = options.storage;
-    this.androidCredentials = options.androidCredentials;
-    this.androidRuntimeStatus = options.androidRuntimeStatus;
-    this.androidRuntimeActions = options.androidRuntimeActions;
     this.danmakuService = options.danmaku;
     this.localMediaService = options.localMedia;
     this.downloadService = options.downloads;
     this.pushService = options.push;
     this.castService = options.cast;
     this.directUi?.setPlaybackCompleteHandler(() => this.pushService?.drainQueue());
-    this.liveService = options.live;
-    this.livePlayback = options.livePlayback;
-    this.smartChannels = options.smartChannels;
-    this.epgService = options.epg;
-    this.epgMatching = options.epgMatching;
     this.onStorageOpen = options.onStorageOpen;
     this.onStorageSwitch = options.onStorageSwitch;
     this.onBackupCreate = options.onBackupCreate;
@@ -1931,39 +1933,20 @@ export class DesktopSpiderUiServer {
         await ui.player(flag, id, [...vipFlags]);
       },
       pause: async () => {
-        const live = this.liveUiState();
-        if (live.session && live.session.state !== "stopped" && this.livePlayback) {
-          this.livePlayback.sync(live.session.sessionId, { status: "paused" });
-          return;
-        }
         const ui = this.playbackUi() ?? this.activeUi();
         if (!ui) throw webControlUnavailable("WEB_PLAYBACK_UNAVAILABLE");
         await ui.syncPlayerStateAsync({ status: "paused" });
       },
       stop: async () => {
-        await this.livePlayback?.stop();
         const ui = this.playbackUi() ?? this.activeUi();
         if (ui) await ui.stopPlayer();
       },
       seek: async (position) => {
-        const live = this.liveUiState();
-        if (live.session && live.session.state !== "stopped" && this.livePlayback) {
-          this.livePlayback.sync(live.session.sessionId, { currentTime: position });
-          return;
-        }
         const ui = this.playbackUi() ?? this.activeUi();
         if (!ui) throw webControlUnavailable("WEB_PLAYBACK_UNAVAILABLE");
         await ui.syncPlayerStateAsync({ currentTime: position });
       },
       volume: async (volume, muted) => {
-        const live = this.liveUiState();
-        if (live.session && live.session.state !== "stopped" && this.livePlayback) {
-          this.livePlayback.sync(live.session.sessionId, {
-            volume,
-            ...(muted === undefined ? {} : { muted }),
-          });
-          return;
-        }
         const ui = this.playbackUi() ?? this.activeUi();
         if (!ui) throw webControlUnavailable("WEB_PLAYBACK_UNAVAILABLE");
         await ui.syncPlayerStateAsync({
@@ -1987,11 +1970,6 @@ export class DesktopSpiderUiServer {
         if (!ui) throw webControlUnavailable("WEB_PLAYBACK_UNAVAILABLE");
         await ui.playEpisode(lineIndex, episodeIndex, [...vipFlags]);
       },
-      liveChannels: () => toWebLiveState(this.liveUiState()),
-      playLive: async ({ channelId, streamId }) => {
-        if (!this.livePlayback) throw webControlUnavailable("WEB_LIVE_UNAVAILABLE");
-        await this.livePlayback.selectChannel(channelId, streamId);
-      },
       push: async ({ url, title }) => {
         if (!this.pushService) throw webControlUnavailable("WEB_PUSH_UNAVAILABLE");
         const result = await this.pushService.submit({
@@ -2006,16 +1984,11 @@ export class DesktopSpiderUiServer {
       castDevices: () => toWebCastState(this.castService?.uiState()),
       cast: async (deviceId) => {
         if (!this.castService) throw webControlUnavailable("WEB_CAST_UNAVAILABLE");
-        const live = this.liveUiState();
-        const livePlayer = live.player;
         const ui = this.playbackUi() ?? this.activeUi();
-        const liveActive = live.session && live.session.state !== "stopped" && livePlayer?.source ? livePlayer : null;
-        const player = liveActive ?? ui?.state.player;
+        const player = ui?.state.player;
         const source = player?.source;
         if (!source) throw webControlUnavailable("WEB_CAST_NO_MEDIA");
-        const title = liveActive && live.session
-          ? live.session.channelId
-          : ui?.state.playbackSession?.media.title ?? "QX 影视媒体";
+        const title = ui?.state.playbackSession?.media.title ?? "QX 影视媒体";
         const media: CastMediaSource = {
           url: source.url,
           title,
@@ -2032,7 +2005,6 @@ export class DesktopSpiderUiServer {
     return {
       nowPlaying: this.webControlNowPlaying(),
       search: { query: "", items: [] },
-      live: toWebLiveState(this.liveUiState()),
       downloads: toWebDownloads(this.downloadService?.uiState()),
       cast: toWebCastState(this.castService?.uiState()),
       status: this.webControlStatus(),
@@ -2040,34 +2012,21 @@ export class DesktopSpiderUiServer {
   }
 
   private webControlNowPlaying(): WebControlNowPlaying {
-    const live = this.liveUiState();
-    if (live.session && live.session.state !== "stopped" && live.player?.source) {
-      return toWebNowPlaying(
-        live.player,
-        live.session.channelId,
-        null,
-        true,
-        live.session.state,
-      );
-    }
     const ui = this.playbackUi() ?? this.activeUi();
     return toWebNowPlaying(
       ui?.state.player ?? null,
       ui?.state.playbackSession?.media.title ?? null,
       ui?.state.playbackSession?.episodeName ?? null,
-      false,
     );
   }
 
   private webControlStatus(): WebControlBackendStatus {
     const ui = this.activeUi();
-    const live = this.liveUiState();
     return {
       uiReady: Boolean(ui),
       capabilities: {
         search: Boolean(ui),
         playback: Boolean(ui?.state.canPlay),
-        live: Boolean(this.livePlayback && (this.liveService || live.catalog.channels.length > 0)),
         push: Boolean(this.pushService),
         downloads: Boolean(this.downloadService),
         cast: Boolean(this.castService),
@@ -2098,9 +2057,6 @@ export class DesktopSpiderUiServer {
   public async close(): Promise<void> {
     await this.castService?.close();
     await this.pushService?.close();
-    await this.livePlayback?.stop();
-    this.epgService?.close();
-    this.epgMatching?.close();
     if (this.importer) {
       await this.releaseImportedUiResources();
       await this.importer.close();
@@ -2119,15 +2075,6 @@ export class DesktopSpiderUiServer {
   }
 
   public pushPlaybackSession(): PushPlaybackSessionSnapshot | null {
-    const live = this.livePlayback?.uiState(EMPTY_LIVE_UI_STATE).session;
-    if (live && live.state !== "stopped") {
-      return {
-        id: live.sessionId,
-        kind: "live",
-        title: live.channelId,
-        state: "active",
-      };
-    }
     const ui = this.playbackUi();
     if (ui && ["ended", "stopped", "error"].includes(ui.state.player.status)) return null;
     const session = ui?.state.playbackSession;
@@ -2141,7 +2088,6 @@ export class DesktopSpiderUiServer {
   }
 
   public async replacePush(request: PushRequest): Promise<PushPlaybackSessionSnapshot> {
-    await this.livePlayback?.stop();
     const current = this.playbackUi();
     await current?.stopPlayer();
     if (request.type === "url" || request.type === "fixture") {
@@ -2166,10 +2112,6 @@ export class DesktopSpiderUiServer {
       const ui = this.activeUi();
       if (!ui) throw new PushServiceError("PUSH_PLAYBACK_UNAVAILABLE", "当前没有可用的点播播放会话。");
       await ui.playLocalMedia(request.localFileReference.itemId, this.url);
-    } else {
-      const reference = request.sourceReference;
-      if (!this.livePlayback) throw new PushServiceError("PUSH_LIVE_UNAVAILABLE", "直播播放服务不可用。");
-      await this.livePlayback.selectChannel(reference.channelId, reference.streamId);
     }
     const session = this.pushPlaybackSession();
     if (!session) throw new PushServiceError("PUSH_PLAYBACK_FAILED", "Push 播放会话未能建立。");
@@ -2208,79 +2150,12 @@ export class DesktopSpiderUiServer {
         this.writeCurrentState(response);
         return;
       }
-      if (request.method === "GET" && url.pathname === "/api/android/credentials/status") {
-        if (!this.androidCredentials) {
-          writeJson(response, { error: "ANDROID_CREDENTIALS_UNAVAILABLE" }, 503);
-          return;
-        }
-        writeJson(response, await this.androidCredentials.status());
-        return;
-      }
-      if (request.method === "GET" && url.pathname === "/api/android/runtime/status") {
-        if (!this.androidRuntimeStatus) {
-          writeJson(response, { error: "ANDROID_RUNTIME_DIAGNOSTICS_UNAVAILABLE" }, 503);
-          return;
-        }
-        writeJson(response, await this.androidRuntimeStatus());
-        return;
-      }
       if (request.method !== "POST") {
         writeJson(response, { error: "Not found" }, 404);
         return;
       }
 
       const body = await readJson(request);
-      if (url.pathname.startsWith("/api/android/runtime/")) {
-        const actions = this.androidRuntimeActions;
-        if (!actions) throw new Error("ANDROID_RUNTIME_ACTIONS_UNAVAILABLE");
-        if (url.pathname === "/api/android/runtime/ensure") {
-          if (body.confirmed !== true) throw new Error("ANDROID_RUNTIME_CONFIRMATION_REQUIRED");
-          writeJson(response, await actions.ensure(true));
-          return;
-        }
-        if (url.pathname === "/api/android/runtime/enable-whpx") {
-          if (body.confirmed !== true) throw new Error("ANDROID_RUNTIME_CONFIRMATION_REQUIRED");
-          writeJson(response, await actions.enableWhpx(true));
-          return;
-        }
-        if (url.pathname === "/api/android/runtime/mode") {
-          if (body.mode !== "auto" && body.mode !== "resident" && body.mode !== "disabled") throw new Error("ANDROID_RUNTIME_MODE_INVALID");
-          writeJson(response, await actions.setMode(body.mode));
-          return;
-        }
-        if (url.pathname === "/api/android/runtime/restart") {
-          writeJson(response, await actions.restart());
-          return;
-        }
-        if (url.pathname === "/api/android/runtime/repair") {
-          if (body.confirmed !== true) throw new Error("ANDROID_RUNTIME_CONFIRMATION_REQUIRED");
-          writeJson(response, await actions.repair(true));
-          return;
-        }
-        if (url.pathname === "/api/android/runtime/reinstall") {
-          if (body.confirmed !== true) throw new Error("ANDROID_RUNTIME_CONFIRMATION_REQUIRED");
-          writeJson(response, await actions.reinstall(true));
-          return;
-        }
-        if (url.pathname === "/api/android/runtime/cancel") {
-          if (!actions.cancel) throw new Error("ANDROID_RUNTIME_CANCEL_UNAVAILABLE");
-          writeJson(response, await actions.cancel());
-          return;
-        }
-        if (url.pathname === "/api/android/runtime/uninstall") {
-          if (body.confirmed !== true) throw new Error("ANDROID_RUNTIME_CONFIRMATION_REQUIRED");
-          await actions.uninstall();
-          writeJson(response, { status: "UNINSTALLED" });
-          return;
-        }
-        if (url.pathname === "/api/android/runtime/stop") {
-          await actions.stop();
-          writeJson(response, { status: "STOPPED" });
-          return;
-        }
-        writeJson(response, { error: "Not found" }, 404);
-        return;
-      }
       if (url.pathname.startsWith("/api/push/")) {
         await this.handlePushRequest(url.pathname, body);
         this.writeCurrentState(response);
@@ -2303,16 +2178,6 @@ export class DesktopSpiderUiServer {
       }
       if (url.pathname.startsWith("/api/danmaku/")) {
         await this.handleDanmakuRequest(url.pathname, body);
-        this.writeCurrentState(response);
-        return;
-      }
-      if (url.pathname.startsWith("/api/epg/")) {
-        await this.handleEpgRequest(url.pathname, body);
-        this.writeCurrentState(response);
-        return;
-      }
-      if (url.pathname.startsWith("/api/live/")) {
-        await this.handleLiveRequest(url.pathname, body);
         this.writeCurrentState(response);
         return;
       }
@@ -2407,6 +2272,7 @@ export class DesktopSpiderUiServer {
             throw new Error("HISTORY_SOURCE_SWITCH_REQUIRED");
           }
           await ui.detail(item.vodId);
+          ui.restoreHistoryResume(item);
         } else {
           writeJson(response, { error: "Not found" }, 404);
           return;
@@ -2451,6 +2317,7 @@ export class DesktopSpiderUiServer {
             throw new Error("FAVORITE_SOURCE_SWITCH_REQUIRED");
           }
           await ui.detail(item.vodId);
+          ui.restoreHistoryResumeForContent(item.vodId);
         } else {
           writeJson(response, { error: "Not found" }, 404);
           return;
@@ -2485,6 +2352,7 @@ export class DesktopSpiderUiServer {
             throw new Error("FOLLOW_SOURCE_SWITCH_REQUIRED");
           }
           await ui.detail(item.vodId);
+          ui.restoreHistoryResumeForContent(item.vodId);
         } else {
           writeJson(response, { error: "Not found" }, 404);
           return;
@@ -2529,29 +2397,6 @@ export class DesktopSpiderUiServer {
           return;
         }
         this.writeCurrentState(response);
-        return;
-      }
-
-      if (url.pathname.startsWith("/api/android/credentials/")) {
-        const credentials = this.androidCredentials;
-        if (!credentials) throw new Error("ANDROID_CREDENTIALS_UNAVAILABLE");
-        if (url.pathname === "/api/android/credentials/status") {
-          writeJson(response, await credentials.status());
-          return;
-        }
-        if (url.pathname === "/api/android/credentials/set") {
-          const token = stringValue(body.accessToken, "").trim();
-          if (!token) throw new Error("ANDROID_CREDENTIAL_ACCESS_TOKEN_REQUIRED");
-          credentials.setAccessToken(token);
-          writeJson(response, { provider: "uc", configured: true });
-          return;
-        }
-        if (url.pathname === "/api/android/credentials/clear") {
-          credentials.clear();
-          writeJson(response, { provider: "uc", configured: false });
-          return;
-        }
-        writeJson(response, { error: "Not found" }, 404);
         return;
       }
 
@@ -2770,9 +2615,7 @@ export class DesktopSpiderUiServer {
     } catch (error) {
       const ui = this.activeUi();
       const message = error instanceof Error ? error.message : String(error);
-      const errorCode = error instanceof LiveSourceError
-        ? error.code
-        : error instanceof DownloadServiceError || error instanceof DownloadError
+      const errorCode = error instanceof DownloadServiceError || error instanceof DownloadError
           ? error.code
         : error instanceof PushServiceError
           ? error.code
@@ -2780,21 +2623,12 @@ export class DesktopSpiderUiServer {
           ? error.code
         : error instanceof LocalMediaError
           ? error.code
-        : error instanceof LivePlaybackError
-          ? error.code
-          : error instanceof EpgMappingError
-            ? error.code
-          : error instanceof SmartChannelError
-            ? error.code
-          : error instanceof EpgSourceError
-            ? error.code
         : errorCodeFromMessage(message);
       writeJson(response, {
         error: message,
         ...(errorCode ? { errorCode } : {}),
         import: this.importer?.state ?? null,
         state: ui ? this.posterProxy.decorateState(ui.state) : null,
-        ...(this.liveService || this.livePlayback ? { live: this.liveUiState() } : {}),
         ...(this.pushService ? { push: this.pushService.uiState() } : {}),
         ...(this.castService ? { cast: this.castService.uiState() } : {}),
       }, 400);
@@ -2896,19 +2730,13 @@ export class DesktopSpiderUiServer {
     }
     if (pathname === "/api/cast/play") {
       const ui = this.playbackUi() ?? this.activeUi();
-      const live = this.liveUiState();
-      const liveActive = live.session && live.session.state !== "stopped" && live.player?.source
-        ? live.player
-        : null;
-      const player = liveActive ?? ui?.state.player;
+      const player = ui?.state.player;
       const source = player?.source;
       if (!source) throw new CastServiceError("DLNA_MEDIA_UNAVAILABLE", "当前没有可投屏的媒体。");
       const selectedSubtitle = source.subtitles?.find((track) => track.default || track.forced) ?? source.subtitles?.[0];
       const media: CastMediaSource = {
         url: new URL(source.url, this.url).toString(),
-        title: liveActive && live.session
-          ? live.session.channelId
-          : ui?.state.playbackSession?.media.title ?? "当前媒体",
+        title: ui?.state.playbackSession?.media.title ?? "当前媒体",
         ...(Object.keys(source.headers).length > 0 ? { headers: { ...source.headers } } : {}),
         ...(selectedSubtitle?.url ? {
           subtitle: {
@@ -3111,7 +2939,7 @@ export class DesktopSpiderUiServer {
         format,
         data,
         ...(typeof body.source === "string" ? { source: body.source } : {}),
-        ...(body.timeline === "live" ? { timeline: "live" } : { timeline: "vod" }),
+        timeline: "vod",
       } satisfies DanmakuLoadInput);
       return;
     }
@@ -3130,260 +2958,6 @@ export class DesktopSpiderUiServer {
       return;
     }
     throw new Error("DANMAKU_ROUTE_NOT_FOUND");
-  }
-
-  private async handleLiveRequest(pathname: string, body: Record<string, unknown>): Promise<void> {
-    const live = this.liveService;
-    if (!live) throw new LiveSourceError("LIVE_UNAVAILABLE", "直播源服务不可用。");
-    if (pathname === "/api/live/source/preview") {
-      await live.previewSource(liveInputFromRequest(body));
-      return;
-    }
-    if (pathname === "/api/live/source/apply") {
-      await live.applyPreview(stringValue(body.previewId, ""));
-      return;
-    }
-    if (pathname === "/api/live/source/refresh") {
-      const sourceId = stringValue(body.sourceId, "");
-      await live.refreshSource(sourceId);
-      await this.livePlayback?.stopIfSource(sourceId);
-      return;
-    }
-    if (pathname === "/api/live/source/toggle") {
-      const sourceId = stringValue(body.sourceId, "");
-      live.setSourceEnabled(sourceId, booleanValue(body.enabled, false));
-      await this.livePlayback?.stopIfSource(sourceId);
-      return;
-    }
-    if (pathname === "/api/live/source/remove") {
-      const sourceId = stringValue(body.sourceId, "");
-      live.removeSource(sourceId);
-      await this.livePlayback?.stopIfSource(sourceId);
-      return;
-    }
-    if (pathname === "/api/live/preview/clear") {
-      live.clearPreview();
-      return;
-    }
-    const smart = this.smartChannels;
-    if (pathname.startsWith("/api/live/smart/")) {
-      if (!smart) throw new SmartChannelError("SMART_CHANNEL_UNAVAILABLE", "Smart Channel 服务不可用。");
-      if (pathname === "/api/live/smart/create") {
-        smart.create({
-          name: stringValue(body.name, ""),
-          ...(body.logo === null || typeof body.logo === "string" ? { logo: body.logo as string | null } : {}),
-          ...(body.group === null || typeof body.group === "string" ? { group: body.group as string | null } : {}),
-          memberIds: stringList(body.memberIds),
-        });
-        return;
-      }
-      if (pathname === "/api/live/smart/update") {
-        const sortOrder = optionalNumber(body.sortOrder);
-        smart.update(stringValue(body.smartChannelId, ""), {
-          ...(typeof body.name === "string" ? { name: body.name } : {}),
-          ...(body.logo === null || typeof body.logo === "string" ? { logo: body.logo as string | null } : {}),
-          ...(body.group === null || typeof body.group === "string" ? { group: body.group as string | null } : {}),
-          ...(sortOrder === undefined ? {} : { sortOrder }),
-        });
-        return;
-      }
-      if (pathname === "/api/live/smart/delete") {
-        smart.delete(stringValue(body.smartChannelId, ""));
-        return;
-      }
-      if (pathname === "/api/live/smart/member/add") {
-        smart.addMember(
-          stringValue(body.smartChannelId, ""),
-          stringValue(body.liveChannelId, ""),
-          optionalNumber(body.priority),
-        );
-        return;
-      }
-      if (pathname === "/api/live/smart/member/remove") {
-        smart.removeMember(stringValue(body.smartChannelId, ""), stringValue(body.memberId, ""));
-        return;
-      }
-      if (pathname === "/api/live/smart/member/update"
-        || pathname === "/api/live/smart/member/priority"
-        || pathname === "/api/live/smart/member/enable") {
-        const priority = optionalNumber(body.priority);
-        const enabled = typeof body.enabled === "boolean" ? body.enabled : undefined;
-        smart.updateMember(
-          stringValue(body.smartChannelId, ""),
-          stringValue(body.memberId, ""),
-          {
-            ...(priority === undefined ? {} : { priority }),
-            ...(enabled === undefined ? {} : { enabled }),
-          },
-        );
-        return;
-      }
-      if (pathname === "/api/live/smart/member/reorder") {
-        smart.reorderMembers(stringValue(body.smartChannelId, ""), stringList(body.memberIds));
-        return;
-      }
-      if (pathname === "/api/live/smart/select") {
-        smart.setPreferredMember(stringValue(body.smartChannelId, ""), optionalString(body.memberId));
-        return;
-      }
-      if (pathname === "/api/live/smart/play") {
-        const playback = this.livePlayback;
-        if (!playback) throw new LivePlaybackError("LIVE_SOURCE_UNAVAILABLE", "直播播放服务不可用。");
-        const smartChannelId = stringValue(body.smartChannelId, "");
-        const selection = smart.play(smartChannelId, optionalString(body.memberId) ?? undefined);
-        try {
-          await playback.selectChannel(selection.liveChannel.id, optionalString(body.streamId) ?? undefined, {
-            smartChannelId,
-            smartMemberId: selection.member.id,
-            failoverCandidates: smart.failoverCandidates(smartChannelId),
-          });
-          this.epgMatching?.setTimeline(selection.liveChannel.id);
-        } catch (error) {
-          smart.stop();
-          throw error;
-        }
-        return;
-      }
-      if (pathname === "/api/live/smart/epg") {
-        const smartChannelId = stringValue(body.smartChannelId, "");
-        if (body.epgSourceId === null || body.epgChannelId === null) smart.clearEpgMapping(smartChannelId);
-        else smart.setEpgMapping(
-          smartChannelId,
-          stringValue(body.epgSourceId, ""),
-          stringValue(body.epgChannelId, ""),
-        );
-        return;
-      }
-      if (pathname === "/api/live/smart/member/health") {
-        smart.setHealthScore(stringValue(body.liveChannelId, ""), optionalNumber(body.score) ?? null);
-        return;
-      }
-      throw new SmartChannelError("SMART_CHANNEL_ROUTE_NOT_FOUND", "Smart Channel 请求不存在。");
-    }
-    const playback = this.livePlayback;
-    if (!playback) throw new LivePlaybackError("LIVE_SOURCE_UNAVAILABLE", "直播播放服务不可用。");
-    if (pathname === "/api/live/failover/mode") {
-      const mode = body.mode;
-      if (mode !== "off" && mode !== "ask" && mode !== "auto") {
-        throw new LivePlaybackError("LIVE_FAILOVER_MODE_INVALID", "直播故障转移模式无效。");
-      }
-      playback.setFailoverMode(mode as LiveFailoverMode);
-      return;
-    }
-    if (pathname === "/api/live/failover/approve") {
-      await playback.approveFailover();
-      return;
-    }
-    if (pathname === "/api/live/failover/cancel") {
-      await playback.cancelFailover();
-      return;
-    }
-    if (pathname === "/api/live/failover/stay") {
-      await playback.stayOnCurrentLine();
-      return;
-    }
-    if (pathname === "/api/live/failover/return") {
-      await playback.returnToStable();
-      return;
-    }
-    if (pathname === "/api/live/play") {
-      const channelId = stringValue(body.channelId, "");
-      await playback.selectChannel(channelId, optionalString(body.streamId) ?? undefined);
-      smart?.stop();
-      this.epgMatching?.setTimeline(channelId);
-      return;
-    }
-    if (pathname === "/api/live/line") {
-      await playback.selectLine(stringValue(body.streamId, ""));
-      return;
-    }
-    if (pathname === "/api/live/stop") {
-      await playback.stop();
-      smart?.stop();
-      await this.pushService?.drainQueue();
-      return;
-    }
-    if (pathname === "/api/live/sync") {
-      const patch = playerMediaSyncFromRequest(body);
-      await playback.syncAndMaybeFailover(optionalString(body.sessionId) ?? undefined, patch, liveBackendFromRequest(body));
-      if (patch.currentTime !== undefined && Number.isFinite(patch.currentTime)) {
-        this.danmakuService?.sync(patch.currentTime * 1_000, patch.event?.type, patch.status);
-      }
-      return;
-    }
-    throw new LiveSourceError("LIVE_ROUTE_NOT_FOUND", "直播源请求不存在。");
-  }
-
-  private async handleEpgRequest(pathname: string, body: Record<string, unknown>): Promise<void> {
-    const epg = this.epgService;
-    const matching = this.epgMatching;
-    if (!epg) throw new EpgSourceError("EPG_SOURCE_FAILED", "EPG 服务不可用。");
-    if (pathname === "/api/epg/source/preview") {
-      await epg.previewSource(epgInputFromRequest(body));
-      return;
-    }
-    if (pathname === "/api/epg/source/apply") {
-      await epg.applyPreview(stringValue(body.previewId, ""));
-      return;
-    }
-    if (pathname === "/api/epg/source/refresh") {
-      await epg.refreshSource(stringValue(body.sourceId, ""));
-      return;
-    }
-    if (pathname === "/api/epg/source/toggle") {
-      epg.setSourceEnabled(stringValue(body.sourceId, ""), booleanValue(body.enabled, false));
-      return;
-    }
-    if (pathname === "/api/epg/source/remove") {
-      epg.removeSource(stringValue(body.sourceId, ""));
-      return;
-    }
-    if (pathname === "/api/epg/preview/clear") {
-      epg.clearPreview();
-      return;
-    }
-    if (!matching) throw new EpgMappingError("EPG_MAPPING_UNAVAILABLE", "EPG mapping service is unavailable.");
-    if (pathname === "/api/epg/mapping/set") {
-      matching.setMapping(
-        stringValue(body.liveChannelId, ""),
-        stringValue(body.epgSourceId, ""),
-        stringValue(body.epgChannelId, ""),
-      );
-      return;
-    }
-    if (pathname === "/api/epg/mapping/confirm") {
-      matching.confirmCandidate(
-        stringValue(body.liveChannelId, ""),
-        stringValue(body.epgSourceId, ""),
-        stringValue(body.epgChannelId, ""),
-      );
-      return;
-    }
-    if (pathname === "/api/epg/mapping/clear") {
-      matching.clearMapping(stringValue(body.liveChannelId, ""), optionalString(body.epgSourceId) ?? undefined);
-      return;
-    }
-    if (pathname === "/api/epg/mapping/confirm-high") {
-      matching.confirmHighConfidence(this.liveUiState().catalog);
-      return;
-    }
-    if (pathname === "/api/epg/alias/set") {
-      matching.setAlias(stringValue(body.liveChannelId, ""), stringValue(body.alias, ""));
-      return;
-    }
-    if (pathname === "/api/epg/alias/remove") {
-      matching.removeAlias(stringValue(body.liveChannelId, ""), stringValue(body.alias, ""));
-      return;
-    }
-    if (pathname === "/api/epg/timeline") {
-      matching.setTimeline(stringValue(body.liveChannelId, ""), optionalNumber(body.fromAt), optionalNumber(body.toAt));
-      return;
-    }
-    if (pathname === "/api/epg/timeline/clear") {
-      matching.clearTimeline();
-      return;
-    }
-    throw new EpgSourceError("EPG_SOURCE_FAILED", "EPG 请求不存在。");
   }
 
   private activeUi(): DesktopSpiderUiController | undefined {
@@ -3438,35 +3012,21 @@ export class DesktopSpiderUiServer {
     await Promise.all([...this.importedUiBySession.values()].map((ui) => ui.releaseResources()));
   }
 
-  private liveUiState() {
-    const base = this.liveService?.uiState() ?? EMPTY_LIVE_UI_STATE;
-    const withPlayback = this.livePlayback?.uiState(base) ?? base;
-    const epg = this.epgService?.uiState() ?? withPlayback.epg;
-    const matched = this.epgMatching?.uiState(withPlayback.catalog, epg);
-    const withEpg = matched
-      ? { ...withPlayback, catalog: matched.catalog, epg: matched.epg }
-      : { ...withPlayback, epg };
-    const smart = this.smartChannels?.uiState(withEpg.catalog, withEpg.epg);
-    return smart ? { ...withEpg, ...smart } : withEpg;
-  }
-
   private writeCurrentState(response: ServerResponse): void {
     const ui = this.activeUi();
     const visibleState = this.visibleState(ui);
     const persistence = this.stateStore?.rendererState();
-    const live = this.liveUiState();
     const localMedia = this.localMediaService?.uiState(this.boundUrl);
     const downloads = this.downloadService?.uiState();
     const push = this.pushService?.uiState();
     const cast = this.castService?.uiState();
     const state = visibleState
-      ? { ...visibleState, backup: this.backupState, live, ...(localMedia ? { localMedia } : {}), ...(downloads ? { downloads } : {}), ...(push ? { push } : {}), ...(cast ? { cast } : {}) }
+      ? { ...visibleState, backup: this.backupState, ...(localMedia ? { localMedia } : {}), ...(downloads ? { downloads } : {}), ...(push ? { push } : {}), ...(cast ? { cast } : {}) }
       : null;
     if (this.importer) {
       writeJson(response, {
         import: this.importer.state,
         state,
-        live,
         ...(localMedia ? { localMedia } : {}),
         ...(downloads ? { downloads } : {}),
         ...(push ? { push } : {}),
@@ -3476,7 +3036,6 @@ export class DesktopSpiderUiServer {
     } else {
       writeJson(response, {
         state,
-        live,
         ...(localMedia ? { localMedia } : {}),
         ...(downloads ? { downloads } : {}),
         ...(push ? { push } : {}),
@@ -3614,10 +3173,8 @@ function toWebNowPlaying(
   player: PlaybackState | null,
   title: string | null,
   episode: string | null,
-  live: boolean,
-  liveStatus?: string,
 ): WebControlNowPlaying {
-  const status = player?.status ?? webPlaybackStatus(liveStatus ?? "idle");
+  const status = player?.status ?? "idle";
   return {
     status,
     title: safeText(title, 240),
@@ -3626,7 +3183,6 @@ function toWebNowPlaying(
     duration: safeFinite(player?.duration, 0),
     volume: Math.min(1, Math.max(0, safeFinite(player?.volume, 1))),
     muted: player?.muted ?? false,
-    live,
     error: player?.error ? safeWebError(player.error.code) : null,
   };
 }
@@ -3668,26 +3224,6 @@ function toWebDetail(id: string, detail: Record<string, unknown> | null, catalog
     year: safeText(firstText(detail ?? {}, ["vod_year", "year"]), 32),
     overview,
     episodes,
-  };
-}
-
-function toWebLiveState(state: LiveUiState): WebControlLiveState {
-  return {
-    channels: state.catalog.channels.map((channel) => ({
-      id: channel.id,
-      name: safeText(channel.name, 240) ?? channel.id,
-      group: safeText(channel.group, 160),
-      sourceName: safeText(channel.sourceName, 160) ?? "直播源",
-      streams: channel.streams.map((stream) => ({
-        id: stream.id,
-        label: safeText(stream.label, 160) ?? stream.id,
-        protocol: safeText(stream.protocol, 32) ?? "unknown",
-        status: stream.status,
-      })),
-    })),
-    activeChannelId: state.session?.channelId ?? null,
-    activeStreamId: state.session?.streamId ?? null,
-    state: state.session ? webPlaybackStatus(state.session.state) : null,
   };
 }
 
@@ -3929,16 +3465,6 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
         <button data-action="confirm-import">确认并信任</button>
       </section>`
     : "";
-  const androidCredentials = `<section data-testid="android-credentials" class="android-credentials">
-    <strong>Android Spider / UC 凭据</strong>
-    <p data-testid="android-credential-status">正在读取状态…</p>
-    <form data-action="android-credential-form">
-      <label>access_token <input name="accessToken" type="password" autocomplete="off" spellcheck="false"></label>
-      <button type="submit">保存</button>
-      <button type="button" data-action="android-credential-clear">清除</button>
-    </form>
-    <small>凭据仅用于 Android Spider 播放，不会显示或写入诊断报告。</small>
-  </section>`;
   const error = state.error
     ? `<section class="error" data-testid="error">
         <strong>${escapeHtml(errorLabel(state.error.code))}</strong>
@@ -4048,7 +3574,6 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
         <p data-testid="status" class="${state.loading ? "loading" : ""}">${escapeHtml(statusLabel[state.status])}${state.loading ? " · 加载中" : ""}</p>
       </header>
       ${warning}
-      ${androidCredentials}
       ${error}
       ${aggregateSearch}
       ${navigation}
@@ -4071,31 +3596,6 @@ export function renderDesktopSpiderUi(state: DesktopSpiderUiState): string {
           window.location.reload();
         };
         document.querySelectorAll('[data-action="confirm-import"]').forEach((button) => button.addEventListener('click', () => send('/api/import/confirm')));
-        const credentialStatus = document.querySelector('[data-testid="android-credential-status"]');
-        const refreshCredentialStatus = async () => {
-          try {
-            const response = await fetch('/api/android/credentials/status');
-            const value = await response.json();
-            if (credentialStatus) credentialStatus.textContent = value.configured ? '已配置' : '未配置';
-          } catch {
-            if (credentialStatus) credentialStatus.textContent = '不可用';
-          }
-        };
-        document.querySelector('[data-action="android-credential-form"]')?.addEventListener('submit', async (event) => {
-          event.preventDefault();
-          const form = event.currentTarget;
-          const input = form.querySelector('input[name="accessToken"]');
-          const accessToken = input?.value?.trim() || '';
-          if (!accessToken) return;
-          await fetch('/api/android/credentials/set', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ accessToken }) });
-          if (input) input.value = '';
-          await refreshCredentialStatus();
-        });
-        document.querySelector('[data-action="android-credential-clear"]')?.addEventListener('click', async () => {
-          await fetch('/api/android/credentials/clear', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
-          await refreshCredentialStatus();
-        });
-        void refreshCredentialStatus();
         document.querySelectorAll('[data-action="open"]').forEach((button) => button.addEventListener('click', () => send('/api/open')));
         document.querySelectorAll('[data-action="home"]').forEach((button) => button.addEventListener('click', () => send('/api/home')));
         document.querySelectorAll('[data-action="category"]').forEach((button) => button.addEventListener('click', () => send('/api/category', { typeId: button.dataset.typeId, page: Number(button.dataset.page || '1') })));
@@ -4262,77 +3762,6 @@ function stringValue(value: unknown, fallback: string): string {
   return typeof value === "string" ? value : fallback;
 }
 
-function liveInputFromRequest(body: Record<string, unknown>): LiveSourceImportInput {
-  const name = stringValue(body.name, "").trim();
-  const type = body.type;
-  if (!isLiveSourceType(type)) throw new LiveSourceError("LIVE_SOURCE_TYPE_INVALID", "直播源格式无效。");
-  const sourceId = typeof body.sourceId === "string" && body.sourceId.trim() ? body.sourceId.trim() : null;
-  if (type === "m3u-url" || type === "txt-url") {
-    const location = stringValue(body.location, "").trim();
-    if (!location) throw new LiveSourceError("LIVE_SOURCE_URL_INVALID", "直播源 URL 不能为空。");
-    return { name, type, location, ...(sourceId ? { sourceId } : {}) };
-  }
-  if (type === "fixture") {
-    const format = body.format === "txt" ? "txt" : body.format === "m3u" ? "m3u" : null;
-    const content = typeof body.content === "string" ? body.content : null;
-    if (!format || content === null) throw new LiveSourceError("LIVE_SOURCE_FIXTURE_INVALID", "直播 fixture 输入无效。");
-    const location = typeof body.location === "string" && body.location.trim() ? body.location.trim() : undefined;
-    return {
-      name,
-      type,
-      format,
-      content,
-      ...(location ? { location } : {}),
-      ...(sourceId ? { sourceId } : {}),
-    };
-  }
-  const fileName = stringValue(body.fileName, "playlist");
-  const content = typeof body.content === "string" ? body.content : undefined;
-  const filePath = typeof body.filePath === "string" && body.filePath.trim() ? body.filePath.trim() : undefined;
-  const location = typeof body.location === "string" && body.location.trim() ? body.location.trim() : undefined;
-  if (type !== "m3u-file" && type !== "txt-file") {
-    throw new LiveSourceError("LIVE_SOURCE_TYPE_INVALID", "直播源类型无效。");
-  }
-  return {
-    name,
-    type,
-    fileName,
-    ...(content === undefined ? {} : { content }),
-    ...(filePath ? { filePath } : {}),
-    ...(location ? { location } : {}),
-    ...(sourceId ? { sourceId } : {}),
-  };
-}
-
-function epgInputFromRequest(body: Record<string, unknown>): EpgSourceImportInput {
-  const name = stringValue(body.name, "").trim();
-  const type = body.type;
-  if (!isEpgSourceType(type)) throw new EpgSourceError("EPG_SOURCE_FAILED", "EPG 格式无效。");
-  const sourceId = typeof body.sourceId === "string" && body.sourceId.trim() ? body.sourceId.trim() : null;
-  if (type === "xmltv-url") {
-    const location = stringValue(body.location, "").trim();
-    if (!location) throw new EpgSourceError("EPG_SOURCE_FAILED", "EPG URL 不能为空。");
-    return { name, type, location, ...(sourceId ? { sourceId } : {}) };
-  }
-  const content = typeof body.content === "string" ? body.content : undefined;
-  const location = typeof body.location === "string" && body.location.trim() ? body.location.trim() : undefined;
-  if (type === "fixture") {
-    if (content === undefined) throw new EpgSourceError("EPG_SOURCE_FAILED", "EPG fixture 内容无效。");
-    return { name, type, content, ...(location ? { location } : {}), ...(sourceId ? { sourceId } : {}) };
-  }
-  const fileName = stringValue(body.fileName, "epg.xml");
-  const filePath = typeof body.filePath === "string" && body.filePath.trim() ? body.filePath.trim() : undefined;
-  return {
-    name,
-    type,
-    fileName,
-    ...(content === undefined ? {} : { content }),
-    ...(filePath ? { filePath } : {}),
-    ...(location ? { location } : {}),
-    ...(sourceId ? { sourceId } : {}),
-  };
-}
-
 function booleanValue(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
@@ -4419,7 +3848,6 @@ function renderPlaybackSourceDiagnostics(
   return `<details data-testid="playback-source-diagnostics">
     <summary>查看诊断</summary>
     <p>配置 ${diagnostics.configSiteCount} 个来源 → 允许搜索 ${diagnostics.searchableSites} → QX 当前支持 ${diagnostics.runtimeSupportedSites}</p>
-    <p${diagnostics.runtimePreparation === "ready" ? ` data-testid="android-runtime-ready"` : ""}>Android Runtime ${diagnostics.runtimePreparation === "ready" ? "READY" : "未使用"}${diagnostics.runtimePreparation === "ready" ? `（准备 ${diagnostics.runtimeWaitDurationMs}ms）` : ""}</p>
     <p>成功搜索 ${diagnostics.searchSuccessSites.length} → 获得 ${diagnostics.searchResultCount} 个结果 → 匹配 ${diagnostics.matchedCandidateCount} → 有播放线路 ${diagnostics.playableCandidateCount}</p>
     ${unsupportedHint ? `<p>${escapeHtml(unsupportedHint)}</p>` : ""}
     <ul>${diagnostics.sites.map((site) => `<li>${escapeHtml(site.siteName)}：初始化 ${escapeHtml(site.initialization)}，搜索 ${escapeHtml(site.search)}，结果 ${site.resultCount}${site.skipReason ? `，${escapeHtml(site.skipReason)}` : ""}</li>`).join("")}</ul>
@@ -4494,12 +3922,6 @@ function danmakuSettingsPatchFromRequest(body: Record<string, unknown>): Danmaku
   }
   if (Array.isArray(body.sources)) patch.sources = stringList(body.sources);
   return patch;
-}
-
-function liveBackendFromRequest(body: Record<string, unknown>): LivePlaybackBackend | undefined {
-  return body.backend === "html-video" || body.backend === "hls-js" || body.backend === "mpv"
-    ? body.backend
-    : undefined;
 }
 
 function playerMediaSyncFromRequest(body: Record<string, unknown>): PlayerMediaSync {
@@ -4662,7 +4084,7 @@ function isThemeMode(value: unknown): value is "system" | "light" | "dark" {
   return value === "system" || value === "light" || value === "dark";
 }
 
-function isNavigation(value: unknown): value is "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" | "live" | "local" | "downloads" {
+function isNavigation(value: unknown): value is "home" | "category" | "search" | "detail" | "favorites" | "follow" | "settings" | "local" | "downloads" {
   return value === "home"
     || value === "category"
     || value === "search"
@@ -4671,7 +4093,6 @@ function isNavigation(value: unknown): value is "home" | "category" | "search" |
     || value === "favorites"
     || value === "follow"
     || value === "settings"
-    || value === "live"
     || value === "local"
     || value === "downloads";
 }

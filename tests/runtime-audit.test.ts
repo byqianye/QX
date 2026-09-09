@@ -40,7 +40,7 @@ describe("RuntimeAuditService", () => {
         expect.objectContaining({ siteKey: "native", runtime: "native", supported: true }),
         expect.objectContaining({ siteKey: "js", runtime: "javascript", supported: true }),
         expect.objectContaining({ siteKey: "py", runtime: "python", supported: false, reason: "python_runtime_missing" }),
-        expect.objectContaining({ siteKey: "dex", runtime: "android-dex", supported: true, reason: "android_dex_artifact_ready" }),
+        expect.objectContaining({ siteKey: "dex", runtime: "unknown", supported: false, reason: "unsupported_artifact_runtime" }),
         expect.objectContaining({ siteKey: "jvm", runtime: "jvm-jar", supported: true }),
         expect.objectContaining({ siteKey: "broken", runtime: "unknown", supported: false, reason: "invalid_jar" }),
       ]));
@@ -65,16 +65,15 @@ describe("RuntimeAuditService", () => {
       expect(report.summary).toMatchObject({
         totalSites: 8,
         searchableSites: 8,
-        searchableSupportedSites: 6,
+        searchableSupportedSites: 5,
         runtimeCounts: {
           "cms-xml": 1,
           "cms-json": 1,
           native: 1,
           javascript: 1,
           python: 1,
-          "android-dex": 1,
           "jvm-jar": 1,
-          unknown: 1,
+          unknown: 2,
         },
       });
     } finally {
@@ -82,7 +81,7 @@ describe("RuntimeAuditService", () => {
     }
   });
 
-  it("renders the Android DEX gate from the audit summary", () => {
+  it("renders the unsupported artifact gate from the audit summary", () => {
     const markdown = renderRuntimeAuditMarkdown({
       generatedAt: "2026-08-08T00:00:00.000Z",
       sites: [],
@@ -97,15 +96,15 @@ describe("RuntimeAuditService", () => {
           "cms-xml": 0,
           native: 0,
           javascript: 0,
-          "android-dex": 4,
           "jvm-jar": 0,
           python: 0,
           unknown: 1,
         },
-        unsupportedReasons: {},
+        unsupportedReasons: { unsupported_artifact_runtime: 4 },
       },
     });
-    expect(markdown).toContain("Proceed to G83 Android DEX PoC.");
+    expect(markdown).toContain("Static artifact inspection only");
+    expect(markdown).toContain("4 site(s) use an unsupported artifact runtime.");
   });
 });
 

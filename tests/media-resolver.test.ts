@@ -34,7 +34,7 @@ describe("MediaResolver", () => {
     expect(mediaTypeFromUrl("https://media.example.invalid/master.m3u8?token=1")).toBe("hls");
     expect(mediaTypeFromUrl("https://media.example.invalid/stream.mpd")).toBe("dash");
     expect(mediaTypeFromUrl("https://media.example.invalid/episode.mp4")).toBe("mp4");
-    expect(mediaTypeFromUrl("https://media.example.invalid/live.flv")).toBe("flv");
+    expect(mediaTypeFromUrl("https://media.example.invalid/stream.flv")).toBe("flv");
   });
 
   it("uses content type when a direct URL has no useful extension", async () => {

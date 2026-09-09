@@ -22,8 +22,8 @@ describe("G72 Windows installer configuration", () => {
     expect(builderConfig).toContain("createDesktopShortcut: true");
     expect(builderConfig).toContain("createStartMenuShortcut: true");
     expect(builderConfig).toContain("deleteAppDataOnUninstall: false");
-    expect(builderConfig).toContain("android-spider-host/app/build/outputs/apk/debug/app-debug.apk");
-    expect(builderConfig).toContain("build/android-runtime-manifest.json");
+    expect(builderConfig).not.toContain("android-spider-host");
+    expect(builderConfig).not.toContain("android-runtime");
   });
 
   it("keeps user data by default and exposes an explicit uninstall component", () => {

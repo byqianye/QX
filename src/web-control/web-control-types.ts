@@ -19,8 +19,6 @@ export const WEB_CONTROL_ROUTES: readonly WebControlRouteContract[] = [
   { method: "GET", path: "/api/search", schema: "?q", permission: "read", rateClass: "search" },
   { method: "GET", path: "/api/detail", schema: "?id", permission: "read", rateClass: "read" },
   { method: "POST", path: "/api/play-episode", schema: "{lineIndex,episodeIndex,vipFlags?}", permission: "control", rateClass: "control" },
-  { method: "GET", path: "/api/live-channels", schema: "empty", permission: "read", rateClass: "read" },
-  { method: "POST", path: "/api/live-channel", schema: "{channelId,streamId?}", permission: "control", rateClass: "control" },
   { method: "POST", path: "/api/push", schema: "{url,title?}", permission: "push", rateClass: "control" },
   { method: "GET", path: "/api/downloads", schema: "empty", permission: "read", rateClass: "read" },
   { method: "GET", path: "/api/cast-devices", schema: "empty", permission: "read", rateClass: "read" },
@@ -36,7 +34,6 @@ export interface WebControlNowPlaying {
   duration: number;
   volume: number;
   muted: boolean;
-  live: boolean;
   error: { code: string; message: string } | null;
 }
 
@@ -65,28 +62,6 @@ export interface WebControlDetail {
   year: string | null;
   overview: string | null;
   episodes: readonly WebControlEpisode[];
-}
-
-export interface WebControlLiveStream {
-  id: string;
-  label: string;
-  protocol: string;
-  status: "ready" | "unsupported";
-}
-
-export interface WebControlLiveChannel {
-  id: string;
-  name: string;
-  group: string | null;
-  sourceName: string;
-  streams: readonly WebControlLiveStream[];
-}
-
-export interface WebControlLiveState {
-  channels: readonly WebControlLiveChannel[];
-  activeChannelId: string | null;
-  activeStreamId: string | null;
-  state: string | null;
 }
 
 export interface WebControlDownloadTask {
@@ -146,7 +121,6 @@ export interface WebControlBackendStatus {
   capabilities: {
     search: boolean;
     playback: boolean;
-    live: boolean;
     push: boolean;
     downloads: boolean;
     cast: boolean;
@@ -157,7 +131,6 @@ export interface WebControlBackendStatus {
 export interface WebControlSnapshot {
   nowPlaying: WebControlNowPlaying;
   search: WebControlSearchResult;
-  live: WebControlLiveState;
   downloads: WebControlDownloads;
   cast: WebControlCastState;
   status: WebControlBackendStatus;
@@ -173,8 +146,6 @@ export interface WebControlBackend {
   search(query: string): Promise<WebControlSearchResult>;
   detail(id: string): Promise<WebControlDetail>;
   playEpisode(input: { lineIndex: number; episodeIndex: number; vipFlags: readonly string[] }): Promise<void>;
-  liveChannels(): WebControlLiveState | Promise<WebControlLiveState>;
-  playLive(input: { channelId: string; streamId?: string }): Promise<void>;
   push(input: { url: string; title?: string }): Promise<WebControlPushResult>;
   downloads(): WebControlDownloads | Promise<WebControlDownloads>;
   castDevices(): WebControlCastState | Promise<WebControlCastState>;

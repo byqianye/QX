@@ -11,8 +11,8 @@ export const PINNED_TEMURIN = {
   sha256: "38f4b9fa0b36def9812f6576fd45f6224630477db8c4e669ee78eaa35abb9195",
 } as const;
 
-// sdkmanager/avdmanager are official Android command-line tools and require
-// the JDK XML module in addition to the modules used by QX's JVM host.
+// The JDK XML module is required by the JVM host in addition to the base
+// modules used by QX.
 export const MINIMAL_JRE_MODULES = ["java.base", "java.net.http", "java.xml", "java.logging", "java.desktop", "jdk.crypto.ec"] as const;
 
 export interface JavaRuntimeInspection {

@@ -162,7 +162,7 @@ describe("danmaku model, adapter, timeline, and service", () => {
     service.close();
   });
 
-  it("hydrates settings through SQLite and handles VOD/live fixtures", async () => {
+  it("hydrates settings through SQLite and handles VOD fixtures", async () => {
     const directory = mkdtempSync(join(tmpdir(), "qx-danmaku-"));
     directories.push(directory);
     const path = join(directory, "danmaku.db");
@@ -188,8 +188,6 @@ describe("danmaku model, adapter, timeline, and service", () => {
     service.setSettings({ enabled: true, keyword: "" });
     expect(service.query(1_200)).toHaveLength(1);
     expect(service.sync(1.2 * 1_000, "playing", "playing").playing).toBe(true);
-    await service.load({ format: "items", timeline: "live", source: "fixture-live", data: [{ timeMs: 0, text: "live" }] });
-    expect(service.uiState().timeline).toBe("live");
     expect(service.sync(500, "playing", "playing").currentTimeMs).toBe(500);
     expect(service.clear().totalCount).toBe(0);
     service.close();

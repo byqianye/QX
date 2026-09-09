@@ -315,48 +315,13 @@ pub async fn ingest_remote(
     }
     let timeout =
         std::time::Duration::from_millis(payload.timeout_ms.unwrap_or(30_000).clamp(1_000, 60_000));
-    let client = reqwest::Client::builder()
+    let client = super::source_session::client_builder_for_url(reqwest::Client::builder(), &source)
         .timeout(timeout)
-        .redirect(reqwest::redirect::Policy::none())
+        .redirect(reqwest::redirect::Policy::limited(5))
         .build()
         .map_err(|error| CatalogError::storage(error.to_string()))?;
-    let fetched = async {
-        let response = client
-            .get(&source)
-            .header(reqwest::header::USER_AGENT, "QX-Yingshi/1.0 config-catalog")
-            .send()
-            .await
-            .map_err(|error| CatalogError {
-                code: "CONFIG_REMOTE_FETCH_FAILED".to_string(),
-                message: error.to_string(),
-                retryable: true,
-            })?;
-        if !response.status().is_success() {
-            return Err(CatalogError {
-                code: "CONFIG_REMOTE_FETCH_FAILED".to_string(),
-                message: format!("remote configuration returned {}", response.status()),
-                retryable: true,
-            });
-        }
-        let bytes = response.bytes().await.map_err(|error| CatalogError {
-            code: "CONFIG_REMOTE_FETCH_FAILED".to_string(),
-            message: error.to_string(),
-            retryable: true,
-        })?;
-        if bytes.len() > 8 * 1024 * 1024 {
-            return Err(CatalogError {
-                code: "CONFIG_REMOTE_RESPONSE_TOO_LARGE".to_string(),
-                message: "remote configuration exceeds 8 MiB".to_string(),
-                retryable: false,
-            });
-        }
-        String::from_utf8(bytes.to_vec()).map_err(|error| CatalogError {
-            code: "CONFIG_REMOTE_UTF8_INVALID".to_string(),
-            message: error.to_string(),
-            retryable: false,
-        })
-    }
-    .await;
+    let retry_allowed = !super::source_session::is_loopback_target(&source);
+    let fetched = fetch_remote_config(&source, &client, timeout, retry_allowed).await;
 
     match fetched {
         Ok(raw) => {
@@ -394,6 +359,119 @@ pub async fn ingest_remote(
             })
         }
     }
+}
+
+async fn fetch_remote_config(
+    source: &str,
+    client: &reqwest::Client,
+    timeout: std::time::Duration,
+    retry_allowed: bool,
+) -> Result<String, CatalogError> {
+    let build_request = |client: &reqwest::Client| {
+        client
+            .get(source)
+            .header(reqwest::header::USER_AGENT, "QX-Yingshi/1.0 config-catalog")
+    };
+    let first = build_request(client).send().await;
+    let should_retry = match &first {
+        Ok(response) => matches!(
+            response.status(),
+            reqwest::StatusCode::BAD_GATEWAY
+                | reqwest::StatusCode::SERVICE_UNAVAILABLE
+                | reqwest::StatusCode::GATEWAY_TIMEOUT
+                | reqwest::StatusCode::TOO_MANY_REQUESTS
+                | reqwest::StatusCode::INTERNAL_SERVER_ERROR
+        ),
+        Err(error) => error.is_connect() || error.is_timeout(),
+    };
+    let response = if retry_allowed && should_retry {
+        let first_description = match &first {
+            Ok(response) => format!("remote configuration returned {}", response.status()),
+            Err(error) => error.to_string(),
+        };
+        let direct = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(timeout)
+            .redirect(reqwest::redirect::Policy::limited(5))
+            .build()
+            .map_err(|error| CatalogError {
+                code: "CONFIG_REMOTE_FETCH_FAILED".to_string(),
+                message: format!("{first_description}; direct retry client failed: {error}"),
+                retryable: true,
+            })?;
+        build_request(&direct)
+            .send()
+            .await
+            .map_err(|error| CatalogError {
+                code: "CONFIG_REMOTE_FETCH_FAILED".to_string(),
+                message: format!("{first_description}; direct retry failed: {error}"),
+                retryable: true,
+            })?
+    } else {
+        first.map_err(|error| CatalogError {
+            code: "CONFIG_REMOTE_FETCH_FAILED".to_string(),
+            message: error.to_string(),
+            retryable: true,
+        })?
+    };
+    let first_status_success = response.status().is_success();
+    let first_result = read_remote_config_response(response).await;
+    match first_result {
+        Ok(raw) => Ok(raw),
+        Err(error) if retry_allowed && first_status_success && error.retryable => {
+            let direct = reqwest::Client::builder()
+                .no_proxy()
+                .timeout(timeout)
+                .redirect(reqwest::redirect::Policy::limited(5))
+                .build()
+                .map_err(|direct_error| CatalogError {
+                    code: "CONFIG_REMOTE_FETCH_FAILED".to_string(),
+                    message: format!("{}; direct retry client failed: {direct_error}", error.message),
+                    retryable: true,
+                })?;
+            let response = build_request(&direct)
+                .send()
+                .await
+                .map_err(|direct_error| CatalogError {
+                    code: "CONFIG_REMOTE_FETCH_FAILED".to_string(),
+                    message: format!("{}; direct retry failed: {direct_error}", error.message),
+                    retryable: true,
+                })?;
+            read_remote_config_response(response).await
+        }
+        Err(error) => Err(error),
+    }
+}
+
+async fn read_remote_config_response(
+    response: reqwest::Response,
+) -> Result<String, CatalogError> {
+    if !response.status().is_success() {
+        return Err(CatalogError {
+            code: "CONFIG_REMOTE_FETCH_FAILED".to_string(),
+            message: format!("remote configuration returned {}", response.status()),
+            retryable: false,
+        });
+    }
+    let bytes = super::source_session::read_bounded_response(response)
+        .await
+        .map_err(|error| match error {
+            super::source_session::BoundedResponseError::TooLarge => CatalogError {
+                code: "CONFIG_REMOTE_RESPONSE_TOO_LARGE".to_string(),
+                message: "remote configuration exceeds 8 MiB".to_string(),
+                retryable: false,
+            },
+            super::source_session::BoundedResponseError::Request(message) => CatalogError {
+                code: "CONFIG_REMOTE_FETCH_FAILED".to_string(),
+                message,
+                retryable: true,
+            },
+        })?;
+    String::from_utf8(bytes).map_err(|error| CatalogError {
+        code: "CONFIG_REMOTE_UTF8_INVALID".to_string(),
+        message: error.to_string(),
+        retryable: false,
+    })
 }
 
 fn ingest_multi_connection(
@@ -543,8 +621,7 @@ pub fn ensure_schema(connection: &Connection) -> Result<(), CatalogError> {
 
 pub fn parse_config(input: &str) -> Result<(String, usize, Vec<ConfigSiteSummary>), CatalogError> {
     let decoded = decode_config_payload(input)?;
-    let value: Value = serde_json::from_str(&decoded)
-        .map_err(|error| CatalogError::invalid("CONFIG_JSON_INVALID", error.to_string()))?;
+    let (normalized, value) = parse_json_payload(&decoded)?;
     let object = value.as_object().ok_or_else(|| {
         CatalogError::invalid(
             "CONFIG_OBJECT_REQUIRED",
@@ -563,28 +640,25 @@ pub fn parse_config(input: &str) -> Result<(String, usize, Vec<ConfigSiteSummary
         })
         .transpose()?
         .map_or(0, Vec::len);
-    let sites = extract_site_summaries(&decoded)?;
-    Ok((decoded, site_count, sites))
+    let sites = extract_site_summaries_from_value(&value);
+    Ok((normalized, site_count, sites))
 }
 
 fn extract_site_summaries(input: &str) -> Result<Vec<ConfigSiteSummary>, CatalogError> {
-    let value: Value = serde_json::from_str(input)
-        .map_err(|error| CatalogError::invalid("CONFIG_JSON_INVALID", error.to_string()))?;
-    let object = value.as_object().ok_or_else(|| {
-        CatalogError::invalid(
-            "CONFIG_OBJECT_REQUIRED",
-            "configuration must be a JSON object",
-        )
-    })?;
-    let Some(sites) = object.get("sites") else {
-        return Ok(Vec::new());
+    let (_, value) = parse_json_payload(input)?;
+    Ok(extract_site_summaries_from_value(&value))
+}
+
+fn extract_site_summaries_from_value(value: &Value) -> Vec<ConfigSiteSummary> {
+    let Some(object) = value.as_object() else {
+        return Vec::new();
     };
-    let sites = sites.as_array().ok_or_else(|| {
-        CatalogError::invalid(
-            "CONFIG_SITES_INVALID",
-            "configuration sites must be an array",
-        )
-    })?;
+    let Some(sites) = object.get("sites") else {
+        return Vec::new();
+    };
+    let Some(sites) = sites.as_array() else {
+        return Vec::new();
+    };
     let mut summaries = Vec::new();
     for (index, site) in sites.iter().enumerate() {
         let Some(site) = site.as_object() else {
@@ -640,7 +714,96 @@ fn extract_site_summaries(input: &str) -> Result<Vec<ConfigSiteSummary>, Catalog
             ext,
         });
     }
-    Ok(summaries)
+    summaries
+}
+
+fn parse_json_payload(input: &str) -> Result<(String, Value), CatalogError> {
+    match serde_json::from_str(input) {
+        Ok(value) => Ok((input.to_string(), value)),
+        Err(strict_error) => {
+            let normalized = strip_json_comments(input)?;
+            let value = serde_json::from_str(&normalized).map_err(|_| {
+                CatalogError::invalid("CONFIG_JSON_INVALID", strict_error.to_string())
+            })?;
+            Ok((normalized, value))
+        }
+    }
+}
+
+fn strip_json_comments(input: &str) -> Result<String, CatalogError> {
+    let bytes = input.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    while index < bytes.len() {
+        let current = bytes[index];
+        if in_string {
+            output.push(current);
+            if escaped {
+                escaped = false;
+            } else if current == b'\\' {
+                escaped = true;
+            } else if current == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+
+        if current == b'"' {
+            in_string = true;
+            output.push(current);
+            index += 1;
+            continue;
+        }
+
+        if current == b'/' && bytes.get(index + 1) == Some(&b'/') {
+            output.push(b' ');
+            index += 2;
+            while index < bytes.len() && bytes[index] != b'\r' && bytes[index] != b'\n' {
+                index += 1;
+            }
+            continue;
+        }
+
+        if current == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            output.push(b' ');
+            index += 2;
+            let mut closed = false;
+            while index < bytes.len() {
+                if bytes[index] == b'*' && bytes.get(index + 1) == Some(&b'/') {
+                    index += 2;
+                    closed = true;
+                    break;
+                }
+                index += 1;
+            }
+            if !closed {
+                return Err(CatalogError::invalid(
+                    "CONFIG_JSON_INVALID",
+                    "unterminated JSON block comment",
+                ));
+            }
+            continue;
+        }
+
+        if current == b'#' {
+            output.push(b' ');
+            index += 1;
+            while index < bytes.len() && bytes[index] != b'\r' && bytes[index] != b'\n' {
+                index += 1;
+            }
+            continue;
+        }
+
+        output.push(current);
+        index += 1;
+    }
+
+    String::from_utf8(output)
+        .map_err(|error| CatalogError::invalid("CONFIG_JSON_INVALID", error.to_string()))
 }
 
 fn value_string(value: &Value) -> Option<String> {
@@ -925,16 +1088,17 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        activate_connection, decode_config_payload, history_connection, ingest_connection,
-        ingest_remote, parse_config, ConfigCatalogPayload,
+        activate_connection, decode_config_payload, fetch_remote_config, history_connection,
+        ingest_connection, ingest_remote, parse_config, ConfigCatalogPayload,
     };
-    use crate::jianpian;
+    use crate::{app_get, jianpian, test_support::bind_loopback_tcp};
     use base64::{engine::general_purpose::STANDARD, Engine as _};
-    use reqwest::header::HeaderMap;
+    use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
     use rusqlite::Connection;
     use serde_json::json;
     use std::sync::{atomic::AtomicBool, Arc};
     use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
     fn decodes_plain_tvbox_and_double_star_payloads() {
@@ -953,6 +1117,40 @@ mod tests {
                 .1,
             1
         );
+    }
+
+    #[test]
+    fn accepts_public_catalog_comments_without_touching_url_fragments() {
+        let raw = r##"{
+          // optional spider
+          # public catalog note
+          /* a block comment between fields */
+          "sites": [
+            {
+              "key": "肥猫",
+              "api": "csp_AppGet",
+              "ext": "https://bind.315999.xyz/89.txt|#getapp@TMD@2025|120",
+              "note": "keep https://example.invalid/#fragment // inside strings"
+            } // trailing line comment
+          ]
+        }"##;
+
+        let (normalized, site_count, sites) = parse_config(raw).expect("commented config");
+        assert_eq!(site_count, 1);
+        assert_eq!(sites[0].key, "肥猫");
+        assert_eq!(
+            sites[0].ext.as_deref(),
+            Some("https://bind.315999.xyz/89.txt|#getapp@TMD@2025|120")
+        );
+        assert!(!normalized.contains("optional spider"));
+        assert!(normalized.contains("#getapp@TMD@2025"));
+    }
+
+    #[test]
+    fn rejects_unterminated_public_catalog_comments() {
+        let error = parse_config(r#"{"sites":[]} /* unterminated"#)
+            .expect_err("unterminated comment must fail closed");
+        assert_eq!(error.code, "CONFIG_JSON_INVALID");
     }
 
     #[test]
@@ -1176,6 +1374,225 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn remote_config_retries_a_proxy_502_once_without_changing_the_request() {
+        let origin = bind_loopback_tcp().await.expect("bind config origin");
+        let origin_address = origin.local_addr().expect("config origin address");
+        let proxy = bind_loopback_tcp().await.expect("bind config proxy");
+        let proxy_address = proxy.local_addr().expect("config proxy address");
+        let source = format!("http://{origin_address}/config.json");
+
+        let proxy_source = source.clone();
+        let proxy_task = tokio::spawn(async move {
+            let (mut socket, _) = proxy.accept().await.expect("accept proxied config request");
+            let mut buffer = vec![0u8; 4096];
+            let read = socket
+                .read(&mut buffer)
+                .await
+                .expect("read proxied request");
+            let request = String::from_utf8_lossy(&buffer[..read]);
+            assert!(request.starts_with(&format!("GET {proxy_source} HTTP/1.1\r\n")));
+            assert!(request
+                .to_ascii_lowercase()
+                .contains("user-agent: qx-yingshi/1.0 config-catalog\r\n"));
+            socket
+                .write_all(
+                    b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .expect("write proxy failure");
+        });
+
+        let origin_task = tokio::spawn(async move {
+            let (mut socket, _) = origin.accept().await.expect("accept direct config request");
+            let mut buffer = vec![0u8; 4096];
+            let read = socket.read(&mut buffer).await.expect("read direct request");
+            let request = String::from_utf8_lossy(&buffer[..read]);
+            assert!(request.starts_with("GET /config.json HTTP/1.1\r\n"));
+            assert!(request
+                .to_ascii_lowercase()
+                .contains("user-agent: qx-yingshi/1.0 config-catalog\r\n"));
+            let body = br#"{"sites":[{"key":"direct"}]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write direct config headers");
+            socket
+                .write_all(body)
+                .await
+                .expect("write direct config body");
+        });
+
+        let client = reqwest::Client::builder()
+            .proxy(reqwest::Proxy::http(format!("http://{proxy_address}")).expect("proxy URL"))
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(2))
+            .build()
+            .expect("proxy config client");
+        let raw = fetch_remote_config(&source, &client, Duration::from_secs(2), true)
+            .await
+            .expect("proxy 502 falls back to the same direct config request");
+        assert_eq!(raw, r#"{"sites":[{"key":"direct"}]}"#);
+        proxy_task.await.expect("proxy fixture completes");
+        origin_task.await.expect("origin fixture completes");
+    }
+
+    #[tokio::test]
+    async fn remote_config_follows_a_limited_redirect() {
+        let origin = bind_loopback_tcp().await.expect("bind config origin");
+        let origin_address = origin.local_addr().expect("config origin address");
+        let redirector = bind_loopback_tcp().await.expect("bind config redirector");
+        let redirector_address = redirector
+            .local_addr()
+            .expect("config redirector address");
+        let source = format!("http://{redirector_address}/config.json");
+        let target = format!("http://{origin_address}/config.json");
+
+        let redirect_task = tokio::spawn(async move {
+            let (mut socket, _) = redirector.accept().await.expect("accept redirect request");
+            let mut buffer = [0u8; 4096];
+            socket.read(&mut buffer).await.expect("read redirect request");
+            let response = format!(
+                "HTTP/1.1 302 Found\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write redirect response");
+        });
+        let origin_task = tokio::spawn(async move {
+            let (mut socket, _) = origin.accept().await.expect("accept redirected request");
+            let mut buffer = [0u8; 4096];
+            socket.read(&mut buffer).await.expect("read redirected request");
+            let body = br#"{"sites":[{"key":"redirected"}]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write redirected config");
+            socket.write_all(body).await.expect("write redirected body");
+        });
+
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::limited(5))
+            .timeout(Duration::from_secs(2))
+            .build()
+            .expect("redirect config client");
+        let raw = fetch_remote_config(&source, &client, Duration::from_secs(2), false)
+            .await
+            .expect("limited redirect should be followed");
+        assert_eq!(raw, r#"{"sites":[{"key":"redirected"}]}"#);
+        redirect_task.await.expect("redirect fixture completes");
+        origin_task.await.expect("origin fixture completes");
+    }
+
+    #[tokio::test]
+    async fn remote_config_retries_when_the_response_body_is_truncated() {
+        let server = bind_loopback_tcp().await.expect("bind truncated config server");
+        let address = server.local_addr().expect("truncated config address");
+        let source = format!("http://{address}/config.json");
+        let server_task = tokio::spawn(async move {
+            for attempt in 0..2 {
+                let (mut socket, _) = server.accept().await.expect("accept config request");
+                let mut buffer = [0u8; 4096];
+                socket.read(&mut buffer).await.expect("read config request");
+                if attempt == 0 {
+                    socket
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\n{\"sit\r\n",
+                        )
+                        .await
+                        .expect("write truncated response");
+                } else {
+                    let body = br#"{"sites":[{"key":"retried"}]}"#;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    socket
+                        .write_all(response.as_bytes())
+                        .await
+                        .expect("write retry headers");
+                    socket.write_all(body).await.expect("write retry body");
+                }
+            }
+        });
+
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::limited(5))
+            .timeout(Duration::from_secs(2))
+            .build()
+            .expect("truncated config client");
+        let raw = fetch_remote_config(&source, &client, Duration::from_secs(2), true)
+            .await
+            .expect("truncated response should be retried");
+        assert_eq!(raw, r#"{"sites":[{"key":"retried"}]}"#);
+        server_task.await.expect("truncated config fixture completes");
+    }
+
+    #[tokio::test]
+    async fn remote_config_does_not_bypass_a_non_retryable_proxy_status() {
+        let origin = bind_loopback_tcp()
+            .await
+            .expect("bind unused config origin");
+        let origin_address = origin.local_addr().expect("unused config origin address");
+        let proxy = bind_loopback_tcp()
+            .await
+            .expect("bind rejecting config proxy");
+        let proxy_address = proxy.local_addr().expect("rejecting config proxy address");
+        let source = format!("http://{origin_address}/config.json");
+
+        let proxy_task = tokio::spawn(async move {
+            let (mut socket, _) = proxy
+                .accept()
+                .await
+                .expect("accept rejected config request");
+            let mut buffer = vec![0u8; 4096];
+            let _ = socket
+                .read(&mut buffer)
+                .await
+                .expect("read rejected request");
+            socket
+                .write_all(
+                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .expect("write rejected status");
+        });
+
+        let client = reqwest::Client::builder()
+            .proxy(reqwest::Proxy::http(format!("http://{proxy_address}")).expect("proxy URL"))
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(2))
+            .build()
+            .expect("rejecting proxy client");
+        let error = fetch_remote_config(&source, &client, Duration::from_secs(2), true)
+            .await
+            .expect_err("404 must not bypass the configured proxy");
+        assert_eq!(error.code, "CONFIG_REMOTE_FETCH_FAILED");
+        assert!(
+            error.message.contains("404 Not Found"),
+            "unexpected proxy error: {}",
+            error.message
+        );
+        proxy_task.await.expect("rejecting proxy fixture completes");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), origin.accept())
+                .await
+                .is_err(),
+            "non-retryable proxy status must not reach the direct origin"
+        );
+    }
+
+    #[tokio::test]
     #[ignore = "real Feimao refresh and Jianpian playback canary; run explicitly"]
     async fn real_feimao_refreshes_three_times_and_completes_native_jianpian_chain() {
         let source = std::env::var("QX_FEIMAO_CANARY_URL")
@@ -1219,6 +1636,51 @@ mod tests {
         jianpian::call("init", None, endpoint, &headers, timeout, cancelled.clone())
             .await
             .expect("Jianpian init");
+        let home = jianpian::call("home", None, endpoint, &headers, timeout, cancelled.clone())
+            .await
+            .expect("Jianpian home");
+        let home_card = home["list"]
+            .as_array()
+            .and_then(|items| items.first())
+            .expect("Jianpian home card");
+        assert!(home_card["vod_id"]
+            .as_str()
+            .is_some_and(|value| !value.trim().is_empty()));
+        assert!(home_card["vod_name"]
+            .as_str()
+            .is_some_and(|value| !value.trim().is_empty()));
+        let poster = home_card["vod_pic"]
+            .as_str()
+            .filter(|value| value.starts_with("http://") || value.starts_with("https://"))
+            .expect("Jianpian absolute home poster");
+        let image_response = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(timeout)
+            .build()
+            .expect("Jianpian image client")
+            .get(poster)
+            .send()
+            .await
+            .expect("Jianpian home poster request");
+        assert!(
+            image_response.status().is_success(),
+            "Jianpian home poster returned {}",
+            image_response.status()
+        );
+        let image_bytes = image_response
+            .bytes()
+            .await
+            .expect("Jianpian home poster bytes");
+        assert!(
+            image_bytes.starts_with(&[0xff, 0xd8, 0xff])
+                || image_bytes.starts_with(&[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+                || image_bytes.starts_with(b"GIF87a")
+                || image_bytes.starts_with(b"GIF89a")
+                || (image_bytes.len() >= 12
+                    && image_bytes.starts_with(b"RIFF")
+                    && &image_bytes[8..12] == b"WEBP"),
+            "Jianpian home poster must contain recognized image bytes"
+        );
         let search = jianpian::call(
             "search",
             Some(&json!({ "key": "流浪地球", "page": 1 })),
@@ -1260,6 +1722,636 @@ mod tests {
         assert!(player["url"]
             .as_str()
             .is_some_and(|url| url.starts_with("http")));
+        let media_url = player["url"].as_str().expect("Jianpian player URL");
+        let mut media_headers = HeaderMap::new();
+        for (name, value) in player["header"].as_object().into_iter().flatten() {
+            let Ok(name) = HeaderName::from_bytes(name.as_bytes()) else {
+                continue;
+            };
+            let Some(value) = value.as_str() else {
+                continue;
+            };
+            let Ok(value) = HeaderValue::from_str(value) else {
+                continue;
+            };
+            media_headers.insert(name, value);
+        }
+        let media_client = reqwest::Client::builder()
+            .default_headers(media_headers)
+            .timeout(timeout)
+            .build()
+            .expect("Jianpian media client");
+        let mut media_response = media_client
+            .get(media_url)
+            .send()
+            .await
+            .expect("Jianpian media request");
+        assert!(
+            media_response.status().is_success()
+                || media_response.status() == reqwest::StatusCode::PARTIAL_CONTENT,
+            "Jianpian media returned {}",
+            media_response.status()
+        );
+        let content_type = media_response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let first_chunk = media_response
+            .chunk()
+            .await
+            .expect("Jianpian media first chunk")
+            .expect("Jianpian media must return a non-empty first chunk");
+        let is_hls = content_type.contains("mpegurl") || first_chunk.starts_with(b"#EXTM3U");
+        if is_hls {
+            let mut playlist_url =
+                reqwest::Url::parse(media_url).expect("Jianpian media URL parses");
+            let mut playlist =
+                read_bounded_body(&mut media_response, first_chunk.to_vec(), 1024 * 1024)
+                    .await
+                    .expect("Jianpian HLS manifest body");
+            let mut media_sample = None;
+            let mut media_content_type = String::new();
+            let mut encryption_key = None;
+            for _ in 0..3 {
+                let manifest =
+                    std::str::from_utf8(&playlist).expect("Jianpian HLS manifest must be UTF-8");
+                assert!(
+                    manifest.contains("#EXTM3U"),
+                    "Jianpian HLS response must contain an HLS manifest"
+                );
+                if let Some(key_line) = manifest
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| line.starts_with("#EXT-X-KEY:"))
+                {
+                    let method = key_line
+                        .split_once("METHOD=")
+                        .and_then(|(_, value)| value.split([',', '\n']).next())
+                        .unwrap_or_default();
+                    assert_eq!(method, "AES-128", "Jianpian HLS key method must be AES-128");
+                    let key_uri = key_line
+                        .split_once("URI=\"")
+                        .and_then(|(_, value)| value.split('\"').next())
+                        .expect("Jianpian HLS AES key URI");
+                    let key_url = playlist_url
+                        .join(key_uri)
+                        .expect("Jianpian HLS key URI resolves");
+                    let key_response = media_client
+                        .get(key_url)
+                        .send()
+                        .await
+                        .expect("Jianpian HLS key request")
+                        .error_for_status()
+                        .expect("Jianpian HLS key status");
+                    let key_bytes = key_response.bytes().await.expect("Jianpian HLS key bytes");
+                    assert_eq!(
+                        key_bytes.len(),
+                        16,
+                        "Jianpian HLS AES-128 key must be 16 bytes"
+                    );
+                    encryption_key = Some(key_bytes.len());
+                }
+                let uri = manifest
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty() && !line.starts_with('#'))
+                    .expect("Jianpian HLS manifest must contain a media URI");
+                let next_url = playlist_url.join(uri).expect("Jianpian HLS URI resolves");
+                let response = media_client
+                    .get(next_url.clone())
+                    .send()
+                    .await
+                    .expect("Jianpian HLS child request");
+                assert!(
+                    response.status().is_success()
+                        || response.status() == reqwest::StatusCode::PARTIAL_CONTENT,
+                    "Jianpian HLS child returned {}",
+                    response.status()
+                );
+                let child_type = response
+                    .headers()
+                    .get(CONTENT_TYPE)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                let mut response = response;
+                let first_child = response
+                    .chunk()
+                    .await
+                    .expect("Jianpian HLS child first chunk")
+                    .expect("Jianpian HLS child body is empty");
+                let child_is_playlist = next_url.path().to_ascii_lowercase().ends_with(".m3u8")
+                    || child_type.contains("mpegurl")
+                    || child_type.contains("x-mpegurl")
+                    || first_child.starts_with(b"#EXTM3U");
+                if child_is_playlist {
+                    playlist_url = next_url;
+                    playlist = read_bounded_body(&mut response, first_child.to_vec(), 1024 * 1024)
+                        .await
+                        .expect("Jianpian HLS child manifest body");
+                    continue;
+                }
+                media_content_type = child_type;
+                media_sample = Some(first_child.to_vec());
+                break;
+            }
+            let sample = media_sample.expect("Jianpian HLS must reach a media segment");
+            if encryption_key.is_some() {
+                assert!(
+                    !sample.is_empty(),
+                    "Jianpian encrypted HLS media segment is empty"
+                );
+            } else {
+                assert!(
+                    recognized_media_sample(&media_content_type, &sample),
+                    "Jianpian HLS media segment must have a recognized media signature"
+                );
+            }
+        } else {
+            assert!(
+                recognized_media_sample(&content_type, &first_chunk),
+                "Jianpian media must return a recognized progressive media response, not {content_type:?}"
+            );
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    async fn read_bounded_body(
+        response: &mut reqwest::Response,
+        mut body: Vec<u8>,
+        limit: usize,
+    ) -> Result<Vec<u8>, String> {
+        if body.len() > limit
+            || response
+                .content_length()
+                .is_some_and(|length| length > limit as u64)
+        {
+            return Err(format!("response exceeds {limit} bytes"));
+        }
+        while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
+            if body.len().saturating_add(chunk.len()) > limit {
+                return Err(format!("response exceeds {limit} bytes"));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(body)
+    }
+
+    fn recognized_media_sample(content_type: &str, sample: &[u8]) -> bool {
+        content_type.starts_with("video/")
+            || content_type.starts_with("audio/")
+            || sample.starts_with(&[0x47])
+            || (sample.len() >= 8
+                && (&sample[4..8] == b"ftyp"
+                    || &sample[4..8] == b"styp"
+                    || &sample[4..8] == b"moof"))
+            || sample.starts_with(&[0x1a, 0x45, 0xdf, 0xa3])
+            || sample.starts_with(b"ID3")
+            || sample.starts_with(&[0xff, 0xf1])
+            || sample.starts_with(&[0xff, 0xf9])
+    }
+
+    #[tokio::test]
+    #[ignore = "real Feimao AppGet search/detail/player canary; run explicitly"]
+    async fn real_feimao_config_completes_appget_read_and_player_chain() {
+        let source = std::env::var("QX_FEIMAO_CANARY_URL")
+            .unwrap_or_else(|_| "http://xn--z7x900a.net/".to_string());
+        let path =
+            std::env::temp_dir().join(format!("qx-feimao-appget-{}.sqlite3", uuid::Uuid::new_v4()));
+        let snapshot = ingest_remote(
+            &path,
+            &ConfigCatalogPayload {
+                source,
+                source_kind: "url".to_string(),
+                raw: String::new(),
+                fetch_remote: true,
+                timeout_ms: Some(30_000),
+            },
+        )
+        .await
+        .expect("Feimao refresh");
+        let app_get_sites = snapshot
+            .sites
+            .iter()
+            .filter(|site| site.api.eq_ignore_ascii_case("csp_AppGet"))
+            .collect::<Vec<_>>();
+        assert!(
+            !app_get_sites.is_empty(),
+            "Feimao config must contain csp_AppGet sites"
+        );
+        for site in &app_get_sites {
+            app_get::from_ext(site.ext.as_deref().expect("AppGet ext"))
+                .expect("AppGet ext parses")
+                .expect("AppGet ext contains a fixed AES key");
+        }
+        let requested_site = std::env::var("QX_APPGET_CANARY_SITE").ok();
+        let site = app_get_sites
+            .into_iter()
+            .find(|site| {
+                requested_site.as_deref().map_or_else(
+                    || site.name.contains("肥猫"),
+                    |name| site.name.contains(name),
+                )
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "Feimao config must contain the requested csp_AppGet site: {}",
+                    requested_site.as_deref().unwrap_or("肥猫")
+                )
+            });
+        let config = app_get::from_ext(site.ext.as_deref().expect("AppGet ext"))
+            .expect("AppGet ext parses")
+            .expect("AppGet ext contains a fixed AES key");
+        let headers = HeaderMap::new();
+        let timeout = Duration::from_secs(30);
+        let cancelled = Arc::new(AtomicBool::new(false));
+
+        let home = app_get::call(&config, "home", None, &headers, timeout, cancelled.clone())
+            .await
+            .expect("AppGet home");
+        assert!(home["class"].is_array());
+
+        let explicit_search_key = std::env::var("QX_APPGET_CANARY_KEY").ok();
+        let mut search_keys = explicit_search_key.clone().into_iter().collect::<Vec<_>>();
+        if search_keys.is_empty() {
+            search_keys.extend(["流浪地球", "斗破苍穹"].into_iter().map(str::to_string));
+            if let Some(home_title) = home["list"]
+                .as_array()
+                .and_then(|items| items.first())
+                .and_then(|item| item["vod_name"].as_str())
+                .filter(|value| !value.trim().is_empty())
+            {
+                search_keys.push(home_title.to_string());
+            }
+        }
+        let mut search = None;
+        let mut last_search_error = None;
+        for search_key in &search_keys {
+            match app_get::call(
+                &config,
+                "search",
+                Some(&json!({"key":search_key,"page":1})),
+                &headers,
+                timeout,
+                cancelled.clone(),
+            )
+            .await
+            {
+                Ok(value)
+                    if value["list"]
+                        .as_array()
+                        .is_some_and(|items| !items.is_empty()) =>
+                {
+                    search = Some(value);
+                    break;
+                }
+                Ok(_) => {
+                    last_search_error = Some(format!("{search_key}: empty result"));
+                }
+                Err(error) => {
+                    let message = format!("{error:?}");
+                    if message.contains("_AUTH_REQUIRED") || explicit_search_key.is_some() {
+                        panic!("AppGet search ({search_key}): {message}");
+                    }
+                    last_search_error = Some(format!("{search_key}: {message}"));
+                }
+            }
+        }
+        let search = search.unwrap_or_else(|| {
+            panic!(
+                "AppGet site {} returned no search result; tried {:?}; last error: {}",
+                site.name,
+                search_keys,
+                last_search_error.unwrap_or_else(|| "unknown".to_string())
+            )
+        });
+        let id = search["list"][0]["vod_id"]
+            .as_str()
+            .expect("AppGet search id");
+        let detail = app_get::call(
+            &config,
+            "detail",
+            Some(&json!({"ids":[id]})),
+            &headers,
+            timeout,
+            cancelled.clone(),
+        )
+        .await
+        .expect("AppGet detail");
+        let episodes = detail["vod_play_url"]
+            .as_str()
+            .expect("AppGet play URLs")
+            .split("$$$")
+            .flat_map(|line| line.split('#'))
+            .take(256)
+            .collect::<Vec<_>>();
+        assert!(!episodes.is_empty(), "AppGet detail must contain episodes");
+        let mut resolved = None;
+        let mut last_player_error = None;
+        for episode in episodes {
+            match app_get::call(
+                &config,
+                "player",
+                Some(&json!({"id":episode})),
+                &headers,
+                timeout,
+                cancelled.clone(),
+            )
+            .await
+            {
+                Ok(player)
+                    if player["parse"] == 0
+                        && player["url"].as_str().is_some_and(|url| {
+                            url.starts_with("http://") || url.starts_with("https://")
+                        }) =>
+                {
+                    resolved = Some(player);
+                    break;
+                }
+                Ok(_) => last_player_error = Some("player returned no direct URL".to_string()),
+                Err(error) => last_player_error = Some(format!("{error:?}")),
+            }
+        }
+        assert!(
+            resolved.is_some(),
+            "AppGet site {} did not expose a playable episode within the bounded canary; last player result: {}",
+            site.name,
+            last_player_error.unwrap_or_else(|| "none".to_string())
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    #[ignore = "real public AppGet mirror read/detail/player/media canary; network-dependent"]
+    async fn real_public_appget_mirror_completes_read_detail_and_media_chain() {
+        let config = app_get::from_ext("https://bind.315999.xyz/89.txt|#getapp@TMD@2025|120")
+            .expect("public AppGet mirror ext parses")
+            .expect("public AppGet mirror ext contains a fixed AES key");
+        let headers = HeaderMap::new();
+        let timeout = Duration::from_secs(30);
+        let cancelled = Arc::new(AtomicBool::new(false));
+
+        let home = app_get::call(&config, "home", None, &headers, timeout, cancelled.clone())
+            .await
+            .expect("public AppGet mirror home");
+        assert!(home["class"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty()));
+
+        let mut search = None;
+        for key in ["流浪地球", "斗破苍穹", "凡人修仙传"] {
+            match app_get::call(
+                &config,
+                "search",
+                Some(&json!({"key": key, "page": 1})),
+                &headers,
+                timeout,
+                cancelled.clone(),
+            )
+            .await
+            {
+                Ok(value)
+                    if value["list"]
+                        .as_array()
+                        .is_some_and(|items| !items.is_empty()) =>
+                {
+                    search = Some(value);
+                    break;
+                }
+                Ok(_) | Err(_) => {}
+            }
+        }
+        let search = search.expect("public AppGet mirror search result");
+        let mut episodes = Vec::new();
+        for item in search["list"].as_array().into_iter().flatten().take(12) {
+            let Some(id) = item["vod_id"].as_str() else {
+                continue;
+            };
+            let Ok(detail) = app_get::call(
+                &config,
+                "detail",
+                Some(&json!({"ids": [id]})),
+                &headers,
+                timeout,
+                cancelled.clone(),
+            )
+            .await
+            else {
+                continue;
+            };
+            let Some(value) = detail["vod_play_url"].as_str() else {
+                continue;
+            };
+            episodes = value
+                .split("$$$")
+                .flat_map(|line| line.split('#'))
+                .filter(|episode| !episode.trim().is_empty())
+                .map(str::to_string)
+                .take(32)
+                .collect();
+            if !episodes.is_empty() {
+                break;
+            }
+        }
+        assert!(
+            !episodes.is_empty(),
+            "public AppGet mirror detail has no episodes"
+        );
+
+        let media_client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(timeout)
+            .build()
+            .expect("public AppGet mirror media client");
+        let mut verified = false;
+        for episode in episodes {
+            let Ok(player) = app_get::call(
+                &config,
+                "player",
+                Some(&json!({"id": episode})),
+                &headers,
+                timeout,
+                cancelled.clone(),
+            )
+            .await
+            else {
+                continue;
+            };
+            let Some(url) = player["url"].as_str() else {
+                continue;
+            };
+            if player["parse"] != 0 || !(url.starts_with("http://") || url.starts_with("https://"))
+            {
+                continue;
+            }
+            let Ok(mut response) = media_client
+                .get(url)
+                .header("range", "bytes=0-31")
+                .send()
+                .await
+            else {
+                continue;
+            };
+            if !(response.status().is_success()
+                || response.status() == reqwest::StatusCode::PARTIAL_CONTENT)
+            {
+                continue;
+            }
+            let status = response.status();
+            let first_chunk_bytes = response
+                .chunk()
+                .await
+                .ok()
+                .flatten()
+                .map(|chunk| chunk.len())
+                .unwrap_or_default();
+            if first_chunk_bytes > 0 {
+                eprintln!(
+                    "public AppGet mirror media range verified: status={} bytes={first_chunk_bytes}",
+                    status.as_u16()
+                );
+                verified = true;
+                break;
+            }
+        }
+        assert!(
+            verified,
+            "public AppGet mirror did not expose a direct media URL with a readable first range"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "real Feimao AppQi home/category/search/detail/player canary; run explicitly"]
+    async fn real_feimao_config_completes_appqi_read_and_player_chains() {
+        let source = std::env::var("QX_FEIMAO_CANARY_URL")
+            .unwrap_or_else(|_| "http://xn--z7x900a.net/".to_string());
+        let path =
+            std::env::temp_dir().join(format!("qx-feimao-appqi-{}.sqlite3", uuid::Uuid::new_v4()));
+        let snapshot = ingest_remote(
+            &path,
+            &ConfigCatalogPayload {
+                source,
+                source_kind: "url".to_string(),
+                raw: String::new(),
+                fetch_remote: true,
+                timeout_ms: Some(30_000),
+            },
+        )
+        .await
+        .expect("Feimao refresh");
+        let requested_site = std::env::var("QX_APPQI_CANARY_SITE").ok();
+        let sites = snapshot
+            .sites
+            .iter()
+            .filter(|site| site.api.eq_ignore_ascii_case("csp_AppQi"))
+            .filter(|site| {
+                requested_site
+                    .as_deref()
+                    .is_none_or(|name| site.name.contains(name))
+            })
+            .collect::<Vec<_>>();
+        if requested_site.is_none() {
+            assert_eq!(
+                sites.len(),
+                2,
+                "Feimao config must contain both AppQi sites"
+            );
+        } else {
+            assert!(!sites.is_empty(), "requested AppQi site must exist");
+        }
+
+        let headers = HeaderMap::new();
+        let timeout = Duration::from_secs(30);
+        for site in sites {
+            eprintln!("AppQi canary site: {}", site.name);
+            let config =
+                app_get::from_ext_for("csp_AppQi", site.ext.as_deref().expect("AppQi ext"))
+                    .expect("AppQi ext parses")
+                    .expect("AppQi ext contains a fixed AES key");
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let home = app_get::call(&config, "home", None, &headers, timeout, cancelled.clone())
+                .await
+                .unwrap_or_else(|error| panic!("AppQi {} home: {error:?}", site.name));
+            let type_id = home["class"][0]["type_id"]
+                .as_str()
+                .expect("AppQi home type id");
+            let category = app_get::call(
+                &config,
+                "category",
+                Some(&json!({"typeId":type_id,"page":1})),
+                &headers,
+                timeout,
+                cancelled.clone(),
+            )
+            .await
+            .expect("AppQi category");
+            assert!(category["list"].is_array());
+
+            let search_key = home["list"][0]["vod_name"]
+                .as_str()
+                .expect("AppQi home title");
+            let search = app_get::call(
+                &config,
+                "search",
+                Some(&json!({"key":search_key,"page":1})),
+                &headers,
+                timeout,
+                cancelled.clone(),
+            )
+            .await
+            .expect("AppQi search");
+            let id = search["list"][0]["vod_id"]
+                .as_str()
+                .expect("AppQi search id");
+            let detail = app_get::call(
+                &config,
+                "detail",
+                Some(&json!({"ids":[id]})),
+                &headers,
+                timeout,
+                cancelled.clone(),
+            )
+            .await
+            .expect("AppQi detail");
+            let episodes = detail["vod_play_url"]
+                .as_str()
+                .expect("AppQi play URLs")
+                .split("$$$")
+                .flat_map(|line| line.split('#'))
+                .take(24)
+                .collect::<Vec<_>>();
+            assert!(!episodes.is_empty(), "AppQi detail must contain episodes");
+
+            let mut resolved = None;
+            for episode in episodes {
+                if let Ok(player) = app_get::call(
+                    &config,
+                    "player",
+                    Some(&json!({"id":episode})),
+                    &headers,
+                    timeout,
+                    cancelled.clone(),
+                )
+                .await
+                {
+                    if player["parse"] == 0
+                        && player["url"].as_str().is_some_and(|url| {
+                            url.starts_with("http://") || url.starts_with("https://")
+                        })
+                    {
+                        resolved = Some(player);
+                        break;
+                    }
+                }
+            }
+            assert!(
+                resolved.is_some(),
+                "AppQi site {} did not expose a playable episode within the bounded canary",
+                site.name
+            );
+        }
         let _ = std::fs::remove_file(path);
     }
 }

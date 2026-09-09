@@ -31,7 +31,7 @@ class FakePlayback {
     this.played.push(request);
     this.active = {
       id: `session-${this.nextId++}`,
-      kind: request.type === "live-channel" ? "live" : "vod",
+      kind: "vod",
       title: request.title ?? null,
       state: "active",
     };
@@ -98,10 +98,6 @@ describe("push service", () => {
     expect(parsePushUri("push://local-file/item-1")).toMatchObject({
       type: "local-file",
       localFileReference: { itemId: "item-1" },
-    });
-    expect(parsePushUri("push://live-channel/channel-1/stream-2")).toMatchObject({
-      type: "live-channel",
-      sourceReference: { channelId: "channel-1", streamId: "stream-2" },
     });
     expect(() => parsePushUri("https://media.example.test/a.mp4")).toThrowError(
       expect.objectContaining({ code: "PUSH_URI_INVALID" }),
@@ -189,11 +185,6 @@ describe("push service", () => {
       requestedBy: "trusted-local",
     });
     await service.submit({
-      type: "live-channel",
-      sourceReference: { channelId: "channel-1", streamId: "stream-1" },
-      requestedBy: "trusted-local",
-    });
-    await service.submit({
       type: "fixture",
       fixtureId: "fixture-1",
       requestedBy: "trusted-local",
@@ -201,7 +192,6 @@ describe("push service", () => {
     expect(playback.played.map((request) => request.type)).toEqual([
       "source-item",
       "local-file",
-      "live-channel",
       "fixture",
     ]);
   });

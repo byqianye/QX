@@ -1,8 +1,9 @@
 <script setup lang="ts">
-withDefaults(defineProps<{ title?: string; message?: string; actionLabel?: string }>(), {
+withDefaults(defineProps<{ title?: string; message?: string; actionLabel?: string; showAction?: boolean }>(), {
   title: "暂无内容",
   message: "当前来源没有返回可显示的内容。",
   actionLabel: "返回首页",
+  showAction: true,
 });
 const emit = defineEmits<{ action: [] }>();
 </script>
@@ -12,6 +13,6 @@ const emit = defineEmits<{ action: [] }>();
     <span class="state-mark" aria-hidden="true">—</span>
     <h3>{{ title }}</h3>
     <p>{{ message }}</p>
-    <button type="button" class="button-secondary" @click="emit('action')">{{ actionLabel }}</button>
+    <button v-if="showAction" type="button" class="button-secondary" @click="emit('action')">{{ actionLabel }}</button>
   </section>
 </template>

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   BACKEND_RPC_VERSION,
   createBackendRequest,
+  type SourceCapabilities,
   type SourceSessionPayload,
   type SourceSessionResult,
   isBackendResponse,
@@ -51,5 +52,26 @@ describe("Tauri SourceSession contract", () => {
     expect(envelope.version).toBe(BACKEND_RPC_VERSION);
     expect(isBackendResponse<SourceSessionResult>(envelope)).toBe(true);
     expect(JSON.stringify(envelope)).not.toContain("Authorization");
+  });
+
+  it("accepts the specialized Rust HTTP engine labels without widening to arbitrary runtimes", () => {
+    const engines: SourceCapabilities["engine"][] = [
+      "http-adapter",
+      "http-appget",
+      "http-appqi",
+      "http-auto",
+      "http-html-json",
+      "http-json-multipart",
+      "http-push",
+    ];
+    expect(engines).toEqual([
+      "http-adapter",
+      "http-appget",
+      "http-appqi",
+      "http-auto",
+      "http-html-json",
+      "http-json-multipart",
+      "http-push",
+    ]);
   });
 });

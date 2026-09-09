@@ -22,7 +22,6 @@ const MEDIA_HLS_SEGMENT_BYTES = Buffer.from(
 
 const PROTECTED_REFERER = "https://source.example.invalid/";
 const PROTECTED_USER_AGENT = "G22-fixture";
-const failoverStates = new WeakMap<object, { segmentRequests: number }>();
 
 export interface MediaFixtureServer {
   readonly baseUrl: string;
@@ -35,13 +34,6 @@ export interface MediaFixtureServer {
   readonly sniffUrl: string;
   readonly parserUrl: string;
   readonly parserFailureUrl: string;
-  readonly liveUrl: string;
-  readonly livePlaybackUrl: string;
-  readonly liveSmartUrl: string;
-  readonly liveFailoverUrl: string;
-  readonly liveFailoverBackupUrl: string;
-  readonly liveFailoverBrokenUrl: string;
-  readonly epgUrl: string;
   readonly doubanEndpoint: string;
   readonly subtitleVttUrl: string;
   readonly subtitleSrtUrl: string;
@@ -86,27 +78,6 @@ export function createMediaFixtureServer(host = "127.0.0.1"): MediaFixtureServer
     get parserFailureUrl() {
       return `${resource.baseUrl}/parser/fail`;
     },
-    get liveUrl() {
-      return `${resource.baseUrl}/live/source.m3u`;
-    },
-    get livePlaybackUrl() {
-      return `${resource.baseUrl}/live/playback.m3u`;
-    },
-    get liveSmartUrl() {
-      return `${resource.baseUrl}/live/smart-backup.m3u`;
-    },
-    get liveFailoverUrl() {
-      return `${resource.baseUrl}/live/failover/source-a.m3u`;
-    },
-    get liveFailoverBackupUrl() {
-      return `${resource.baseUrl}/live/failover/source-b.m3u`;
-    },
-    get liveFailoverBrokenUrl() {
-      return `${resource.baseUrl}/live/failover/source-c.m3u`;
-    },
-    get epgUrl() {
-      return `${resource.baseUrl}/epg/guide.xml`;
-    },
     get doubanEndpoint() {
       return `${resource.baseUrl}/api/v2/subject_collection/subject_real_time_hotest/items`;
     },
@@ -121,8 +92,6 @@ export function createMediaFixtureServer(host = "127.0.0.1"): MediaFixtureServer
     },
     async start() {
       if (server) return;
-      const state = failoverStates.get(resource);
-      if (state) state.segmentRequests = 0;
       server = createServer((request, response) => {
         void handleRequest(request, response, resource);
       });
@@ -144,8 +113,6 @@ export function createMediaFixtureServer(host = "127.0.0.1"): MediaFixtureServer
     },
   };
 
-  failoverStates.set(resource, { segmentRequests: 0 });
-
   return resource;
 }
 
@@ -163,134 +130,6 @@ async function handleRequest(
 
   if (url.pathname === "/media/fixture.m3u8") {
     servePlaylist(request, response, "/media");
-    return;
-  }
-
-  if (url.pathname === "/live/source.m3u") {
-    serveText(request, response, [
-      "#EXTM3U",
-      '#EXTINF:-1 group-title="E2E",E2E 新闻',
-      fixture.hlsUrl,
-      '#EXTINF:-1 group-title="E2E",E2E 体育',
-      fixture.mp4Url,
-      "",
-    ].join("\n"), "application/x-mpegurl; charset=utf-8");
-    return;
-  }
-
-  if (url.pathname === "/epg/guide.xml") {
-    const etag = `"g58-epg-v${Math.floor(Date.now() / HOUR_MS)}"`;
-    if (request.headers["if-none-match"] === etag) {
-      response.writeHead(304, { etag, "access-control-allow-origin": "*" });
-      response.end();
-      return;
-    }
-    serveEpgFixture(request, response, etag);
-    return;
-  }
-
-  if (url.pathname === "/live/playback.m3u") {
-    serveText(request, response, [
-      "#EXTM3U",
-      '#EXTINF:-1 tvg-id="fixture-news" group-title="Fixtures",Fixture Channel A',
-      `${fixture.baseUrl}/live/channel-a.m3u8`,
-      '#EXTINF:-1 group-title="Fixtures",Fixture Channel B',
-      "#EXTVLCOPT:http-referrer=https://source.example.invalid/",
-      `#EXTVLCOPT:http-user-agent=${PROTECTED_USER_AGENT}`,
-      `${fixture.baseUrl}/live/channel-b.m3u8`,
-      '#EXTINF:-1 group-title="Fixtures",Fixture Channel C',
-      `${fixture.baseUrl}/live/channel-c.m3u8`,
-      '#EXTINF:-1 group-title="Fixtures",Fixture Channel D',
-      `${fixture.baseUrl}/live/channel-d.m3u8`,
-      '#EXTINF:-1 tvg-id="fixture-movie" group-title="Fixtures",Fixture Channel E',
-      `${fixture.baseUrl}/live/channel-e-line1.m3u8`,
-      '#EXTINF:-1 tvg-id="fixture-movie" group-title="Fixtures",Fixture Channel E',
-      `${fixture.baseUrl}/live/channel-e-line2.m3u8`,
-      "",
-    ].join("\n"), "application/x-mpegurl; charset=utf-8");
-    return;
-  }
-
-  if (url.pathname === "/live/smart-backup.m3u") {
-    serveText(request, response, [
-      "#EXTM3U",
-      '#EXTINF:-1 tvg-id="fixture-news" group-title="Fixtures",Fixture Channel A',
-      `${fixture.baseUrl}/live/channel-a.m3u8`,
-      '#EXTINF:-1 tvg-id="fixture-movie" group-title="Fixtures",Fixture Channel E',
-      `${fixture.baseUrl}/live/channel-e-line2.m3u8`,
-      "",
-    ].join("\n"), "application/x-mpegurl; charset=utf-8");
-    return;
-  }
-
-  if (url.pathname === "/live/failover/source-a.m3u") {
-    serveText(request, response, [
-      "#EXTM3U",
-      '#EXTINF:-1 tvg-id="fixture-news" group-title="Failover",Fixture Channel A',
-      `${fixture.baseUrl}/live/failover-a1.m3u8`,
-      '#EXTINF:-1 tvg-id="fixture-news" group-title="Failover",Fixture Channel A',
-      `${fixture.baseUrl}/live/channel-a.m3u8`,
-      "",
-    ].join("\n"), "application/x-mpegurl; charset=utf-8");
-    return;
-  }
-
-  if (url.pathname === "/live/failover/source-b.m3u") {
-    serveText(request, response, [
-      "#EXTM3U",
-      '#EXTINF:-1 tvg-id="fixture-news" group-title="Failover",Fixture Channel A',
-      `${fixture.baseUrl}/live/channel-a.m3u8`,
-      "",
-    ].join("\n"), "application/x-mpegurl; charset=utf-8");
-    return;
-  }
-
-  if (url.pathname === "/live/failover/source-c.m3u") {
-    serveText(request, response, [
-      "#EXTM3U",
-      '#EXTINF:-1 tvg-id="fixture-news" group-title="Failover",Fixture Channel A',
-      `${fixture.baseUrl}/live/failover-c.m3u8`,
-      "",
-    ].join("\n"), "application/x-mpegurl; charset=utf-8");
-    return;
-  }
-
-  if (url.pathname === "/live/failover-a1.m3u8") {
-    serveFailoverPlaylist(request, response, fixture.baseUrl);
-    return;
-  }
-
-  if (url.pathname === "/live/failover-c.m3u8") {
-    response.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
-    response.end("failover startup failure");
-    return;
-  }
-
-  if (url.pathname === "/live/channel-a.m3u8" || url.pathname === "/live/channel-e-line2.m3u8") {
-    servePlaylist(request, response, "/media");
-    return;
-  }
-
-  if (url.pathname === "/live/channel-b.m3u8") {
-    if (!hasProtectedHeaders(request)) {
-      response.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
-      response.end("protected live channel requires playback headers");
-      return;
-    }
-    servePlaylist(request, response, "/protected");
-    return;
-  }
-
-  if (url.pathname === "/live/channel-c.m3u8" || url.pathname === "/live/channel-e-line1.m3u8") {
-    response.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
-    response.end("live fixture stream failure");
-    return;
-  }
-
-  if (url.pathname === "/live/channel-d.m3u8") {
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    response.writeHead(504, { "content-type": "text/plain; charset=utf-8" });
-    response.end("live fixture stream timeout");
     return;
   }
 
@@ -561,31 +400,6 @@ async function handleRequest(
     return;
   }
 
-  if (url.pathname === "/live/failover-a1-init.mp4") {
-    serveBytes(request, response, MEDIA_HLS_INIT_BYTES, "video/mp4");
-    return;
-  }
-
-  if (url.pathname === "/live/failover-a1-segment-0.m4s") {
-    const state = failoverStates.get(fixture);
-    if (state) state.segmentRequests += 1;
-    if ((state?.segmentRequests ?? 0) === 1) {
-      serveBytes(request, response, MEDIA_HLS_SEGMENT_BYTES, "video/iso.segment");
-    } else {
-      response.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
-      response.end("failover segment failure");
-    }
-    return;
-  }
-
-  if (url.pathname === "/live/failover-a1-segment-1.m4s") {
-    const state = failoverStates.get(fixture);
-    if (state) state.segmentRequests += 1;
-    response.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
-    response.end("failover segment failure");
-    return;
-  }
-
   if (url.pathname === "/protected/fixture-init.mp4" || url.pathname === "/protected/fixture-0.m4s") {
     if (!hasProtectedHeaders(request)) {
       response.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
@@ -625,23 +439,6 @@ function servePlaylist(request: IncomingMessage, response: ServerResponse, prefi
   });
   if (request.method === "HEAD") response.end();
   else response.end(body);
-}
-
-function serveFailoverPlaylist(request: IncomingMessage, response: ServerResponse, baseUrl: string): void {
-  serveText(request, response, [
-    "#EXTM3U",
-    "#EXT-X-VERSION:7",
-    "#EXT-X-TARGETDURATION:1",
-    "#EXT-X-MEDIA-SEQUENCE:0",
-    "#EXT-X-PLAYLIST-TYPE:VOD",
-    `#EXT-X-MAP:URI=\"${baseUrl}/live/failover-a1-init.mp4\"`,
-    "#EXTINF:1.0,",
-    `${baseUrl}/live/failover-a1-segment-0.m4s`,
-    "#EXTINF:1.0,",
-    `${baseUrl}/live/failover-a1-segment-1.m4s`,
-    "#EXT-X-ENDLIST",
-    "",
-  ].join("\n"), "application/vnd.apple.mpegurl; charset=utf-8");
 }
 
 function serveMasterPlaylist(request: IncomingMessage, response: ServerResponse): void {
@@ -792,39 +589,6 @@ function serveText(
   });
   if (request.method === "HEAD") response.end();
   else response.end(body);
-}
-
-function serveEpgFixture(request: IncomingMessage, response: ServerResponse, etag: string): void {
-  const currentStart = Math.floor(Date.now() / HOUR_MS) * HOUR_MS;
-  const nextStart = currentStart + HOUR_MS;
-  const movieStop = currentStart + 2 * HOUR_MS;
-  const body = Buffer.from([
-    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
-    "<tv generator-info-name=\"QX G58 fixture\">",
-    "<channel id=\"fixture-news\"><display-name>Fixture 新闻</display-name></channel>",
-    "<channel id=\"fixture-movie\"><display-name>Fixture 电影</display-name></channel>",
-    `<programme channel=\"fixture-news\" start=\"${formatXmltvTime(currentStart)}\" stop=\"${formatXmltvTime(nextStart)}\"><title>Fixture News Current</title><category>News</category></programme>`,
-    `<programme channel=\"fixture-news\" start=\"${formatXmltvTime(nextStart)}\" stop=\"${formatXmltvTime(movieStop)}\"><title>Fixture News Next</title></programme>`,
-    `<programme channel=\"fixture-movie\" start=\"${formatXmltvTime(currentStart)}\" stop=\"${formatXmltvTime(movieStop)}\"><title>Fixture Movie Current</title></programme>`,
-    "</tv>",
-  ].join(""), "utf8");
-  response.writeHead(200, {
-    "content-type": "application/xml; charset=utf-8",
-    "content-length": body.length,
-    etag,
-    "last-modified": new Date(currentStart).toUTCString(),
-    "access-control-allow-origin": "*",
-  });
-  if (request.method === "HEAD") response.end();
-  else response.end(body);
-}
-
-const HOUR_MS = 60 * 60 * 1000;
-
-function formatXmltvTime(value: number): string {
-  const date = new Date(value);
-  const pad = (part: number) => String(part).padStart(2, "0");
-  return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())} +0000`;
 }
 
 function parseRange(value: string, length: number): { start: number; end: number } | null {

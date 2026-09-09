@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 
+import Icon from "./Icon.vue";
+import PosterImage from "./PosterImage.vue";
 import type {
   FavoriteGroupItem,
   FavoriteItem,
@@ -43,7 +45,7 @@ const groupItems = computed(() => props.state.items.filter((item) => item.groupI
 const visibleItems = computed(() => {
   const needle = query.value.trim().toLocaleLowerCase();
   return groupItems.value
-    .filter((item) => !needle || `${item.title} ${item.sourceName ?? ""} ${item.category ?? ""}`.toLocaleLowerCase().includes(needle))
+    .filter((item) => !needle || `${item.title} ${item.category ?? ""}`.toLocaleLowerCase().includes(needle))
     .sort((left, right) => {
       if (sort.value === "title") return left.title.localeCompare(right.title) || right.updatedAt - left.updatedAt;
       if (sort.value === "added") return right.addedAt - left.addedAt;
@@ -132,8 +134,8 @@ function formatAddedAt(value: number): string {
               <span>{{ group.name }}</span><span class="favorites-group-count">{{ group.count }}</span>
             </button>
             <div class="favorites-group-order">
-              <button type="button" class="icon-button" aria-label="分组上移" :disabled="props.pending !== null || index === 0" @click="reorderGroup(group, -1)">↑</button>
-              <button type="button" class="icon-button" aria-label="分组下移" :disabled="props.pending !== null || index === props.state.groups.length - 1" @click="reorderGroup(group, 1)">↓</button>
+              <button type="button" class="icon-button" aria-label="分组上移" title="分组上移" :disabled="props.pending !== null || index === 0" @click="reorderGroup(group, -1)"><Icon name="chevron-up" /></button>
+              <button type="button" class="icon-button" aria-label="分组下移" title="分组下移" :disabled="props.pending !== null || index === props.state.groups.length - 1" @click="reorderGroup(group, 1)"><Icon name="chevron-down" /></button>
             </div>
           </div>
         </div>
@@ -147,7 +149,7 @@ function formatAddedAt(value: number): string {
         <section class="panel favorites-toolbar" aria-label="收藏筛选">
           <label class="favorites-search">
             <span>搜索收藏</span>
-            <input v-model="query" type="search" placeholder="搜索标题、来源或分类" data-testid="favorites-search" />
+            <input v-model="query" type="search" placeholder="搜索标题或分类" data-testid="favorites-search" />
           </label>
           <label>
             <span>排序</span>
@@ -179,16 +181,19 @@ function formatAddedAt(value: number): string {
         <section v-if="visibleItems.length > 0" class="favorites-list" :class="`favorites-list-${layout}`" data-testid="favorites-list">
           <article v-for="item in visibleItems" :key="item.favoriteId" class="panel favorite-item" :data-available="item.sourceAvailable">
             <div class="favorite-cover">
-              <img v-if="item.poster" :src="item.poster" :alt="`${item.title} 海报`" />
-              <span v-else aria-hidden="true">{{ item.title.slice(0, 1) }}</span>
+              <PosterImage
+                :source="item.poster"
+                :alt="`${item.title} 海报`"
+                :fallback-text="item.title"
+                loading="lazy"
+              />
             </div>
             <div class="favorite-item-content">
               <div class="favorite-item-heading">
                 <div>
-                  <span class="context-kicker">{{ item.sourceName ?? "当前来源" }}</span>
                   <h3>{{ item.title }}</h3>
                 </div>
-                <span class="status-chip" :data-status="item.sourceAvailable ? 'success' : 'warning'">{{ item.sourceAvailable ? "来源可用" : "来源不可用" }}</span>
+                <span class="status-chip" :data-status="item.sourceAvailable ? 'success' : 'warning'">{{ item.sourceAvailable ? "可打开" : "需重新搜索" }}</span>
               </div>
               <p class="meta">{{ item.category ?? "未分类" }}<span v-if="item.year"> · {{ item.year }}</span> · 收藏于 {{ formatAddedAt(item.addedAt) }}</p>
               <p v-if="!item.sourceAvailable" class="favorite-unavailable">原来源不可用；收藏仍保留，可删除或搜索其他来源。</p>

@@ -21,14 +21,10 @@ describe("packaged runtime paths and production logging", () => {
       appPath: "C:\\project",
       resourcesPath: "C:\\project\\resources",
       userDataPath: "C:\\Users\\user\\AppData\\Roaming\\QX影视",
-      localAppDataPath: "C:\\Users\\user\\AppData\\Local",
       isPackaged: false,
     });
     expect(development.getRuntimePath()).toBe(join("C:\\project", "dist", "electron-runtime"));
     expect(development.getRendererPath()).toBe(join("C:\\project", "dist", "renderer"));
-    expect(development.getAndroidHostApkPath()).toBe(join("C:\\project", "android-spider-host", "app", "build", "outputs", "apk", "debug", "app-debug.apk"));
-    expect(development.getAndroidRuntimePath()).toBe(join("C:\\Users\\user\\AppData\\Local", "QXMovie", "android-runtime"));
-    expect(development.getAndroidRuntimePaths().avd).toBe(join("C:\\Users\\user\\AppData\\Local", "QXMovie", "android-runtime", "avd"));
     expect(development.getCachePath()).toContain(join("QX影视", "cache"));
 
     const packaged = new RuntimePathResolver({
@@ -39,7 +35,6 @@ describe("packaged runtime paths and production logging", () => {
     });
     expect(packaged.getRuntimePath()).toBe(join("C:\\Program Files\\QX影视\\resources", "electron-runtime"));
     expect(packaged.getRendererPath()).toContain(join("app.asar", "dist", "renderer"));
-    expect(packaged.getAndroidHostApkPath()).toBe(join("C:\\Program Files\\QX影视\\resources", "android-host", "android-spider-host.apk"));
     expect(packaged.getBrandIconCandidates()[0]).toBe(join("C:\\Program Files\\QX影视\\resources", "brand", "qx-yingshi.ico"));
   });
 
@@ -61,17 +56,4 @@ describe("packaged runtime paths and production logging", () => {
     expect(current).not.toContain("https://media.example.invalid/episode.m3u8");
   });
 
-  it("supports an explicit isolated Android Runtime root for Compact E2E", () => {
-    const resolver = new RuntimePathResolver({
-      appPath: "C:\\project",
-      resourcesPath: "C:\\project\\resources",
-      userDataPath: "C:\\Users\\user\\AppData\\Roaming\\QX褰辫",
-      localAppDataPath: "C:\\Users\\user\\AppData\\Local",
-      androidRuntimeRoot: "D:\\QXRuntimeCompact\\android-runtime",
-      isPackaged: false,
-    });
-
-    expect(resolver.getAndroidRuntimePath()).toBe("D:\\QXRuntimeCompact\\android-runtime");
-    expect(resolver.getAndroidRuntimePaths().avd).toBe("D:\\QXRuntimeCompact\\android-runtime\\avd");
-  });
 });

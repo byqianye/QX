@@ -10,42 +10,6 @@ function vod(values: Record<string, unknown>): Vod {
 }
 
 describe("PlaybackSourceResolver", () => {
-  it("retries a transient Android Spider failure before marking the site failed", async () => {
-    let attempts = 0;
-    const resolver = new PlaybackSourceResolver();
-    const result = await resolver.resolve(vod({ vod_name: "庆余年", vod_year: "2019" }), [{
-      siteKey: "jianpian",
-      siteName: "Jianpian",
-      runtime: "android-dex",
-      capabilities: { search: true, detail: true },
-    }], {
-      engineFactory: {
-        create: () => ({
-          init: async () => undefined,
-          search: async () => {
-            attempts += 1;
-            if (attempts === 1) {
-              throw new Error("Attempt to invoke virtual method 'com.google.gson.JsonObject com.google.gson.JsonObject.getAsJsonObject(java.lang.String)' on a null object reference");
-            }
-            return [vod({ vod_id: "54437", vod_name: "庆余年", vod_year: "2019" })];
-          },
-          detail: async () => vod({
-            vod_id: "54437",
-            vod_name: "庆余年",
-            vod_year: "2019",
-            vod_play_from: "线路",
-            vod_play_url: "第01集$https://media.example.invalid/episode.m3u8",
-          }),
-        }),
-      },
-    });
-
-    expect(attempts).toBe(2);
-    expect(result.successfulSites).toEqual(["jianpian"]);
-    expect(result.failedSites).toEqual([]);
-    expect(result.candidates).toHaveLength(1);
-  });
-
   it("filters the current and non-searchable sites and confirms playback via detail", async () => {
     const calls: string[] = [];
     const candidate = vod({
@@ -388,9 +352,9 @@ describe("PlaybackSourceResolver", () => {
           type: 3,
           api: "csp_Unknown",
           supported: false,
-          runtime: "android-dex",
-          runtimeReason: "android_dex_runtime_not_available",
-          skipReason: "android_dex_runtime_not_available",
+          runtime: "unsupported",
+          runtimeReason: "unsupported_artifact_runtime",
+          skipReason: "unsupported_artifact_runtime",
         },
         site("supported", false, true, async () => [candidate]),
       ],
@@ -400,47 +364,11 @@ describe("PlaybackSourceResolver", () => {
     expect(result.diagnostics.sites).toContainEqual(expect.objectContaining({
       siteKey: "jar",
       initialization: "unsupported",
-      runtime: "android-dex",
-      runtimeReason: "android_dex_runtime_not_available",
-      skipReason: "android_dex_runtime_not_available",
+      runtime: "unsupported",
+      runtimeReason: "unsupported_artifact_runtime",
+      skipReason: "unsupported_artifact_runtime",
     }));
     expect(result.searchedSites).toContain("supported");
-  });
-
-  it("skips Android DEX while continuing CMS, JavaScript, and Native runtimes", async () => {
-    const candidate = vod({ vod_id: "runtime-1", vod_name: "跨运行时", vod_year: "2026", type_name: "剧情" });
-    const compatible = (siteKey: string, runtime: "cms" | "javascript" | "native"): PlaybackSourceSite => ({
-      ...site(siteKey, false, true, async () => [candidate]),
-      supported: true,
-      runtime,
-      runtimeReason: `${runtime}_supported`,
-      capabilities: { search: true, detail: true },
-    });
-    const result = await new PlaybackSourceResolver().resolve(
-      candidate,
-      [
-        {
-          siteKey: "android",
-          siteName: "Android DEX",
-          type: 3,
-          api: "csp_Unknown",
-          supported: false,
-          runtime: "android-dex",
-          runtimeReason: "android_dex_runtime_not_available",
-          skipReason: "android_dex_runtime_not_available",
-        },
-        compatible("cms", "cms"),
-        compatible("javascript", "javascript"),
-        compatible("native", "native"),
-      ],
-    );
-
-    expect(result.searchedSites).toEqual(expect.arrayContaining(["cms", "javascript", "native"]));
-    expect(result.searchedSites).not.toContain("android");
-    expect(result.diagnostics.sites.find((site) => site.siteKey === "android")).toMatchObject({
-      runtime: "android-dex",
-      skipReason: "android_dex_runtime_not_available",
-    });
   });
 
   it("normalizes punctuation and HTML entities without fuzzy title matching", () => {

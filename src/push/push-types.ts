@@ -2,7 +2,6 @@ export const PUSH_REQUEST_TYPES = [
   "url",
   "source-item",
   "local-file",
-  "live-channel",
   "fixture",
 ] as const;
 
@@ -19,11 +18,6 @@ export interface PushSourceReference {
   contentId: string;
   episodeId?: string;
   flag?: string;
-}
-
-export interface PushLiveChannelReference {
-  channelId: string;
-  streamId?: string;
 }
 
 export interface PushRequestBase {
@@ -47,11 +41,6 @@ export interface PushLocalFileRequest extends PushRequestBase {
   localFileReference: { itemId: string };
 }
 
-export interface PushLiveChannelRequest extends PushRequestBase {
-  type: "live-channel";
-  sourceReference: PushLiveChannelReference;
-}
-
 export interface PushFixtureRequest extends PushRequestBase {
   type: "fixture";
   fixtureId: string;
@@ -62,12 +51,11 @@ export type PushRequest =
   | PushUrlRequest
   | PushSourceItemRequest
   | PushLocalFileRequest
-  | PushLiveChannelRequest
   | PushFixtureRequest;
 
 export interface PushPlaybackSessionSnapshot {
   id: string;
-  kind: "vod" | "live";
+  kind: "vod";
   title: string | null;
   state: "active" | "stopped";
 }

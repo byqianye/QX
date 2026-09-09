@@ -60,10 +60,10 @@ function capabilities(site: SiteRuntimeAudit): string {
 }
 
 function gateDecision(report: RuntimeAuditReport): string {
-  const dex = report.summary.runtimeCounts["android-dex"];
-  const ratio = report.summary.totalSites === 0 ? 0 : dex / report.summary.totalSites;
-  if (ratio >= 0.8) return `Android DEX accounts for ${dex}/${report.summary.totalSites} sites (${(ratio * 100).toFixed(2)}%). Proceed to G83 Android DEX PoC.`;
-  return `Android DEX accounts for ${dex}/${report.summary.totalSites} sites (${(ratio * 100).toFixed(2)}%). Continue with the JS/CMS runtime goals before G83.`;
+  const unsupported = Object.entries(report.summary.unsupportedReasons)
+    .filter(([reason]) => reason === "unsupported_artifact_runtime")
+    .reduce((total, [, count]) => total + count, 0);
+  return `Static artifact inspection only; unsupported artifact runtimes are not executable. ${unsupported} site(s) use an unsupported artifact runtime.`;
 }
 
 function cell(value: string): string {

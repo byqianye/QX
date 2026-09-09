@@ -65,7 +65,7 @@ function labelCompatibility(value: BackupUiState["preview"] extends infer T ? T 
       <div class="settings-row"><span>Backup</span><strong>{{ props.state.preview.appVersion }} · {{ props.state.preview.formatVersion }}</strong></div>
       <div class="settings-row"><span>Created</span><strong>{{ props.state.preview.createdAt }}</strong></div>
       <div class="settings-row"><span>Compatibility</span><strong>{{ labelCompatibility(props.state.preview.compatibility) }}</strong></div>
-      <div class="settings-row"><span>Records</span><strong>{{ props.state.preview.summary.settings }} settings · {{ props.state.preview.summary.history }} history · {{ props.state.preview.summary.favorites }} favorites · {{ props.state.preview.summary.following }} following · {{ props.state.preview.summary.liveSources }} live · {{ props.state.preview.summary.smartChannels }} smart</strong></div>
+      <div class="settings-row"><span>Records</span><strong>{{ props.state.preview.summary.settings }} settings · {{ props.state.preview.summary.history }} history · {{ props.state.preview.summary.favorites }} favorites · {{ props.state.preview.summary.following }} following</strong></div>
       <div class="button-row">
         <button type="button" class="button-primary" data-action="backup-apply" :disabled="props.pending !== null || props.state.preview.compatibility === 'newer-unsupported'" @click="confirmRestore">Replace and restart</button>
         <button type="button" class="button-secondary" data-action="backup-clear" :disabled="props.pending !== null" @click="emit('clear')">Cancel</button>

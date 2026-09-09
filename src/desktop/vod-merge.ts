@@ -1,3 +1,5 @@
+import { sanitizeVodDisplayText } from "../source/normalizers.js";
+
 const DISPLAY_FIELDS = [
   "vod_name",
   "vod_pic",
@@ -25,8 +27,12 @@ export function mergeVodDisplayFields(
 
   const merged: VodRecord = { ...(listVod ?? {}), ...(detailVod ?? {}) };
   for (const field of DISPLAY_FIELDS) {
-    const detailValue = detailVod?.[field];
-    const listValue = listVod?.[field];
+    const detailValue = field === "vod_content"
+      ? sanitizeVodDisplayText(detailVod?.[field])
+      : detailVod?.[field];
+    const listValue = field === "vod_content"
+      ? sanitizeVodDisplayText(listVod?.[field])
+      : listVod?.[field];
     if (isNonEmpty(detailValue)) {
       merged[field] = detailValue;
     } else if (isNonEmpty(listValue)) {

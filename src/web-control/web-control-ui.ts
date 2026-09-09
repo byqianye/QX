@@ -29,7 +29,6 @@ export function renderWebControlHtml(csrfToken: string): string {
   <nav class="tabs" aria-label="控制台页面">
     <button type="button" data-page="now">正在播放</button>
     <button type="button" data-page="search">搜索</button>
-    <button type="button" data-page="live">直播</button>
     <button type="button" data-page="downloads">下载</button>
     <button type="button" data-page="cast">投屏</button>
     <button type="button" data-page="settings">安全状态</button>
@@ -52,10 +51,6 @@ export function renderWebControlHtml(csrfToken: string): string {
       <form id="search-form" class="inline-form"><input id="search-query" type="search" maxlength="120" placeholder="输入片名"><button type="submit">搜索</button></form>
       <div id="search-results" class="rows"><p class="muted">输入关键词开始搜索。</p></div>
       <div id="detail-result" class="detail" hidden></div>
-    </section>
-    <section data-section="live" class="panel" hidden>
-      <div class="section-heading"><div><p class="eyebrow">Live</p><h2>直播</h2></div><button type="button" data-action="refresh-live">刷新</button></div>
-      <div id="live-results" class="rows"><p class="muted">正在读取频道。</p></div>
     </section>
     <section data-section="downloads" class="panel" hidden>
       <div class="section-heading"><div><p class="eyebrow">Downloads</p><h2>下载</h2></div><button type="button" data-action="refresh-downloads">刷新</button></div>
@@ -164,7 +159,7 @@ export const WEB_CONTROL_APP_JS = `
   const renderNow = (value) => {
     if (!value) return;
     text('now-title', value.title || '暂无播放');
-    text('now-meta', [value.live ? '直播' : '点播', value.episode || '', value.status || ''].filter(Boolean).join(' · '));
+    text('now-meta', [value.episode || '', value.status || ''].filter(Boolean).join(' · '));
     const progress = value.duration > 0 ? Math.min(100, Math.max(0, value.currentTime / value.duration * 100)) : 0;
     const node = document.getElementById('now-progress'); if (node) node.style.width = progress + '%';
     const seek = document.getElementById('seek-position'); if (seek && document.activeElement !== seek) seek.value = String(Math.floor(value.currentTime || 0));
@@ -184,11 +179,6 @@ export const WEB_CONTROL_APP_JS = `
       node.innerHTML = '<h3>' + esc(detail.title) + '</h3><p class="muted">' + esc([detail.year, detail.overview].filter(Boolean).join(' · ')) + '</p><div class="episode-list">' + (detail.episodes || []).map((episode) => '<button type="button" data-line="' + episode.lineIndex + '" data-episode="' + episode.episodeIndex + '">' + esc(episode.lineName + ' / ' + episode.name) + '</button>').join('') + '</div>';
       node.querySelectorAll('[data-line]').forEach((button) => button.addEventListener('click', async () => { await api('/api/play-episode', { method: 'POST', body: JSON.stringify({ lineIndex: Number(button.getAttribute('data-line')), episodeIndex: Number(button.getAttribute('data-episode')) }) }); await loadNow(); }));
     } catch (error) { text('detail-result', error.message); }
-  };
-  const renderLive = (value) => {
-    const node = document.getElementById('live-results'); if (!node) return;
-    node.innerHTML = (value?.channels || []).map((channel) => '<div class="row"><div class="row-main"><div class="row-title">' + esc(channel.name) + '</div><div class="row-meta">' + esc([channel.group, channel.sourceName].filter(Boolean).join(' · ')) + '</div></div><div class="episode-list">' + (channel.streams || []).map((stream) => '<button type="button" data-channel="' + esc(channel.id) + '" data-stream="' + esc(stream.id) + '">' + esc(stream.label) + '</button>').join('') + '</div></div>').join('') || '<p class="muted">暂无直播频道。</p>';
-    node.querySelectorAll('[data-channel]').forEach((button) => button.addEventListener('click', async () => { await api('/api/live-channel', { method: 'POST', body: JSON.stringify({ channelId: button.getAttribute('data-channel'), streamId: button.getAttribute('data-stream') }) }); await loadNow(); }));
   };
   const renderDownloads = (value) => {
     const node = document.getElementById('download-results'); if (!node) return;
@@ -212,7 +202,6 @@ export const WEB_CONTROL_APP_JS = `
     sessions.querySelectorAll('[data-revoke-session]').forEach((button) => button.addEventListener('click', async () => { await api('/api/security/sessions/revoke', { method: 'POST', body: JSON.stringify({ id: button.getAttribute('data-revoke-session') }) }); await loadSecurity(); }));
   };
   const loadNow = async () => { const value = await api('/api/now-playing'); renderNow(value.nowPlaying); };
-  const loadLive = async () => { const value = await api('/api/live-channels'); renderLive(value.live); };
   const loadDownloads = async () => { const value = await api('/api/downloads'); renderDownloads(value.downloads); };
   const loadCast = async () => { const value = await api('/api/cast-devices'); renderCast(value.cast); };
   const loadStatus = async () => { const value = await api('/api/safe-status'); renderStatus(value.status); };
@@ -224,7 +213,6 @@ export const WEB_CONTROL_APP_JS = `
   document.querySelectorAll('[data-action="seek"]').forEach((node) => node.addEventListener('click', async () => { await api('/api/seek', { method: 'POST', body: JSON.stringify({ position: Number(document.getElementById('seek-position')?.value || 0) }) }); await loadNow(); }));
   document.querySelectorAll('[data-action="volume"]').forEach((node) => node.addEventListener('click', async () => { await api('/api/volume', { method: 'POST', body: JSON.stringify({ volume: Number(document.getElementById('volume-value')?.value || 1) }) }); await loadNow(); }));
   document.querySelectorAll('[data-action="refresh-now"]').forEach((node) => node.addEventListener('click', loadNow));
-  document.querySelectorAll('[data-action="refresh-live"]').forEach((node) => node.addEventListener('click', loadLive));
   document.querySelectorAll('[data-action="refresh-downloads"]').forEach((node) => node.addEventListener('click', loadDownloads));
   document.querySelectorAll('[data-action="refresh-cast"]').forEach((node) => node.addEventListener('click', loadCast));
   document.querySelectorAll('[data-action="refresh-status"]').forEach((node) => node.addEventListener('click', loadStatus));
@@ -236,12 +224,12 @@ export const WEB_CONTROL_APP_JS = `
     try {
       const socket = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
       socket.addEventListener('open', () => { if (statusNode) statusNode.textContent = '已连接'; });
-      socket.addEventListener('message', (event) => { try { const value = JSON.parse(event.data); if (value.type === 'state') { renderNow(value.snapshot.nowPlaying); renderLive(value.snapshot.live); renderDownloads(value.snapshot.downloads); renderCast(value.snapshot.cast); renderStatus(value.snapshot.status); } } catch (_) {} });
+      socket.addEventListener('message', (event) => { try { const value = JSON.parse(event.data); if (value.type === 'state') { renderNow(value.snapshot.nowPlaying); renderDownloads(value.snapshot.downloads); renderCast(value.snapshot.cast); renderStatus(value.snapshot.status); } } catch (_) {} });
       socket.addEventListener('close', () => { if (statusNode) statusNode.textContent = '连接已断开'; window.setTimeout(connect, 1500); });
     } catch (_) { if (statusNode) statusNode.textContent = '连接失败'; }
   };
   setPage('now');
-  Promise.all([loadNow(), loadLive(), loadDownloads(), loadCast(), loadStatus(), loadSecurity()]).catch((error) => { if (statusNode) statusNode.textContent = error.message; });
+  Promise.all([loadNow(), loadDownloads(), loadCast(), loadStatus(), loadSecurity()]).catch((error) => { if (statusNode) statusNode.textContent = error.message; });
   connect();
 })();
 `;

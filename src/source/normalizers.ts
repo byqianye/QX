@@ -12,6 +12,27 @@ import {
 } from "./media-source.js";
 import { normalizeSubtitleTracks } from "../subtitles.js";
 
+const VOD_DESCRIPTION_FIELDS = ["vod_content", "vod_blurb"] as const;
+
+/** Convert source-provided HTML/entity descriptions into safe renderer text. */
+export function sanitizeVodDisplayText(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  let text = String(value);
+  for (let pass = 0; pass < 2; pass += 1) {
+    const decoded = decodeHtmlEntities(text);
+    const stripped = stripHtml(decoded);
+    text = stripped;
+    if (stripped === decoded) break;
+  }
+  return text
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export function unwrapSpiderResponse(response: SpiderResponse, operation: string): unknown {
   if (response.ok) return response.result;
   throw new MediaSourceError(
@@ -121,8 +142,11 @@ export function normalizeVod(value: unknown): VodDetail {
   if (!id) {
     throw new MediaSourceError("SOURCE_RESPONSE_INVALID", "VOD item is missing an id");
   }
-  const name = stringValue(value.vod_name ?? value.name ?? value.title) || id;
   const raw = { ...value };
+  for (const field of VOD_DESCRIPTION_FIELDS) {
+    if (typeof raw[field] === "string") raw[field] = sanitizeVodDisplayText(raw[field]);
+  }
+  const name = stringValue(raw.vod_name ?? raw.name ?? raw.title) || id;
   return { ...raw, id, name, raw };
 }
 
@@ -198,3 +222,51 @@ function numberValue(value: unknown): number | undefined {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+function stripHtml(value: string): string {
+  return value
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<\s*(script|style|template|iframe|object|noscript)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, "")
+    .replace(/<\s*(br|hr)\s*\/?>/gi, "\n")
+    .replace(/<\s*\/\s*(p|div|li|h[1-6]|tr|section|article)\s*>/gi, "\n")
+    .replace(/<[^>]*>/g, "");
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value.replace(/&(#x[\da-f]+|#\d+|[a-z][a-z0-9]+);/gi, (match, entity: string) => {
+    const normalized = entity.toLowerCase();
+    if (normalized.startsWith("#x")) {
+      const codePoint = Number.parseInt(normalized.slice(2), 16);
+      return validCodePoint(codePoint) ? String.fromCodePoint(codePoint) : match;
+    }
+    if (normalized.startsWith("#")) {
+      const codePoint = Number.parseInt(normalized.slice(1), 10);
+      return validCodePoint(codePoint) ? String.fromCodePoint(codePoint) : match;
+    }
+    return HTML_ENTITY_MAP[normalized] ?? match;
+  });
+}
+
+function validCodePoint(value: number): boolean {
+  return Number.isInteger(value) && value >= 0 && value <= 0x10ffff && !(value >= 0xd800 && value <= 0xdfff);
+}
+
+const HTML_ENTITY_MAP: Readonly<Record<string, string>> = {
+  amp: "&",
+  apos: "'",
+  gt: ">",
+  hellip: "\u2026",
+  laquo: "\u00ab",
+  ldquo: "\u201c",
+  lsquo: "\u2018",
+  lt: "<",
+  mdash: "\u2014",
+  middot: "\u00b7",
+  nbsp: "\u00a0",
+  ndash: "\u2013",
+  quot: '"',
+  raquo: "\u00bb",
+  rdquo: "\u201d",
+  rsquo: "\u2019",
+  thinsp: "\u2009",
+};

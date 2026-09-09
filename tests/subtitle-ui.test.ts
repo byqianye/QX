@@ -63,6 +63,8 @@ describe("subtitle track player UI", () => {
 
     const wrapper = mount(EmbeddedPlayer, { props: { state: playerState() } });
     await flushPromises();
+    wrapper.get<HTMLVideoElement>("[data-testid=embedded-player]").element.dispatchEvent(new Event("playing"));
+    await flushPromises();
 
     expect(wrapper.get('[data-testid="subtitle-track-panel"]')).toBeTruthy();
     expect(wrapper.get('[data-action="subtitle-encoding"]')).toBeTruthy();

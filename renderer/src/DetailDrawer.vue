@@ -151,10 +151,6 @@ const playableCandidates = computed(() => (props.playbackSources?.candidates ?? 
         >查找播放源</button>
         <p v-if="props.playbackSourcePending" data-testid="playback-source-searching">正在查找播放源…</p>
         <template v-else-if="props.playbackSources">
-          <p
-            v-if="props.playbackSources.diagnostics?.runtimePreparation === 'ready'"
-            data-testid="android-runtime-ready"
-          >Android Runtime READY ({{ props.playbackSources.diagnostics.runtimeWaitDurationMs }}ms)</p>
           <div v-if="playableCandidates.length > 0" data-testid="playback-source-candidates">
             <p>找到可播放来源，请选择：</p>
             <button
@@ -184,7 +180,7 @@ const playableCandidates = computed(() => (props.playbackSources?.candidates ?? 
                 → 有播放线路 {{ props.playbackSources.diagnostics.playableCandidateCount }}
               </p>
               <p v-if="props.playbackSources.diagnostics.runtimeSupportedSites <= 1 && props.playbackSources.diagnostics.unsupportedSiteCount > 0">
-                多数来源因当前 Spider Runtime 尚未支持而被跳过
+                多数来源当前暂不支持，已跳过
               </p>
               <ul>
                 <li v-for="site in props.playbackSources.diagnostics.sites" :key="site.siteKey">

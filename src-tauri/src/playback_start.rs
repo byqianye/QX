@@ -23,6 +23,7 @@ pub struct PlaybackStartPayload {
     pub engine: Option<String>,
     pub line_name: String,
     pub episode_id: String,
+    pub timeout_ms: Option<u64>,
     #[serde(default)]
     pub vip_flags: Vec<String>,
     pub fallback_subtitles: Option<Value>,
@@ -69,7 +70,11 @@ pub async fn start(
         ));
     }
 
-    let direct_cms = is_http_url(&payload.source_api) && is_http_url(&payload.episode_id);
+    let direct_cms = is_direct_cms_playback(
+        &payload.source_api,
+        &payload.episode_id,
+        payload.engine.as_deref(),
+    );
     let mut raw = if direct_cms {
         json!({
             "parse": 0,
@@ -114,7 +119,7 @@ pub async fn start(
                     ext: None,
                     method: Some("player".to_string()),
                     params: Some(params),
-                    timeout_ms: None,
+                    timeout_ms: payload.timeout_ms,
                     headers: None,
                 })
                 .await
@@ -320,6 +325,20 @@ fn is_http_url(value: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn is_direct_cms_playback(source_api: &str, episode_id: &str, engine: Option<&str>) -> bool {
+    if engine.is_some_and(|value| value.eq_ignore_ascii_case("quickjs")) || !is_http_url(episode_id)
+    {
+        return false;
+    }
+    reqwest::Url::parse(source_api).is_ok_and(|url| {
+        if !matches!(url.scheme(), "http" | "https") {
+            return false;
+        }
+        let path = url.path().to_ascii_lowercase();
+        !path.ends_with(".js") && !path.ends_with(".mjs")
+    })
+}
+
 fn string_value(value: Option<&Value>) -> String {
     match value {
         Some(Value::String(value)) => value.trim().to_string(),
@@ -512,7 +531,9 @@ pub fn error_fields(error: PlaybackStartError) -> (String, String, bool, String)
 
 #[cfg(test)]
 mod tests {
-    use super::{drm_value, headers_value, is_http_url, normalize_clear_key};
+    use super::{
+        drm_value, headers_value, is_direct_cms_playback, is_http_url, normalize_clear_key,
+    };
     use serde_json::json;
 
     #[test]
@@ -528,5 +549,20 @@ mod tests {
             1
         );
         assert!(drm_value(Some(&json!({"clearKeys": {"00112233445566778899aabbccddeeff": "ffeeddccbbaa99887766554433221100"}}))).is_some());
+        assert!(is_direct_cms_playback(
+            "https://cms.example.test/api.php/provide/vod/",
+            "https://media.example.test/a.m3u8",
+            None,
+        ));
+        assert!(!is_direct_cms_playback(
+            "https://example.test/drpy2.min.js",
+            "https://www.tuxiaobei.com/play/2384",
+            None,
+        ));
+        assert!(!is_direct_cms_playback(
+            "https://example.test/source.js?version=1",
+            "https://media.example.test/a.mp4",
+            Some("quickjs"),
+        ));
     }
 }

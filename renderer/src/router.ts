@@ -2,6 +2,7 @@ import { createRouter, createWebHashHistory, type RouteRecordRaw } from "vue-rou
 import type { InjectionKey } from "vue";
 
 import BrowsePage from "./pages/BrowsePage.vue";
+import FollowPage from "./pages/FollowPage.vue";
 import MediaDetailPage from "./pages/MediaDetailPage.vue";
 import RouteMarkerPage from "./pages/RouteMarkerPage.vue";
 import SourceSwitchPage from "./pages/SourceSwitchPage.vue";
@@ -15,6 +16,12 @@ export const coreRouteNames = [
   "media",
   "watch",
   "sources",
+  "history",
+  "favorites",
+  "follow",
+  "legacy-downloads",
+  "legacy-local",
+  "legacy-settings",
 ] as const;
 
 export type CoreRouteName = typeof coreRouteNames[number];
@@ -28,11 +35,10 @@ export const coreRoutes: RouteRecordRaw[] = [
   { path: "/media/:mediaId", name: "media", component: MediaDetailPage, props: true },
   { path: "/watch/:mediaId", name: "watch", component: WatchPage, props: true },
   { path: "/sources", name: "sources", component: SourceSwitchPage },
-  { path: "/history", name: "legacy-history", component: RouteMarkerPage },
-  { path: "/favorites", name: "legacy-favorites", component: RouteMarkerPage },
-  { path: "/follow", name: "legacy-follow", component: RouteMarkerPage },
+  { path: "/history", name: "history", component: () => import("./pages/HistoryPage.vue") },
+  { path: "/favorites", name: "favorites", component: () => import("./pages/FavoritesPage.vue") },
+  { path: "/follow", name: "follow", component: FollowPage },
   { path: "/downloads", name: "legacy-downloads", component: RouteMarkerPage },
-  { path: "/live", name: "legacy-live", component: RouteMarkerPage },
   { path: "/local", name: "legacy-local", component: RouteMarkerPage },
   { path: "/settings", name: "legacy-settings", component: RouteMarkerPage },
   { path: "/:pathMatch(.*)*", redirect: "/home" },

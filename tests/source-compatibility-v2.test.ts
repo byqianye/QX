@@ -53,12 +53,20 @@ describe("source compatibility v2", () => {
     expect(capabilities.player).toBe(true);
   });
 
+  it("does not expose non-VOD channel sources as playable VOD", () => {
+    const capabilities = detectCapabilities({ key: "sports", name: "赛事频道", api: "csp_Sports", type: 3 });
+    expect(capabilities.vod).toBe(false);
+    expect(capabilities.detail).toBe(false);
+    expect(capabilities.player).toBe(false);
+    expect(capabilities).not.toHaveProperty("live");
+  });
+
   it("distinguishes class failure and empty search from a runtime failure", () => {
     const capabilities = detectCapabilities({ key: "a", name: "影视", api: "csp_A", type: 3 });
     const empty = { status: "EMPTY" as const, durationMs: 3 };
     const pass = { status: "PASS" as const, durationMs: 3 };
-    expect(classifySourceCompatibility({ capabilities, runtime: "android-dex", classLoad: "PASS", init: pass, search: empty, detail: pass, player: empty })).toBe("SEARCH_ONLY");
-    expect(classifySourceCompatibility({ capabilities, runtime: "android-dex", classLoad: "FAIL", init: pass, search: empty, detail: pass, player: empty })).toBe("CLASS_NOT_FOUND");
+    expect(classifySourceCompatibility({ capabilities, runtime: "native", classLoad: "PASS", init: pass, search: empty, detail: pass, player: empty })).toBe("SEARCH_ONLY");
+    expect(classifySourceCompatibility({ capabilities, runtime: "native", classLoad: "FAIL", init: pass, search: empty, detail: pass, player: empty })).toBe("CLASS_NOT_FOUND");
   });
 
   it("enforces independent phase concurrency and isolates an authentication result", async () => {

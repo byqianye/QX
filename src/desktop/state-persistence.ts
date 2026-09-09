@@ -8,7 +8,7 @@ import {
 import { dirname } from "node:path";
 
 export type ThemeMode = "system" | "light" | "dark";
-export type PersistedNavigation = "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" | "live" | "local" | "downloads";
+export type PersistedNavigation = "home" | "category" | "search" | "detail" | "history" | "favorites" | "follow" | "settings" | "local" | "downloads";
 
 export interface PersistedCategory {
   typeId: string;
@@ -125,7 +125,7 @@ export const MIN_WINDOW_HEIGHT = 640;
 
 export const DEFAULT_DESKTOP_STATE: DesktopPersistedState = {
   version: 1,
-  theme: "light",
+  theme: "dark",
   window: {
     width: 1280,
     height: 860,
@@ -299,7 +299,7 @@ function normalizeState(value: Record<string, unknown>): DesktopPersistedState {
   const window = isRecord(value.window) ? value.window : {};
   return {
     version: 1,
-    theme: isThemeMode(value.theme) ? value.theme : "light",
+    theme: isThemeMode(value.theme) ? value.theme : "dark",
     window: normalizeWindowState(window),
     page: normalizePageState(page),
   };
@@ -372,7 +372,7 @@ function isThemeMode(value: unknown): value is ThemeMode {
 
 function isNavigation(value: unknown): value is PersistedNavigation {
   return value === "home" || value === "category" || value === "search" || value === "detail"
-    || value === "history" || value === "favorites" || value === "follow" || value === "settings" || value === "live" || value === "local" || value === "downloads";
+    || value === "history" || value === "favorites" || value === "follow" || value === "settings" || value === "local" || value === "downloads";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -32,7 +32,6 @@ describe("WebControlService", () => {
     const now = await getJson(base, "/api/now-playing");
     const search = await getJson(base, "/api/search?q=fixture");
     const detail = await getJson(base, "/api/detail?id=movie-1");
-    const live = await getJson(base, "/api/live-channels");
     const downloads = await getJson(base, "/api/downloads");
     const cast = await getJson(base, "/api/cast-devices");
     const safe = await getJson(base, "/api/safe-status");
@@ -40,12 +39,11 @@ describe("WebControlService", () => {
     expect(now.nowPlaying.title).toBe("Fixture Movie");
     expect(search.search.items[0].id).toBe("movie-1");
     expect(detail.detail.episodes).toHaveLength(1);
-    expect(live.live.channels[0].id).toBe("channel-1");
     expect(downloads.downloads.tasks[0].filename).toBe("fixture.mp4");
     expect(cast.cast.devices[0]).not.toHaveProperty("location");
     expect(safe.status).toMatchObject({ host: "127.0.0.1", listening: true, lanControl: "disabled" });
-    expect(JSON.stringify({ now, search, detail, live, downloads, cast, safe })).not.toContain("C:\\private");
-    expect(JSON.stringify({ now, search, detail, live, downloads, cast, safe })).not.toContain("Cookie");
+    expect(JSON.stringify({ now, search, detail, downloads, cast, safe })).not.toContain("C:\\private");
+    expect(JSON.stringify({ now, search, detail, downloads, cast, safe })).not.toContain("Cookie");
     expect(calls).toEqual([]);
   });
 
@@ -168,7 +166,6 @@ describe("WebControlService", () => {
     await postJson(base, "/api/seek", { position: 12 }, token);
     await postJson(base, "/api/volume", { volume: 0.4, muted: true }, token);
     await postJson(base, "/api/play-episode", { lineIndex: 0, episodeIndex: 0 }, token);
-    await postJson(base, "/api/live-channel", { channelId: "channel-1", streamId: "stream-1" }, token);
     const pushed = await postJson(base, "/api/push", { url: "https://media.example.test/fixture.mp4", title: "Fixture" }, token);
     await postJson(base, "/api/cast", { deviceId: "device-1" }, token);
     await postJson(base, "/api/stop", {}, token);
@@ -179,7 +176,6 @@ describe("WebControlService", () => {
       "seek:12",
       "volume:0.4:true",
       "episode:0:0",
-      "live:channel-1:stream-1",
       "push:https://media.example.test/fixture.mp4:Fixture",
       "cast:device-1",
       "stop",
@@ -223,8 +219,9 @@ describe("WebControlService", () => {
   });
 
   it("publishes an explicit route contract without raw process, SQL, path, or secret surfaces", () => {
-    expect(WEB_CONTROL_ROUTES).toHaveLength(16);
+    expect(WEB_CONTROL_ROUTES).toHaveLength(14);
     expect(WEB_CONTROL_ROUTES.every((route) => route.path.startsWith("/api/") && !route.path.includes("sql"))).toBe(true);
+    expect(WEB_CONTROL_ROUTES.every((route) => !/(?:live|epg)/i.test(route.path))).toBe(true);
     expect(JSON.stringify(WEB_CONTROL_ROUTES)).not.toMatch(/spawn|shell|sqlite|filePath|token/i);
   });
 
@@ -246,16 +243,9 @@ function fakeBackend(calls: string[]): WebControlBackend {
       duration: 100,
       volume: 1,
       muted: false,
-      live: false,
       error: null,
     },
     search: { query: "", items: [] },
-    live: {
-      channels: [{ id: "channel-1", name: "Fixture Channel", group: "News", sourceName: "Fixture", streams: [{ id: "stream-1", label: "Main", protocol: "HLS", status: "ready" }] }],
-      activeChannelId: null,
-      activeStreamId: null,
-      state: null,
-    },
     downloads: {
       tasks: [{ id: "download-1", title: "Fixture", filename: "fixture.mp4", status: "completed", totalBytes: 10, completedBytes: 10, speed: 0, error: null }],
       backend: "fake",
@@ -270,7 +260,7 @@ function fakeBackend(calls: string[]): WebControlBackend {
     },
     status: {
       uiReady: true,
-      capabilities: { search: true, playback: true, live: true, push: true, downloads: true, cast: true },
+      capabilities: { search: true, playback: true, push: true, downloads: true, cast: true },
       lanControl: "disabled",
     },
   });
@@ -284,8 +274,6 @@ function fakeBackend(calls: string[]): WebControlBackend {
     search: async (query) => ({ query, items: [{ id: "movie-1", title: "Fixture Movie", year: "2026", remark: "HD" }] }),
     detail: async (id) => ({ id, title: "Fixture Movie", year: "2026", overview: "Safe overview", episodes: [{ lineIndex: 0, episodeIndex: 0, lineName: "Main", name: "Episode 1" }] }),
     playEpisode: async ({ lineIndex, episodeIndex }) => { calls.push(`episode:${lineIndex}:${episodeIndex}`); },
-    liveChannels: () => snapshot().live,
-    playLive: async ({ channelId, streamId }) => { calls.push(`live:${channelId}:${streamId}`); },
     push: async ({ url, title }) => { calls.push(`push:${url}:${title}`); return { kind: "accepted", id: "push-1", title: title ?? null, status: "accepted" }; },
     downloads: () => snapshot().downloads,
     castDevices: () => snapshot().cast,

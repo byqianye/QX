@@ -57,3 +57,9 @@
 
 - Stage 0：Spike 0–19 已完成
 - Stage 1：G20–G78 目标模式进行中
+
+## 新任务接手入口
+
+开始新任务前先阅读 [docs/PROJECT-HANDOFF.md](docs/PROJECT-HANDOFF.md)；
+持续状态只更新 [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md)，构建路径见
+[docs/BUILD.md](docs/BUILD.md)，维护规则见 [docs/MAINTENANCE.md](docs/MAINTENANCE.md)。

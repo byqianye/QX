@@ -16,6 +16,7 @@ const statusLabel = computed(() => ({
   ready: "已连接",
   loading: "连接中",
   initializing: "准备中",
+  checking: "检测中",
   error: "暂不可用",
 }[props.status] ?? "未检测"));
 </script>

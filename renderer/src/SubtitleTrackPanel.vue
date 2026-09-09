@@ -123,6 +123,6 @@ function selectLocalFile(event: Event): void {
     </div>
     <p v-if="props.loading" class="meta" data-testid="subtitle-loading">正在加载字幕…</p>
     <p v-if="props.error" class="player-error" data-testid="subtitle-error">{{ props.error }}</p>
-    <p class="meta">远程字幕通过 LocalProxy；ASS/SSA 仅转换基础 Dialogue，不执行特效或脚本。</p>
+    <p class="meta">支持本地字幕；ASS/SSA 使用基础文本样式。</p>
   </section>
 </template>

@@ -107,7 +107,7 @@ describe("G64 download manager", () => {
       targetDirectoryId: target.id,
     })).rejects.toMatchObject({ code: "DOWNLOAD_NOT_ELIGIBLE" });
     await expect(service.add({
-      requestReference: "https://media.example.test/live/index.m3u8",
+      requestReference: "https://media.example.test/stream/index.m3u8",
       targetDirectoryId: target.id,
       explicitUserUrl: true,
     })).rejects.toMatchObject({ code: "DOWNLOAD_NOT_ELIGIBLE" });

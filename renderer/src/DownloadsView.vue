@@ -58,6 +58,19 @@ function formatBytes(value: number | null): string {
 function formatSpeed(value: number | null): string {
   return value && value > 0 ? `${formatBytes(value)}/s` : "—";
 }
+
+function statusLabel(status: DownloadStatus): string {
+  return {
+    queued: "排队中",
+    starting: "准备中",
+    downloading: "下载中",
+    paused: "已暂停",
+    completed: "已完成",
+    failed: "失败",
+    cancelled: "已取消",
+    removed: "已移除",
+  }[status];
+}
 </script>
 
 <template>
@@ -65,7 +78,7 @@ function formatSpeed(value: number | null): string {
     <div class="panel-header">
       <div>
         <span class="section-kicker">aria2 下载任务管理</span>
-        <h2>Downloads</h2>
+        <h2>下载</h2>
         <p class="meta">只接受用户明确添加的 HTTP/HTTPS 文件地址；播放地址和 HLS 不会自动变成下载入口。</p>
       </div>
       <span class="status-chip" :data-status="props.state.aria2Available ? 'ready' : 'warning'">
@@ -100,9 +113,9 @@ function formatSpeed(value: number | null): string {
     </div>
 
     <div class="tab-row" role="tablist" aria-label="下载状态">
-      <button type="button" :class="{ selected: tab === 'active' }" data-action="downloads-active" @click="tab = 'active'">Active</button>
-      <button type="button" :class="{ selected: tab === 'completed' }" data-action="downloads-completed" @click="tab = 'completed'">Completed</button>
-      <button type="button" :class="{ selected: tab === 'failed' }" data-action="downloads-failed" @click="tab = 'failed'">Failed</button>
+      <button type="button" :class="{ selected: tab === 'active' }" data-action="downloads-active" @click="tab = 'active'">进行中</button>
+      <button type="button" :class="{ selected: tab === 'completed' }" data-action="downloads-completed" @click="tab = 'completed'">已完成</button>
+      <button type="button" :class="{ selected: tab === 'failed' }" data-action="downloads-failed" @click="tab = 'failed'">失败</button>
     </div>
 
     <div v-if="visibleTasks.length === 0" class="empty-state" data-testid="downloads-empty">暂无任务</div>
@@ -110,7 +123,7 @@ function formatSpeed(value: number | null): string {
       <article v-for="task in visibleTasks" :key="task.id" class="download-row" :data-status="task.status">
         <div class="download-row-main">
           <strong>{{ task.title }}</strong>
-          <span class="meta">{{ task.suggestedFilename }} · {{ task.status }}</span>
+          <span class="meta">{{ task.suggestedFilename }} · {{ statusLabel(task.status) }}</span>
         </div>
         <div class="download-row-progress">
           <span>{{ formatBytes(task.completedBytes) }} / {{ formatBytes(task.totalBytes) }}</span>

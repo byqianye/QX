@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ConfigHistoryStore } from "../src/config/history.js";
 import { ConfigRefreshManager } from "../src/config/refresh.js";
 
-const safe = JSON.stringify({ lives: [{ id: "live-1" }] });
+const safe = JSON.stringify({ parses: [] });
 const changed = JSON.stringify({
   spider: "https://code.example.invalid/new.mjs",
   sites: [{ key: "a", api: "js:https://code.example.invalid/new.mjs" }],

@@ -52,11 +52,7 @@ describe("Tauri component manager contract", () => {
     const config = JSON.parse(
       readFileSync(resolve(import.meta.dirname, "../src-tauri/tauri.conf.json"), "utf8"),
     ) as { bundle?: { resources?: Record<string, string> } };
-    expect(config.bundle?.resources).toEqual({
-      "../android-spider-host/app/build/outputs/apk/debug/app-debug.apk":
-        "android-host/android-spider-host.apk",
-      "../build/android-runtime-manifest.json": "android-host/android-runtime-manifest.json",
-    });
+    expect(config.bundle?.resources).toEqual({});
     expect(Object.values(config.bundle?.resources ?? {}).join("\n")).not.toMatch(/quickjs|mpv/i);
 
     const coreCargo = readFileSync(resolve(import.meta.dirname, "../src-tauri/Cargo.toml"), "utf8");

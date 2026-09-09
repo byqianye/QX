@@ -3,8 +3,6 @@ export interface BackupSummary {
   history: number;
   favorites: number;
   following: number;
-  liveSources: number;
-  smartChannels: number;
 }
 
 export interface BackupManifest {

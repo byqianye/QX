@@ -192,8 +192,7 @@ export class DesktopSpiderSession implements MediaSource {
 
     const site = this.findSite(siteKey);
     const api = site.api;
-    const binding = resolveDesktopSourceBinding(this.options.config, site, this.options.source)
-      ?? (this.options.createRuntime ? androidDexFallbackBinding(site) : undefined);
+    const binding = resolveDesktopSourceBinding(this.options.config, site, this.options.source);
     if (!binding) {
       throw this.fail(
         `Unsupported desktop Spider source: ${String(api)}`,
@@ -577,25 +576,6 @@ function firstSiteKey(config: TvBoxConfig): string | undefined {
   const site = sites.find((candidate) => typeof candidate.api === "string");
   if (!site) return undefined;
   return typeof site.key === "string" && site.key.length > 0 ? site.key : site.api;
-}
-
-function androidDexFallbackBinding(site: TvBoxSite): DesktopSourceBinding | undefined {
-  if (site.type !== 3 || typeof site.api !== "string" || !/^csp_/iu.test(site.api)) return undefined;
-  return {
-    engine: "android-dex",
-    api: site.api,
-    capabilities: {
-      home: false,
-      category: false,
-      search: true,
-      detail: true,
-      playback: true,
-      localProxy: false,
-      filters: false,
-      pagination: false,
-      engine: "android-dex",
-    },
-  };
 }
 
 function playbackUnavailableFor(code: string, message: string): DesktopSpiderPlaybackState {

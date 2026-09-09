@@ -48,20 +48,6 @@ import { normalizeFongMiSite, serializeFongMiExt } from "../config/fongmi.js";
 import { SpiderRuntimeManager } from "../spider/spider-runtime.js";
 import type { SpiderRuntime, SpiderRuntimeManagerPort } from "../spider/runtime-types.js";
 
-const ANDROID_INIT_RETRY_DELAY_MS = 2_000;
-
-function isTransientAndroidInitError(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  if ((error as { code?: unknown }).code === "SPIDER_METHOD_FAILED") return true;
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes("Attempt to invoke virtual method")
-    && message.includes("on a null object reference");
-}
-
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
 function recordSourceConfigFingerprints(health: SourceHealthService, sites: readonly TvBoxSite[]): void {
   for (const site of sites) {
     const key = siteKeyOf(site);
@@ -308,7 +294,11 @@ export class DesktopSpiderImportController {
       }));
     const coordinator = new AggregateSearchCoordinator(sources);
     this.aggregateCoordinator = coordinator;
-    return coordinator.search(query, { ...options, health: this.health });
+    return coordinator.search(query, {
+      ...options,
+      preferredSourceId: options.preferredSourceId ?? this.selectedSiteKey,
+      health: this.health,
+    });
   }
 
   public cancelAggregateSearch(): AggregateSearchSnapshot | undefined {
@@ -344,7 +334,7 @@ export class DesktopSpiderImportController {
         detail: support.capabilities.detail,
       };
       const runtimeSupported = support.supported && resolverCapabilities.search && resolverCapabilities.detail;
-      const runtimeBindingAvailable = binding !== undefined || support.runtime === "android-dex";
+      const runtimeBindingAvailable = binding !== undefined;
       const metadataOnly = knownMetadataOnlySite(siteKey, configured.api);
       const normalized = normalizeFongMiSite(configured, this.stateValue.source ?? undefined, index);
       const previousHealth = this.sourceHealth.getHealth(siteKey);
@@ -388,12 +378,6 @@ export class DesktopSpiderImportController {
         ...(managed?.capabilities.playback === undefined ? {} : { playback: managed.capabilities.playback }),
       } satisfies PlaybackSourceSite];
     }))).flat();
-    const runtimeWaitStartedAt = Date.now();
-    let runtimePreparation: "not_required" | "ready" = "not_required";
-    if (runtimeManager.prepareForSources) {
-      await runtimeManager.prepareForSources(configuredSites);
-      runtimePreparation = "ready";
-    }
     const engineFactory: SourceEngineFactory = {
       create: (site) => this.createPlaybackSourceEngine(site),
     };
@@ -408,8 +392,8 @@ export class DesktopSpiderImportController {
       ...resolution,
       diagnostics: {
         ...resolution.diagnostics,
-        runtimePreparation,
-        runtimeWaitDurationMs: runtimePreparation === "ready" ? Date.now() - runtimeWaitStartedAt : 0,
+        runtimePreparation: "not_required",
+        runtimeWaitDurationMs: 0,
       },
     };
   }
@@ -623,6 +607,7 @@ export class DesktopSpiderImportController {
     const preferredSiteKey = this.preferredSiteKey?.();
     const selectedSite = configuredSites
       .find((site) => site && siteKeyOf(site) === preferredSiteKey && isSupportedDesktopSite(config, site, sourceUrl))
+      ?? configuredSites.find((site) => isJianpianSite(site) && isSupportedDesktopSite(config, site, sourceUrl))
       ?? configuredSites.find((site) => isSupportedDesktopSite(config, site, sourceUrl));
     const assessment = await inspectImportAsync(descriptor.source, config, this.trustStore, {
       fetchText: (url) => this.fetchText(url, this.requestTimeoutMs),
@@ -913,58 +898,23 @@ export class DesktopSpiderImportController {
         }
         return runtime;
       };
-      let initialized = false;
-      const resetRuntime = async (): Promise<void> => {
-        if (!runtimeManager.destroyRuntime && !runtimeManager.destroy) return;
-        initialized = false;
-        runtimePromise = undefined;
-        if (runtimeManager.destroyRuntime) {
-          await runtimeManager.destroyRuntime(configured);
-        } else {
-          await runtimeManager.destroy!();
-        }
-        await delay(ANDROID_INIT_RETRY_DELAY_MS);
-      };
       const initializeRuntime = async (): Promise<void> => {
-        if (initialized) return;
-        for (let attempt = 0; attempt < 2; attempt += 1) {
-          try {
-            const runtime = await getRuntime();
-            await runtime.init(configured, {
-              sourceId: this.stateValue.source ?? `runtime:${site.siteKey}`,
-              siteKey: site.siteKey,
-              ...(site.ext === undefined ? {} : { ext: site.ext }),
-            });
-            initialized = true;
-            return;
-          } catch (error) {
-            if (!isTransientAndroidInitError(error)
-              || attempt === 1
-              || (!runtimeManager.destroyRuntime && !runtimeManager.destroy)) throw error;
-            await resetRuntime();
-          }
-        }
-      };
-      const retryTransient = async <T>(operation: () => Promise<T>): Promise<T> => {
-        try {
-          return await operation();
-        } catch (error) {
-          if (!isTransientAndroidInitError(error)
-            || (!runtimeManager.destroyRuntime && !runtimeManager.destroy)) throw error;
-          await resetRuntime();
-          await initializeRuntime();
-          return operation();
-        }
+        const runtime = await getRuntime();
+        await runtime.init(configured, {
+          sourceId: this.stateValue.source ?? `runtime:${site.siteKey}`,
+          siteKey: site.siteKey,
+          ...(site.ext === undefined ? {} : { ext: site.ext }),
+        });
       };
       return {
         init: initializeRuntime,
         search: async (query, quick, page) => {
           await initializeRuntime();
-          return (await retryTransient(() => getRuntime().then((runtime) => runtime.search({ key: query, quick, page })))).items;
+          return (await getRuntime()).search({ key: query, quick, page }).then((result) => result.items);
         },
         detail: async (vodId) => {
           await initializeRuntime();
-          return (await retryTransient(() => getRuntime().then((runtime) => runtime.detail([vodId]))))[0] ?? null;
+          return (await getRuntime()).detail([vodId]).then((result) => result[0] ?? null);
         },
       };
     }
@@ -1404,15 +1354,14 @@ function isSupportedDesktopSite(
   sourceUrl?: string,
 ): site is TvBoxSite & { api: string } {
   return site !== undefined
-    && (resolveDesktopSourceBinding(config, site, sourceUrl) !== undefined || hasAndroidDexDeclaration(config, site));
+    && resolveDesktopSourceBinding(config, site, sourceUrl) !== undefined;
 }
 
-function hasAndroidDexDeclaration(config: TvBoxConfig, site: TvBoxSite): boolean {
-  if (site.type !== 3 || typeof site.api !== "string" || !/^csp_/iu.test(site.api)) return false;
-  const siteDeclaration = [site.jar, site.spider].some((value) => typeof value === "string" && value.trim().length > 0);
-  const configDeclaration = typeof config.spider === "string"
-    && /^(?:https?|file):\/\//iu.test(config.spider.trim());
-  return siteDeclaration || configDeclaration;
+function isJianpianSite(site: TvBoxSite): boolean {
+  const key = siteKeyOf(site).trim().toLowerCase();
+  const api = typeof site.api === "string" ? site.api.trim().toLowerCase() : "";
+  const name = typeof site.name === "string" ? site.name.trim() : "";
+  return key === "jianpian" || api === "csp_jianpian" || /荐片|jianpian/iu.test(name);
 }
 
 function siteKeyOf(site: TvBoxSite): string {
@@ -1457,7 +1406,7 @@ function knownMetadataOnlySite(siteKey: string, api: string): boolean {
 
 function unsupportedRuntimeReason(type: number, api: string): string {
   if (type !== 3) return "unsupported_site_type";
-  if (/^csp_/i.test(api) || /\.jar(?:$|[?#])/i.test(api)) return "android_dex_artifact_missing";
+  if (/^csp_/i.test(api) || /\.jar(?:$|[?#])/i.test(api)) return "unsupported_artifact_runtime";
   if (/\.m?js(?:$|[?#])/i.test(api) || /^js:/i.test(api)) return "js_runtime_missing";
   if (/\.py(?:$|[?#])/i.test(api) || /^py:/i.test(api)) return "python_runtime_missing";
   return "unsupported_site_type";

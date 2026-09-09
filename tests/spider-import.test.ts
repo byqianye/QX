@@ -57,6 +57,22 @@ describe("real configuration import", () => {
     expect(createCount).toBe(1);
   });
 
+  it("prefers Jianpian on first import when no source preference is saved", async () => {
+    const importer = createImporter();
+    const pending = await importer.import(JSON.stringify({
+      sites: [
+        { key: "alternate", name: "其他来源", type: 3, api: "csp_PlayableFixture", ext: "fixture" },
+        { key: "jianpian", name: "荐片", type: 1, api: "https://jianpian.example.test/api", ext: "fixture" },
+      ],
+    }));
+
+    expect(pending).toMatchObject({
+      status: "confirmation_required",
+      selectedSiteKey: "jianpian",
+      selectedApi: "https://jianpian.example.test/api",
+    });
+  });
+
   it("accepts a file path and a URL through the same trust boundary", async () => {
     const directory = mkdtempSync(join(tmpdir(), "qx-import-"));
     try {
@@ -327,89 +343,6 @@ describe("real configuration import", () => {
     expect(result.candidates.filter((candidate) => candidate.playable)).toHaveLength(4);
   });
 
-  it("routes the validated Android DEX site through RuntimeManager without a desktop binding", async () => {
-    const androidRuntime = {
-      kind: "android-dex",
-      capabilities: {
-        home: true,
-        category: true,
-        search: true,
-        detail: true,
-        playback: true,
-        localProxy: false,
-        filters: false,
-        pagination: true,
-        engine: "android-dex",
-      },
-      init: async () => undefined,
-      search: async () => ({
-        page: 1,
-        items: [{ id: "android-1", name: "Shared title", raw: {}, vod_id: "android-1", vod_name: "Shared title" }],
-      }),
-      detail: async () => [{
-        id: "android-1",
-        name: "Shared title",
-        raw: {},
-        vod_id: "android-1",
-        vod_name: "Shared title",
-        vod_play_from: "UC",
-        vod_play_url: "Episode 1$https://media.example.invalid/android.m3u8",
-      }],
-      destroy: async () => undefined,
-    };
-    const events: string[] = [];
-    const runtimeManager = {
-      prepareForSources: async () => {
-        events.push("prepare");
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      },
-      supports: async (site: { api?: string }) => site.api === "csp_Duopan"
-        ? {
-            runtime: "android-dex",
-            supported: true,
-            reason: "android_dex_runtime_supported",
-            capabilities: androidRuntime.capabilities,
-          }
-        : {
-            runtime: "native",
-            supported: true,
-            reason: "native_supported",
-      capabilities: { ...androidRuntime.capabilities, engine: "android-dex" },
-          },
-      getRuntime: async () => ({
-        ...androidRuntime,
-        init: async () => { events.push("init"); },
-      }),
-    } as unknown as SpiderRuntimeManagerPort;
-    const importer = createImporter({ runtimeManagerFactory: () => runtimeManager });
-    await importer.import(JSON.stringify({
-      sites: [
-        { key: "douban", type: 3, api: "csp_Douban" },
-        { key: "csp_FeiMaoUC", type: 3, api: "csp_Duopan", ext: "{}" },
-      ],
-    }));
-    importer.confirm();
-
-    const result = await importer.resolvePlaybackSources({
-      id: "meta-1",
-      name: "Shared title",
-      raw: {},
-      vod_id: "meta-1",
-      vod_name: "Shared title",
-    });
-
-    expect(result.searchedSites).toContain("csp_FeiMaoUC");
-    expect(events[0]).toBe("prepare");
-    expect(events).toContain("init");
-    expect(result.diagnostics.sites).toContainEqual(expect.objectContaining({
-      siteKey: "csp_FeiMaoUC",
-      runtime: "android-dex",
-      supported: true,
-      initialization: "success",
-      search: "success",
-    }));
-  });
-
   it("can select the JVM-native playable source for the player spike", async () => {
     const importer = createImporter();
 
@@ -489,7 +422,7 @@ describe("real configuration import", () => {
 
       const initial = await fetch(new URL("/api/state", server.url));
       const initialValue = await initial.json() as { persistence: Record<string, unknown> };
-      expect(initialValue.persistence).toMatchObject({ theme: "light", siteKey: null });
+      expect(initialValue.persistence).toMatchObject({ theme: "dark", siteKey: null });
 
       await post(server.url, "/api/import/load", { input: configJson() });
       await post(server.url, "/api/import/confirm");

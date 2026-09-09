@@ -23,7 +23,6 @@ export interface TvBoxSite {
 export interface TvBoxConfig {
   spider?: string;
   sites?: TvBoxSite[];
-  lives?: unknown[];
   parses?: unknown[];
   rules?: unknown[];
   ads?: unknown[];
@@ -33,7 +32,6 @@ export interface TvBoxConfig {
 
 export interface ConfigSummary {
   siteCount: number;
-  liveCount: number;
   parseCount: number;
   ruleCount: number;
   hasSpider: boolean;
@@ -62,7 +60,11 @@ export function parseTvBoxConfig(input: string): TvBoxConfig {
   try {
     value = JSON.parse(decoded);
   } catch (error) {
-    throw new Error("Configuration is not valid JSON", { cause: error });
+    try {
+      value = JSON.parse(stripJsonComments(decoded));
+    } catch {
+      throw new Error("Configuration is not valid JSON", { cause: error });
+    }
   }
   if (!isRecord(value) || Array.isArray(value)) {
     throw new Error("Configuration must be a JSON object");
@@ -91,7 +93,6 @@ export function summarizeConfig(config: TvBoxConfig): ConfigSummary {
 
   return {
     siteCount: sites.length,
-    liveCount: Array.isArray(config.lives) ? config.lives.length : 0,
     parseCount: Array.isArray(config.parses) ? config.parses.length : 0,
     ruleCount: Array.isArray(config.rules) ? config.rules.length : 0,
     hasSpider: typeof config.spider === "string" && config.spider.length > 0,
@@ -142,6 +143,79 @@ function decodeFongMiCbc(input: string): string {
 function decodeBase64(value: string): string {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
   return Buffer.from(normalized, "base64").toString("utf8");
+}
+
+/**
+ * Accept the line comments used by a few public TVBox catalogs without
+ * changing content inside quoted JSON strings. Strict JSON remains the fast
+ * path; this scanner only runs after the strict parse fails.
+ */
+function stripJsonComments(input: string): string {
+  let output = "";
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < input.length; index += 1) {
+    const current = input[index];
+
+    if (inString) {
+      output += current;
+      if (escaped) {
+        escaped = false;
+      } else if (current === "\\") {
+        escaped = true;
+      } else if (current === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (current === '"') {
+      inString = true;
+      output += current;
+      continue;
+    }
+
+    if (current === "/" && input[index + 1] === "/") {
+      output += " ";
+      index += 2;
+      while (index < input.length && input[index] !== "\r" && input[index] !== "\n") {
+        index += 1;
+      }
+      index -= 1;
+      continue;
+    }
+
+    if (current === "/" && input[index + 1] === "*") {
+      output += " ";
+      index += 2;
+      let closed = false;
+      while (index < input.length) {
+        if (input[index] === "*" && input[index + 1] === "/") {
+          index += 1;
+          closed = true;
+          break;
+        }
+        index += 1;
+      }
+      if (!closed) throw new Error("Unterminated JSON block comment");
+      continue;
+    }
+
+    if (current === "#") {
+      output += " ";
+      index += 1;
+      while (index < input.length && input[index] !== "\r" && input[index] !== "\n") {
+        index += 1;
+      }
+      index -= 1;
+      continue;
+    }
+
+    output += current;
+  }
+
+  return output;
 }
 
 function pad16(value: string): string {

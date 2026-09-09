@@ -27,10 +27,6 @@ import {
   type BusinessDataSnapshot,
   type BusinessFeaturePayload,
   type BusinessFeatureSnapshot,
-  type LivePayload,
-  type LiveSnapshot,
-  type EpgPayload,
-  type EpgSnapshot,
   type CastPayload,
   type CastSnapshot,
   type PushPayload,
@@ -54,6 +50,16 @@ export function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+export function backendFailureMessage(value: unknown): string | null {
+  if (!isBackendFailure(value)) return null;
+  const detail = value.error.safeDetails.message
+    ?? value.error.safeDetails.error
+    ?? Object.values(value.error.safeDetails)[0];
+  return detail
+    ? `${value.error.category}: ${value.error.reasonCode} (${detail})`
+    : `${value.error.category}: ${value.error.reasonCode}`;
+}
+
 export async function requestAppSnapshot(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) throw new Error("Tauri RPC is unavailable outside the Tauri runtime");
   const { invoke } = await import("@tauri-apps/api/core");
@@ -63,12 +69,12 @@ export async function requestAppSnapshot(): Promise<AppSnapshot> {
     response = await invoke("backend_app_snapshot", { request });
   } catch (error: unknown) {
     if (isBackendFailure(error)) {
-      throw new Error(`${error.error.category}: ${error.error.reasonCode}`);
+      throw new Error(backendFailureMessage(error) ?? "Tauri configuration request failed");
     }
     throw error;
   }
   if (isBackendFailure(response)) {
-    throw new Error(`${response.error.category}: ${response.error.reasonCode}`);
+    throw new Error(backendFailureMessage(response) ?? "Tauri configuration request failed");
   }
   if (!isBackendResponse<AppSnapshot>(response)) {
     throw new Error(`Invalid Tauri response for ${BACKEND_RPC_VERSION}`);
@@ -85,12 +91,12 @@ export async function ingestConfigCatalog(payload: ConfigCatalogPayload): Promis
     response = await invoke("backend_config_catalog", { request });
   } catch (error: unknown) {
     if (isBackendFailure(error)) {
-      throw new Error(`${error.error.category}: ${error.error.reasonCode}`);
+      throw new Error(backendFailureMessage(error) ?? "Tauri configuration request failed");
     }
     throw error;
   }
   if (isBackendFailure(response)) {
-    throw new Error(`${response.error.category}: ${response.error.reasonCode}`);
+    throw new Error(backendFailureMessage(response) ?? "Tauri configuration request failed");
   }
   if (!isBackendResponse<ConfigCatalogSnapshot>(response)) {
     throw new Error(`Invalid Tauri response for ${BACKEND_RPC_VERSION}`);
@@ -137,12 +143,12 @@ export async function requestSourceSession(payload: SourceSessionPayload): Promi
     response = await invoke("backend_source_session", { request });
   } catch (error: unknown) {
     if (isBackendFailure(error)) {
-      throw new Error(`${error.error.category}: ${error.error.reasonCode}`);
+      throw new Error(backendFailureMessage(error) ?? "Source request failed");
     }
     throw error;
   }
   if (isBackendFailure(response)) {
-    throw new Error(`${response.error.category}: ${response.error.reasonCode}`);
+    throw new Error(backendFailureMessage(response) ?? "Backend request failed");
   }
   if (!isBackendResponse<SourceSessionResult>(response)) {
     throw new Error(`Invalid Tauri response for ${BACKEND_RPC_VERSION}`);
@@ -159,12 +165,12 @@ export async function requestPlaybackSources(payload: PlaybackSourceResolvePaylo
     response = await invoke("backend_playback_sources", { request });
   } catch (error: unknown) {
     if (isBackendFailure(error)) {
-      throw new Error(`${error.error.category}: ${error.error.reasonCode}`);
+      throw new Error(backendFailureMessage(error) ?? "Playback source request failed");
     }
     throw error;
   }
   if (isBackendFailure(response)) {
-    throw new Error(`${response.error.category}: ${response.error.reasonCode}`);
+    throw new Error(backendFailureMessage(response) ?? "Backend request failed");
   }
   if (!isBackendResponse<PlaybackSourceResolution>(response)) {
     throw new Error(`Invalid Tauri response for ${BACKEND_RPC_VERSION}`);
@@ -246,9 +252,16 @@ export async function requestPlaybackStart(payload: PlaybackStartPayload): Promi
   if (!isTauriRuntime()) throw new Error("Tauri RPC is unavailable outside the Tauri runtime");
   const { invoke } = await import("@tauri-apps/api/core");
   const request = createBackendRequest(payload, crypto.randomUUID(), sessionId, ++sequence);
-  const response = await invoke("backend_playback_start", { request });
+  let response: unknown;
+  try {
+    response = await invoke("backend_playback_start", { request });
+  } catch (error: unknown) {
+    const message = backendFailureMessage(error);
+    if (message) throw new Error(message);
+    throw error;
+  }
   if (isBackendFailure(response)) {
-    throw new Error(`${response.error.category}: ${response.error.reasonCode}`);
+    throw new Error(backendFailureMessage(response) ?? "Backend request failed");
   }
   if (!isBackendResponse<PlaybackStartResult>(response)) {
     throw new Error(`Invalid Tauri response for ${BACKEND_RPC_VERSION}`);
@@ -307,34 +320,6 @@ export async function requestBusinessFeature(payload: BusinessFeaturePayload): P
     throw new Error(`${response.error.category}: ${response.error.reasonCode}`);
   }
   if (!isBackendResponse<BusinessFeatureSnapshot>(response)) {
-    throw new Error(`Invalid Tauri response for ${BACKEND_RPC_VERSION}`);
-  }
-  return response.payload;
-}
-
-export async function requestLive(payload: LivePayload): Promise<LiveSnapshot> {
-  if (!isTauriRuntime()) throw new Error("Tauri RPC is unavailable outside the Tauri runtime");
-  const { invoke } = await import("@tauri-apps/api/core");
-  const request = createBackendRequest(payload, crypto.randomUUID(), sessionId, ++sequence);
-  const response = await invoke("backend_live", { request });
-  if (isBackendFailure(response)) {
-    throw new Error(`${response.error.category}: ${response.error.reasonCode}`);
-  }
-  if (!isBackendResponse<LiveSnapshot>(response)) {
-    throw new Error(`Invalid Tauri response for ${BACKEND_RPC_VERSION}`);
-  }
-  return response.payload;
-}
-
-export async function requestEpg(payload: EpgPayload): Promise<EpgSnapshot> {
-  if (!isTauriRuntime()) throw new Error("Tauri RPC is unavailable outside the Tauri runtime");
-  const { invoke } = await import("@tauri-apps/api/core");
-  const request = createBackendRequest(payload, crypto.randomUUID(), sessionId, ++sequence);
-  const response: unknown = await invoke("backend_epg", { request });
-  if (isBackendFailure(response)) {
-    throw new Error(`${response.error.category}: ${response.error.reasonCode}`);
-  }
-  if (!isBackendResponse<EpgSnapshot>(response)) {
     throw new Error(`Invalid Tauri response for ${BACKEND_RPC_VERSION}`);
   }
   return response.payload;

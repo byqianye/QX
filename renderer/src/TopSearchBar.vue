@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 
 import Icon from "./Icon.vue";
 
-const emit = defineEmits<{ search: [query: string]; back: []; forward: [] }>();
+const emit = defineEmits<{ search: [query: string]; back: []; toggleSidebar: [] }>();
 const props = defineProps<{
   source: string;
   sourceName?: string;
@@ -12,9 +12,13 @@ const props = defineProps<{
   searchAvailable?: boolean | null;
   initialQuery?: string;
   canBack?: boolean;
-  canForward?: boolean;
+  sidebarCollapsed?: boolean;
 }>();
 const query = ref(props.initialQuery ?? "");
+
+watch(() => props.initialQuery, (value) => {
+  query.value = value ?? "";
+});
 const searchDisabled = computed(() => props.pending || props.searchAvailable === false);
 
 function submit(): void {
@@ -25,8 +29,11 @@ function submit(): void {
 <template>
   <header class="top-search-bar" data-testid="top-search-bar" data-od-id="top-search-bar">
     <nav class="top-history-controls" aria-label="页面历史">
-      <button type="button" class="icon-button" data-action="router-back" aria-label="返回上一页" :disabled="!props.canBack" @click="emit('back')">←</button>
-      <button type="button" class="icon-button" data-action="router-forward" aria-label="前进到下一页" :disabled="!props.canForward" @click="emit('forward')">→</button>
+      <button type="button" class="top-back-button" data-action="router-back" aria-label="返回" :disabled="!props.canBack" @click="emit('back')"><Icon name="chevron-left" /><span>返回</span></button>
+      <button type="button" class="icon-button shell-sidebar-toggle" data-action="toggle-sidebar" :aria-expanded="String(!props.sidebarCollapsed)" :aria-label="props.sidebarCollapsed ? '显示侧栏' : '隐藏侧栏'" @click="emit('toggleSidebar')">
+        <Icon name="panel" />
+        <span class="top-sidebar-toggle-label">{{ props.sidebarCollapsed ? "显示侧栏" : "隐藏侧栏" }}</span>
+      </button>
     </nav>
     <form data-testid="search-form" data-action="search-form" class="top-search-form" @submit.prevent="submit">
       <label class="sr-only" for="search-key">搜索影视内容</label>

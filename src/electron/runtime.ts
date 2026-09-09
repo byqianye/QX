@@ -93,7 +93,10 @@ function validateRequiredBundledRuntimes(
   required: boolean,
 ): ElectronRuntimeError | null {
   if (!required) return null;
-  for (const id of ["jre", "python", "mpv", "aria2"] as const) {
+  // JRE and the JVM artifacts are required for the bundled JVM Spider path.
+  // Python, mpv and aria2 are optional feature runtimes; their absence must
+  // not prevent the application shell from starting.
+  for (const id of ["jre"] as const) {
     const result = validateBundledRuntime(resourcesDirectory, id, true);
     if (result === "integrity-failed") {
       return {

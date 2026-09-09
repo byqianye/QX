@@ -82,6 +82,7 @@ struct Coordinator {
     candidates: Vec<FallbackCandidate>,
     tried: Vec<String>,
     state: PlaybackFallbackState,
+    total_timeout_ms: i64,
 }
 
 #[derive(Default)]
@@ -110,17 +111,13 @@ impl PlaybackFallbackRegistry {
             let total_timeout_ms = payload.total_timeout_ms.unwrap_or(30_000).max(1);
             let candidates = prepare_candidates(payload.candidates);
             let state = initial_state(&mode, max_attempts);
-            let state = PlaybackFallbackState {
-                started_at: Some(at),
-                deadline_at: Some(at.saturating_add(total_timeout_ms)),
-                ..state
-            };
             sessions.insert(
                 session_id.to_string(),
                 Coordinator {
                     candidates,
                     tried: Vec::new(),
                     state: state.clone(),
+                    total_timeout_ms,
                 },
             );
             return Ok(result(state, none_decision()));
@@ -160,6 +157,9 @@ impl PlaybackFallbackRegistry {
                 }
             }
             "finish" => {
+                if coordinator.state.status != "trying" {
+                    none_decision_with_reason("no-active-attempt")
+                } else {
                 if payload.success.unwrap_or(false) {
                     coordinator.state.status = "recovered".to_string();
                     coordinator.state.current = None;
@@ -170,6 +170,7 @@ impl PlaybackFallbackRegistry {
                     coordinator.state.next = None;
                 }
                 none_decision()
+                }
             }
             "cancel" => {
                 coordinator.state.status = "cancelled".to_string();
@@ -216,12 +217,16 @@ fn trigger(
     }
     if matches!(
         coordinator.state.status.as_str(),
-        "cancelled" | "stopped" | "recovered"
+        "cancelled" | "stopped"
     ) {
         return none_decision_with_reason(&format!("fallback-{}", coordinator.state.status));
     }
     coordinator.state.trigger = Some(trigger_name.to_string());
     coordinator.state.reason = Some(safe_reason(reason));
+    if coordinator.state.started_at.is_none() {
+        coordinator.state.started_at = Some(at);
+        coordinator.state.deadline_at = Some(at.saturating_add(coordinator.total_timeout_ms));
+    }
     if coordinator.state.mode == "prompt" {
         let Some(next) = peek_next(coordinator, at) else {
             return stop(coordinator, "no fallback candidate", at);
@@ -447,6 +452,27 @@ fn now_millis() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn recovered_line_can_fail_again_without_resetting_the_budget() {
+        let registry = PlaybackFallbackRegistry::default();
+        let mut begin = payload("begin");
+        begin.mode = Some("auto".into());
+        begin.candidates = vec![candidate("first", "same-content"), candidate("second", "same-content")];
+        registry.handle(begin).unwrap();
+        let first = registry.handle(payload("trigger")).unwrap();
+        assert_eq!(first.decision.candidate.unwrap().id, "first");
+        let mut decoded = payload("finish");
+        decoded.success = Some(true);
+        registry.handle(decoded).unwrap();
+        let second = registry.handle(payload("trigger")).unwrap();
+        assert_eq!(second.decision.candidate.unwrap().id, "second");
+        assert_eq!(second.state.attempts, 2);
+        assert_eq!(second.state.deadline_at, first.state.deadline_at);
+        registry.handle(payload("cancel")).unwrap();
+        let mut late = payload("finish");
+        late.success = Some(true);
+        assert_eq!(registry.handle(late).unwrap().state.status, "cancelled");
+    }
     use super::{FallbackCandidate, PlaybackFallbackPayload, PlaybackFallbackRegistry};
 
     fn candidate(id: &str, kind: &str) -> FallbackCandidate {
@@ -526,9 +552,17 @@ mod tests {
         );
         assert_eq!(result.state.status, "idle");
 
+        let mut started = payload("trigger");
+        started.trigger = Some("startup-timeout".to_string());
+        started.at = Some(601_000);
+        let result = registry.handle(started).expect("start recovery after ten minutes of playback");
+        assert_eq!(result.decision.kind, "prompt");
+        assert_eq!(result.state.started_at, Some(601_000));
+        assert_eq!(result.state.deadline_at, Some(601_010));
+
         let mut expired = payload("trigger");
         expired.trigger = Some("startup-timeout".to_string());
-        expired.at = Some(1_011);
+        expired.at = Some(601_011);
         let result = registry.handle(expired).expect("expired trigger");
         assert_eq!(result.decision.kind, "stopped");
         assert_eq!(result.state.status, "stopped");

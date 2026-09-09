@@ -7,6 +7,7 @@ import {
   isBackendFailure,
   isBackendResponse,
 } from "../renderer/src/contracts.js";
+import { backendFailureMessage } from "../renderer/src/tauri-rpc.js";
 
 describe("Tauri backend contracts", () => {
   it("keeps the versioned request envelope stable", () => {
@@ -40,7 +41,7 @@ describe("Tauri backend contracts", () => {
   });
 
   it("accepts versioned failures with the stable error model", () => {
-    expect(isBackendFailure({
+    const failure = {
       version: BACKEND_RPC_VERSION,
       requestId: "req-1",
       sessionId: "session-1",
@@ -53,7 +54,18 @@ describe("Tauri backend contracts", () => {
         diagnosticId: "rpc-invalid-version",
         safeDetails: {},
       },
-    })).toBe(true);
+    };
+    expect(isBackendFailure(failure)).toBe(true);
+    expect(backendFailureMessage(failure)).toBe("InvalidConfig: RPC_VERSION_UNSUPPORTED");
+    expect(backendFailureMessage({
+      ...failure,
+      error: {
+        ...failure.error,
+        reasonCode: "CONFIG_REMOTE_FETCH_FAILED",
+        safeDetails: { message: "remote configuration returned 502 Bad Gateway" },
+      },
+    })).toBe("InvalidConfig: CONFIG_REMOTE_FETCH_FAILED (remote configuration returned 502 Bad Gateway)");
+    expect(backendFailureMessage(new Error("transport"))).toBeNull();
   });
 
   it("keeps the config catalog payload scoped to the v1 storage contract", () => {

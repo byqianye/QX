@@ -80,7 +80,7 @@ function inferRootCause(code: string | undefined, path: string | undefined, cont
   if (code !== "ENOENT") return undefined;
   if (context.artifactPath || context.artifactUrl) return "artifact_file_missing";
   const lower = path?.toLowerCase() ?? "";
-  if (lower.includes("jvm-spider-host") || lower.includes("android-spider-host")) return "runtime_host_missing";
+  if (lower.includes("jvm-spider-host")) return "runtime_host_missing";
   if (lower.includes("worker")) return "worker_file_missing";
   if (lower.includes("python") || lower.includes("mpv") || lower.includes("aria2")) return "runtime_executable_missing";
   return "file_missing";

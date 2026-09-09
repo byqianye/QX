@@ -22,7 +22,7 @@ export interface CoreRouteContext {
   back: () => void;
   search: (query: string) => void;
   selectCategory: (typeId: string, filters?: Record<string, string>) => void;
-  openDetail: (vodId: string) => void;
+  openDetail: (vodId: string, siteKey?: string) => void;
   play: (lineIndex: number, episodeIndex: number, resumeMode?: HistoryResumeMode) => void;
   retry: () => void;
   findPlaybackSource: () => void;
@@ -36,12 +36,31 @@ export interface CoreRouteContext {
   fallbackCancel: () => void;
   fallbackApprove: () => void;
   fallbackMode: (value: "off" | "prompt" | "auto") => void;
+  openSources: () => void;
   switchSource: () => void;
   selectSource: (siteKey: string) => void;
   favoriteToggle: () => void;
   favoriteMove: (groupId: string) => void;
+  historyOpen: (identity: string) => void;
+  historyDelete: (identity: string) => void;
+  historyDeleteProgress: (identity: string) => void;
+  historyClear: (identities: string[]) => void;
+  historyPause: (paused: boolean) => void;
+  favoriteOpen: (favoriteId: string) => void;
+  favoriteDelete: (favoriteId: string) => void;
+  favoriteMoveItem: (payload: { favoriteId: string; groupId: string }) => void;
+  favoriteReorder: (payload: { groupId: string; favoriteIds: string[] }) => void;
+  favoriteCreateGroup: (name: string) => void;
+  favoriteRenameGroup: (payload: { groupId: string; name: string }) => void;
+  favoriteDeleteGroup: (payload: { groupId: string; disposition?: "default" | "delete" }) => void;
+  favoriteReorderGroups: (groupIds: string[]) => void;
   followToggle: () => void;
   followAndFavorite: () => void;
+  followRefresh: () => void;
+  followOpen: (identity: string) => void;
+  followDelete: (identity: string) => void;
+  followMarkWatched: (identity: string) => void;
+  followMarkUnwatched: (identity: string) => void;
 }
 
 export const CORE_ROUTE_CONTEXT_KEY: InjectionKey<CoreRouteContext> = Symbol("qx-core-route-context");

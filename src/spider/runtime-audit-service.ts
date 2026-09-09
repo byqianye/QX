@@ -109,7 +109,6 @@ function emptyRuntimeCounts(): Record<SiteRuntimeAuditKind, number> {
     "cms-xml": 0,
     native: 0,
     javascript: 0,
-    "android-dex": 0,
     "jvm-jar": 0,
     python: 0,
     unknown: 0,

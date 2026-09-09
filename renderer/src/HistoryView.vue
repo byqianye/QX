@@ -17,7 +17,6 @@ const emit = defineEmits<{
 }>();
 
 const query = ref("");
-const source = ref("all");
 const filter = ref<"all" | "continue" | "completed">("all");
 const sort = ref<"updated" | "title">("updated");
 const selected = ref<string[]>([]);
@@ -61,15 +60,13 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", onDialogKeydown);
 });
 
-const sources = computed(() => [...new Set(props.state.items.map((item) => item.sourceDisplayName ?? "当前来源"))].sort());
 const visibleItems = computed(() => {
   const needle = query.value.trim().toLocaleLowerCase();
   return [...props.state.items]
     .filter((item) => filter.value === "all"
       || (filter.value === "completed" && item.completed)
       || (filter.value === "continue" && !item.completed && item.position > 0))
-    .filter((item) => source.value === "all" || (item.sourceDisplayName ?? "当前来源") === source.value)
-    .filter((item) => !needle || `${item.title} ${item.episodeName ?? ""} ${item.sourceDisplayName ?? ""}`.toLocaleLowerCase().includes(needle))
+    .filter((item) => !needle || `${item.title} ${item.episodeName ?? ""}`.toLocaleLowerCase().includes(needle))
     .sort((left, right) => sort.value === "updated"
       ? right.updatedAt - left.updatedAt
       : left.title.localeCompare(right.title));
@@ -137,7 +134,7 @@ function confirm(): void {
     <section class="panel history-toolbar" aria-label="历史筛选">
       <label class="history-search">
         <span>搜索历史</span>
-        <input v-model="query" type="search" placeholder="搜索标题、集数或来源" data-testid="history-search" />
+        <input v-model="query" type="search" placeholder="搜索标题或集数" data-testid="history-search" />
       </label>
       <label>
         <span>状态</span>
@@ -145,13 +142,6 @@ function confirm(): void {
           <option value="all">全部</option>
           <option value="continue">继续观看</option>
           <option value="completed">已看完</option>
-        </select>
-      </label>
-      <label>
-        <span>来源</span>
-        <select v-model="source" data-testid="history-source">
-          <option value="all">全部来源</option>
-          <option v-for="item in sources" :key="item" :value="item">{{ item }}</option>
         </select>
       </label>
       <label>
@@ -210,7 +200,6 @@ function confirm(): void {
         <div class="history-item-content">
           <div class="history-item-heading">
             <div>
-              <span class="context-kicker">{{ item.sourceDisplayName ?? "当前来源" }}</span>
               <h3>{{ item.title }}</h3>
             </div>
             <span class="status-chip" :data-status="item.completed ? 'success' : 'ready'">{{ item.completed ? "已看完" : "继续观看" }}</span>

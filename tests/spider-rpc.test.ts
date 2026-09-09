@@ -21,6 +21,7 @@ describe("Spider RPC boundary", () => {
     const roundTrip = parseSpiderLine(JSON.stringify(request));
 
     expect(spiderMethods).toContain("search");
+    expect(spiderMethods).not.toContain("live");
     expect(roundTrip).toEqual(request);
   });
 

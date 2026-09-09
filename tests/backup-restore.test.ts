@@ -42,7 +42,7 @@ describe("backup and restore", () => {
     expect(created.fileName).toMatch(/\.zip$/u);
     expect(readFileSync(join(root, "backups", created.fileName)).subarray(0, 2).toString("ascii")).toBe("PK");
     expect(created.includeCache).toBe(false);
-    expect(created.summary).toMatchObject({ history: 1, favorites: 1, following: 1, liveSources: 1, smartChannels: 1 });
+    expect(created.summary).toMatchObject({ history: 1, favorites: 1, following: 1 });
 
     layer.close();
     layers.splice(layers.indexOf(layer), 1);
@@ -150,7 +150,7 @@ describe("backup and restore", () => {
           createdAt: "2026-01-01T00:00:00.000Z",
           sections: ["database"],
           checksums: { "data/database.db": createHash("sha256").update(database).digest("hex") },
-          summary: { history: 1, favorites: 1, following: 1, liveSources: 1, smartChannels: 1 },
+          summary: { history: 1, favorites: 1, following: 1 },
         }), "utf8"),
       },
       { name: "data/database.db", data: database },
@@ -215,12 +215,6 @@ function insertBusinessRows(layer: SqliteDataLayer, title: string): void {
   );
   layer.prepare("INSERT INTO follow_items(identity, source_id, vod_id, title, enabled) VALUES (?, ?, ?, ?, ?)").run(
     "follow-1", "source-1", "vod-1", title, 1,
-  );
-  layer.prepare("INSERT INTO live_sources(id, name, type, location) VALUES (?, ?, ?, ?)").run(
-    "live-1", "Live", "m3u-url", "https://example.invalid/live.m3u",
-  );
-  layer.prepare("INSERT INTO smart_channels(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)").run(
-    "smart-1", "Smart", 1, 1,
   );
 }
 

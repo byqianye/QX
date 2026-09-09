@@ -7,6 +7,8 @@ import ErrorState from "./ErrorState.vue";
 import TrustConfirmationDialog from "./TrustConfirmationDialog.vue";
 import { displaySource } from "./safe-display.js";
 import type { ImportState } from "./state.js";
+import { configuredTestPresetUrl } from "./test-preset.js";
+import { DEFAULT_SOURCE_URL } from "./default-source.js";
 
 const props = defineProps<{
   state: ImportState;
@@ -22,7 +24,7 @@ const emit = defineEmits<{
   cancel: [];
 }>();
 
-const input = ref("");
+const input = ref(configuredTestPresetUrl() || DEFAULT_SOURCE_URL);
 const fileInput = ref<HTMLInputElement | null>(null);
 const selectedSiteKey = ref(props.state.selectedSiteKey ?? "");
 const appError = computed(() => toAppError(props.state.error, "config"));
@@ -85,7 +87,7 @@ function submitSite(): void {
     <section class="import-card">
       <form data-testid="config-import-form" @submit.prevent="submit">
         <label for="config-input">配置地址或原始 JSON</label>
-        <textarea id="config-input" v-model="input" name="input" placeholder="https://... / {&quot;sites&quot;:[...]}" :disabled="props.pending !== null" />
+        <textarea id="config-input" v-model="input" name="input" placeholder="输入地址或原始 JSON" :disabled="props.pending !== null" />
         <div class="form-footer">
           <span class="meta">配置只在本机解析；导入前会显示来源摘要。</span>
           <button type="submit" class="button-primary" :disabled="props.pending !== null">导入配置</button>

@@ -34,12 +34,11 @@ const currentEpisode = computed(() => {
 
 <template>
   <section data-testid="playback-selector" data-od-id="playback-selector" class="panel playback-selector">
-    <strong>播放线路</strong>
+    <strong class="playback-selector-title">线路与选集</strong>
     <p v-if="props.catalog.lines.length === 0" data-testid="playback-empty">暂无可用选集</p>
     <template v-else>
       <PlaybackLineTabs :lines="props.catalog.lines" :selected-index="selectedLine?.index ?? 0" @select="emit('line', $event)" />
-      <p>当前线路：<span data-testid="current-line">{{ selectedLine?.name ?? "" }}</span></p>
-      <p>当前选集：<span data-testid="current-episode">{{ currentEpisode }}</span></p>
+      <p class="playback-selection-summary"><span data-testid="current-line">{{ selectedLine?.name ?? "" }}</span><span aria-hidden="true"> · </span><span data-testid="current-episode">{{ currentEpisode }}</span></p>
       <div data-testid="playback-order" aria-label="剧集顺序" class="button-row">
         <button
           type="button"
@@ -59,15 +58,13 @@ const currentEpisode = computed(() => {
           重试
         </button>
       </div>
-      <div data-testid="playback-episodes" class="episode-list">
+      <div data-testid="playback-episodes" class="episode-list" tabindex="0" role="region" aria-label="选集列表">
         <EpisodeGrid
-          v-for="line in props.catalog.lines"
-          :key="line.index"
-          :line="line"
+          v-if="selectedLine"
+          :line="selectedLine"
           :order="props.order"
-          :selected-episode="line.index === selectedLine?.index ? props.selection?.episodeIndex ?? null : null"
-          :hidden="line.index !== selectedLine?.index"
-          @select="emit('episode', line.index, $event)"
+          :selected-episode="props.selection?.episodeIndex ?? null"
+          @select="emit('episode', selectedLine.index, $event)"
         />
       </div>
     </template>

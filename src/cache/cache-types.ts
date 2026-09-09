@@ -9,7 +9,6 @@ export const CACHE_TYPES = [
   "search",
   "detail",
   "subtitle",
-  "epg",
   "parser-metadata",
   "temporary",
 ] as const;

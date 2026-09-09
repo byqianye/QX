@@ -1,4 +1,4 @@
-export type SourceEngine = "jvm" | "android-dex" | "quickjs" | "python" | "http" | "jellyfin" | "fixture";
+export type SourceEngine = "jvm" | "quickjs" | "python" | "http" | "jellyfin" | "fixture";
 
 export interface SourceCapabilities {
   home: boolean;

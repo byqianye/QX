@@ -8,7 +8,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, USER_AGENT};
 use serde_json::{json, Value};
 
 const CATEGORY_ID: &str = "88";
-const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+const IMAGE_DOMAIN_PATH: &str = "/api/v2/settings/packageDomainConfig";
 const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Linux; Android 11; Redmi K30 Pro Zoom Edition Build/RKQ1.200826.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/90.0.4430.210 Mobile Safari/537.36;webank/h5face;webank/1.0;netType:NETWORK_WIFI;appVersion:416;packageName:com.jp3.xg3";
 
 #[derive(Debug)]
@@ -26,22 +26,20 @@ pub async fn call(
     cancelled: Arc<AtomicBool>,
 ) -> Result<Value, JianpianError> {
     let base = normalize_base(ext)?;
-    let client = client(headers, timeout)?;
+    let client = client(headers, timeout, &base)?;
     let img_base = match method {
-        "init" => None,
-        _ => Some(fetch_image_base(&client, &base, cancelled.clone()).await?),
+        "home" | "homevideo" | "home_video" | "category" | "search" | "detail" => {
+            Some(fetch_image_base(&client, &base, cancelled.clone()).await?)
+        }
+        _ => None,
     };
 
     match method {
         "init" => {
             let config =
-                request_json(&client, &base, "/api/appAuthConfig", Vec::new(), cancelled).await?;
+                request_json(&client, &base, IMAGE_DOMAIN_PATH, Vec::new(), cancelled).await?;
             Ok(json!({
-                "imgDomain": config
-                    .get("data")
-                    .and_then(|data| data.get("imgDomain"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
+                "imgDomain": image_domain(&config),
             }))
         }
         "home" => {
@@ -164,7 +162,11 @@ fn normalize_base(ext: &str) -> Result<String, JianpianError> {
     Ok(base.to_string())
 }
 
-fn client(headers: &HeaderMap, timeout: Duration) -> Result<reqwest::Client, JianpianError> {
+fn client(
+    headers: &HeaderMap,
+    timeout: Duration,
+    base: &str,
+) -> Result<reqwest::Client, JianpianError> {
     let mut merged = headers.clone();
     merged
         .entry(USER_AGENT)
@@ -175,7 +177,7 @@ fn client(headers: &HeaderMap, timeout: Duration) -> Result<reqwest::Client, Jia
     merged
         .entry(HeaderName::from_static("x-requested-with"))
         .or_insert_with(|| HeaderValue::from_static("com.jp3.xg3"));
-    reqwest::Client::builder()
+    super::source_session::client_builder_for_url(reqwest::Client::builder(), base)
         .default_headers(merged)
         .timeout(timeout)
         .build()
@@ -187,22 +189,29 @@ async fn fetch_image_base(
     base: &str,
     cancelled: Arc<AtomicBool>,
 ) -> Result<String, JianpianError> {
-    let value = request_json(client, base, "/api/appAuthConfig", Vec::new(), cancelled).await?;
-    let domain = value
+    let value = request_json(client, base, IMAGE_DOMAIN_PATH, Vec::new(), cancelled).await?;
+    Ok(image_domain(&value))
+}
+
+fn image_domain(value: &Value) -> String {
+    value
         .get("data")
         .and_then(|data| data.get("imgDomain"))
         .and_then(Value::as_str)
-        .unwrap_or_default();
-    if domain.is_empty() {
-        return Ok(String::new());
-    }
-    Ok(
-        if domain.starts_with("http://") || domain.starts_with("https://") {
-            domain.trim_end_matches('/').to_string()
-        } else {
-            format!("https://{}", domain.trim_end_matches('/'))
-        },
-    )
+        .and_then(|domains| {
+            domains
+                .split(',')
+                .map(str::trim)
+                .find(|domain| !domain.is_empty())
+        })
+        .map(|domain| {
+            if domain.starts_with("http://") || domain.starts_with("https://") {
+                domain.trim_end_matches('/').to_string()
+            } else {
+                format!("https://{}", domain.trim_end_matches('/'))
+            }
+        })
+        .unwrap_or_default()
 }
 
 async fn request_json(
@@ -228,14 +237,11 @@ async fn request_json(
     };
     let status = response.status();
     let bytes = tokio::select! {
-        result = response.bytes() => result.map_err(|error| JianpianError::Request(error.to_string()))?,
+        result = super::source_session::read_bounded_response(response) => result.map_err(|error| {
+            JianpianError::Request(error.message("native Jianpian response is too large"))
+        })?,
         _ = wait_for_cancel(cancelled) => return Err(JianpianError::Request("native Jianpian request cancelled".to_string())),
     };
-    if bytes.len() > MAX_RESPONSE_BYTES {
-        return Err(JianpianError::Request(
-            "native Jianpian response is too large".to_string(),
-        ));
-    }
     if !status.is_success() {
         return Err(JianpianError::Request(format!(
             "native Jianpian returned {status}"
@@ -317,8 +323,8 @@ fn detail_card(item: &Value, image_base: Option<&str>) -> Value {
             if url.is_empty() {
                 continue;
             }
-            let url = if url.contains("ftp") {
-                url.replace("ftp", "tvbox-xg:ftp")
+            let url = if url.starts_with("ftp://") {
+                format!("tvbox-xg:{url}")
             } else {
                 url
             };
@@ -357,11 +363,21 @@ fn player(params: Option<&Value>) -> Result<Value, JianpianError> {
             "native_jianpian_ftp_requires_downloader_component".to_string(),
         ));
     }
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
+    let parsed = reqwest::Url::parse(url).map_err(|_| {
+        JianpianError::Request(
+            "native Jianpian episode does not contain a valid HTTP playback URL".to_string(),
+        )
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
         return Err(JianpianError::Request(
             "native Jianpian episode does not contain an HTTP playback URL".to_string(),
         ));
     }
+    let url = parsed.to_string();
     Ok(json!({
         "parse": 0,
         "jx": 0,
@@ -376,10 +392,32 @@ fn player(params: Option<&Value>) -> Result<Value, JianpianError> {
 
 fn image_value(item: &Value, image_base: Option<&str>) -> String {
     let path = non_empty_string(item, &["tvimg", "path", "thumbnail"]).unwrap_or_default();
-    if path.is_empty() || path.starts_with("http://") || path.starts_with("https://") {
-        return path;
+    if path.is_empty() {
+        return String::new();
     }
-    format!("{}{}", image_base.unwrap_or_default(), path)
+    if let Ok(url) = reqwest::Url::parse(&path) {
+        if is_http_url(&url) {
+            return url.to_string();
+        }
+    }
+    let Some(base) = image_base.and_then(|value| reqwest::Url::parse(value).ok()) else {
+        return String::new();
+    };
+    let Ok(url) = base.join(&path) else {
+        return String::new();
+    };
+    if is_http_url(&url) {
+        url.to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn is_http_url(url: &reqwest::Url) -> bool {
+    matches!(url.scheme(), "http" | "https")
+        && url.host_str().is_some()
+        && url.username().is_empty()
+        && url.password().is_none()
 }
 
 fn joined_titles(value: Option<&Value>) -> String {
@@ -434,11 +472,13 @@ async fn wait_for_cancel(cancelled: Arc<AtomicBool>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{call, categories, detail_card, normalize_base, player};
+    use super::{call, categories, detail_card, image_domain, normalize_base, player};
+    use crate::test_support::bind_loopback_tcp;
     use reqwest::header::HeaderMap;
     use serde_json::json;
     use std::sync::{atomic::AtomicBool, Arc};
     use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
     fn requires_the_configured_http_endpoint() {
@@ -451,6 +491,17 @@ mod tests {
     }
 
     #[test]
+    fn selects_the_first_jianpian_image_domain_from_the_current_config_endpoint() {
+        let config = json!({
+            "code": 1,
+            "data": {
+                "imgDomain": "static.feifaba.com,static.hzbpf.com,static.chexifang.com"
+            }
+        });
+        assert_eq!(image_domain(&config), "https://static.feifaba.com");
+    }
+
+    #[test]
     fn maps_native_detail_sources_to_tvbox_playback_contract() {
         let value = json!({
             "id": 24506,
@@ -460,6 +511,9 @@ mod tests {
                 "source_list": [{
                     "source_name": "正片",
                     "url": "https://media.example.invalid/one.m3u8"
+                }, {
+                    "source_name": "ftp 字样但仍是 HTTP",
+                    "url": "https://media.example.invalid/ftp/one.m3u8?source=ftp"
                 }]
             }]
         });
@@ -468,7 +522,26 @@ mod tests {
         assert_eq!(mapped["vod_play_from"], "VIP线路");
         assert_eq!(
             mapped["vod_play_url"],
-            "正片$https://media.example.invalid/one.m3u8|1|流浪地球"
+            "正片$https://media.example.invalid/one.m3u8|1|流浪地球#ftp 字样但仍是 HTTP$https://media.example.invalid/ftp/one.m3u8?source=ftp|2|流浪地球"
+        );
+
+        let ftp = detail_card(
+            &json!({
+                "id": 24506,
+                "title": "流浪地球",
+                "source_list_source": [{
+                    "name": "FTP",
+                    "source_list": [{
+                        "source_name": "文件",
+                        "url": "ftp://media.example.invalid/one.m3u8"
+                    }]
+                }]
+            }),
+            None,
+        );
+        assert_eq!(
+            ftp["vod_play_url"],
+            "文件$tvbox-xg:ftp://media.example.invalid/one.m3u8|1|流浪地球"
         );
     }
 
@@ -485,11 +558,103 @@ mod tests {
             &json!({ "id": "tvbox-xg:ftp://example.invalid/file" })
         ))
         .is_err());
+        assert!(player(Some(
+            &json!({ "id": "https://user:pass@media.example.invalid/private.m3u8" })
+        ))
+        .is_err());
     }
 
     #[test]
     fn exposes_the_six_native_categories() {
         assert_eq!(categories().as_array().map(Vec::len), Some(6));
+    }
+
+    #[tokio::test]
+    async fn maps_loopback_home_cards_with_absolute_posters() {
+        let listener = bind_loopback_tcp().await.expect("bind fixture");
+        let address = listener.local_addr().expect("fixture address");
+        let base = format!("http://{address}");
+        let image_base = base.clone();
+        let server = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for _ in 0..2 {
+                let (mut socket, _) = listener.accept().await.expect("accept fixture request");
+                let mut request = vec![0_u8; 8192];
+                let length = socket
+                    .read(&mut request)
+                    .await
+                    .expect("read fixture request");
+                request.truncate(length);
+                let request = String::from_utf8_lossy(&request).to_string();
+                let path = request.lines().next().unwrap_or_default().to_string();
+                requests.push(path.clone());
+                let body = if path.starts_with("GET /api/v2/settings/packageDomainConfig") {
+                    format!(r#"{{"code":1,"data":{{"imgDomain":"{image_base}"}}}}"#)
+                } else if path.starts_with("GET /api/dyTag/list?category_id=88") {
+                    r#"{"data":[{"dataList":[{"id":42,"title":"示例影片","tvimg":"/upload/poster.jpg","mask":"高清"},{"id":43,"title":"相对路径","tvimg":"upload/relative.jpg","mask":"标清"}]}]}"#.to_string()
+                } else {
+                    panic!("unexpected Jianpian fixture request: {path}");
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                socket
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write fixture response");
+            }
+            requests
+        });
+
+        let result = call(
+            "home",
+            None,
+            &base,
+            &HeaderMap::new(),
+            Duration::from_secs(2),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+        .expect("Jianpian home");
+
+        assert_eq!(result["list"].as_array().map(Vec::len), Some(2));
+        assert_eq!(result["list"][0]["vod_id"], "42");
+        assert_eq!(result["list"][0]["vod_name"], "示例影片");
+        assert_eq!(
+            result["list"][0]["vod_pic"],
+            format!("{base}/upload/poster.jpg")
+        );
+        assert_eq!(
+            result["list"][1]["vod_pic"],
+            format!("{base}/upload/relative.jpg")
+        );
+        let requests = server.await.expect("fixture server");
+        assert!(requests[0].starts_with("GET /api/v2/settings/packageDomainConfig"));
+        assert!(requests[1].starts_with("GET /api/dyTag/list?category_id=88"));
+    }
+
+    #[tokio::test]
+    async fn player_aliases_do_not_require_a_reachable_endpoint() {
+        for method in ["player", "playback"] {
+            let result = call(
+                method,
+                Some(&json!({
+                    "id": "https://media.example.invalid/episode.m3u8|1|示例影片"
+                })),
+                "http://127.0.0.1:0",
+                &HeaderMap::new(),
+                Duration::from_millis(100),
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await
+            .expect("player should hand off direct URL without endpoint access");
+
+            assert_eq!(result["parse"], 0);
+            assert_eq!(result["jx"], 0);
+            assert_eq!(result["url"], "https://media.example.invalid/episode.m3u8");
+        }
     }
 
     #[tokio::test]

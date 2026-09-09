@@ -450,7 +450,6 @@ async function runSite(
     maxCandidatesPerSite: number;
     initLimiter: AsyncSemaphore;
     health?: SourceHealthService;
-    transientRetry?: boolean;
   },
 ): Promise<SiteRunResult> {
   const diagnostic = initialDiagnostic(site);
@@ -541,9 +540,6 @@ async function runSite(
     });
     }
   } catch (error) {
-    if (site.runtime === "android-dex" && options.transientRetry !== true && isTransientAndroidError(error)) {
-      return runSite(site, currentVod, query, { ...options, transientRetry: true });
-    }
     const message = safeErrorMessage(error);
     const timeout = /超时|timeout/i.test(message);
     diagnostic.initialization = "failed";
@@ -558,14 +554,6 @@ async function runSite(
   }
 
   return { site, diagnostic, candidates };
-}
-
-function isTransientAndroidError(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  if ((error as { code?: unknown }).code === "SPIDER_METHOD_FAILED") return true;
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes("Attempt to invoke virtual method")
-    && message.includes("on a null object reference");
 }
 
 async function getEngine(

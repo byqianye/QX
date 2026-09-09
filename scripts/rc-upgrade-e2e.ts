@@ -16,9 +16,6 @@ const installDirectory = join(work, "安装目录");
 const userData = join(work, "user-data");
 const marker = join(userData, "upgrade-marker.txt");
 const installedExecutable = join(installDirectory, "QX影视.exe");
-const runtimeRoot = join(process.env.LOCALAPPDATA ?? join(process.env.USERPROFILE ?? "", "AppData", "Local"), "QXMovie", "android-runtime");
-const runtimeManifestPath = join(runtimeRoot, "state", "runtime-manifest.json");
-const runtimeAvdPath = join(runtimeRoot, "avd", "QXSpiderRuntime.avd");
 const desktop = join(process.env.USERPROFILE ?? "", "Desktop", "QX影视.lnk");
 const startMenu = join(process.env.APPDATA ?? "", "Microsoft", "Windows", "Start Menu", "Programs", "QX影视", "QX影视.lnk");
 const backups = [desktop, startMenu].filter((path) => existsSync(path)).map((source) => ({ source, backup: join(work, `${source.includes("Desktop") ? "desktop" : "start-menu"}.lnk`) }));
@@ -27,7 +24,6 @@ try {
   for (const entry of backups) renameSync(entry.source, entry.backup);
   mkdirSync(userData, { recursive: true });
   writeFileSync(marker, "preserve-me\n", "utf8");
-  const runtimeBefore = runtimeSnapshot();
   const firstInstall = await run(oldInstaller, ["/S", `/D=${installDirectory}`], {});
   assertCode("RC1 install", firstInstall, 0);
   const before = await runPackagedSmoke();
@@ -37,8 +33,6 @@ try {
   const after = await runPackagedSmoke();
   assertCode("RC2 packaged smoke", after, 0);
   if (!existsSync(marker)) throw new Error("Upgrade removed user data marker");
-  const runtimeAfter = runtimeSnapshot();
-  if (JSON.stringify(runtimeBefore) !== JSON.stringify(runtimeAfter)) throw new Error("Upgrade changed the provisioned Android Runtime");
   const uninstaller = (await import("node:fs")).readdirSync(installDirectory).map((name) => join(installDirectory, name)).find((path) => /uninstall.*\.exe$/iu.test(path));
   if (!uninstaller) throw new Error("RC uninstaller missing after upgrade");
   const uninstall = await run(uninstaller, ["/S"], {});
@@ -49,7 +43,7 @@ try {
     `RC1 installer: ${oldInstaller}`,
     `RC2 installer: ${rcInstaller}`,
     "",
-    "User data marker and the provisioned Android Runtime survived the installer upgrade and the post-upgrade packaged smoke.",
+    "User data marker survived the installer upgrade and the post-upgrade packaged smoke.",
     "",
     "```text",
     `RC1 install: ${firstInstall.code}`,
@@ -62,7 +56,7 @@ try {
     "UPGRADE = PASS",
     "",
   ].join("\n"), "utf8");
-  console.log(JSON.stringify({ status: "PASS", markerPreserved: existsSync(marker), runtimePreserved: true, rc1: before.code, rc2: after.code, uninstall: uninstall.code }, null, 2));
+  console.log(JSON.stringify({ status: "PASS", markerPreserved: existsSync(marker), rc1: before.code, rc2: after.code, uninstall: uninstall.code }, null, 2));
 } finally {
   for (const entry of backups) {
     if (!existsSync(entry.backup)) continue;
@@ -75,14 +69,6 @@ try {
 
 async function runPackagedSmoke(): Promise<ProcessResult> {
   return run(installedExecutable, [], { QX_ELECTRON_SMOKE: "1", QX_E2E_USER_DATA: userData });
-}
-
-function runtimeSnapshot(): { manifest: string; avd: boolean; host: boolean } {
-  return {
-    manifest: existsSync(runtimeManifestPath) ? readFileSync(runtimeManifestPath, "utf8") : "",
-    avd: existsSync(runtimeAvdPath),
-    host: existsSync(join(runtimeRoot, "host", "android-spider-host.apk")),
-  };
 }
 
 interface ProcessResult { code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }

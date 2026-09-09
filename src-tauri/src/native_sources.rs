@@ -9,8 +9,6 @@ use serde_json::{json, Value};
 
 const DOUBAN_API_KEY: &str = "0ac44ae016490db2204ce0a042db2916";
 const DOUBAN_BASE: &str = "https://frodo.douban.com/api/v2";
-const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
-
 #[derive(Debug)]
 pub enum NativeSourceError {
     Unsupported(String),
@@ -146,15 +144,12 @@ async fn call_douban(
         _ = wait_for_cancel(cancelled.clone()) => return Err(NativeSourceError::Request("native source request cancelled".to_string())),
     };
     let status = response.status();
-    let body = response
-        .bytes()
-        .await
-        .map_err(|error| NativeSourceError::Request(error.to_string()))?;
-    if body.len() > MAX_RESPONSE_BYTES {
-        return Err(NativeSourceError::Request(
-            "native source response is too large".to_string(),
-        ));
-    }
+    let body = tokio::select! {
+        result = super::source_session::read_bounded_response(response) => result.map_err(|error| {
+            NativeSourceError::Request(error.message("native source response is too large"))
+        })?,
+        _ = wait_for_cancel(cancelled) => return Err(NativeSourceError::Request("native source request cancelled".to_string())),
+    };
     if !status.is_success() {
         return Err(NativeSourceError::Request(format!(
             "native source returned {status}"

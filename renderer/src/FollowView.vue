@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 
+import PosterImage from "./PosterImage.vue";
 import type { FollowItem, FollowUiState } from "../../src/follow/follow-types.js";
 
 const props = defineProps<{
@@ -34,9 +35,9 @@ const visibleItems = computed(() => {
 });
 
 function statusLabel(item: FollowItem): string {
-  if (!item.sourceAvailable) return "来源不可用";
+  if (!item.sourceAvailable) return "暂不可用";
   if (item.status === "checking") return "检查中";
-  if (item.status === "error") return "来源失败";
+  if (item.status === "error") return "检查失败";
   return item.updateAvailable ? "有更新" : "已追平";
 }
 
@@ -96,13 +97,16 @@ function confirmDelete(): void {
     <section v-if="visibleItems.length > 0" class="follow-list" data-testid="follow-list">
       <article v-for="item in visibleItems" :key="item.identity" class="panel follow-item" :data-status="statusKind(item)">
         <div class="follow-cover" aria-hidden="true">
-          <img v-if="item.poster" :src="item.poster" :alt="`${item.title} 海报`" />
-          <span v-else>{{ item.title.slice(0, 1) }}</span>
+          <PosterImage
+            :source="item.poster"
+            :alt="`${item.title} 海报`"
+            :fallback-text="item.title"
+            loading="lazy"
+          />
         </div>
         <div class="follow-item-content">
           <div class="follow-item-heading">
             <div>
-              <span class="context-kicker">{{ item.sourceAvailable ? "当前来源" : "原来源" }}</span>
               <h3>{{ item.title }}</h3>
             </div>
             <span class="status-chip" :data-status="statusKind(item)">{{ statusLabel(item) }}</span>

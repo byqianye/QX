@@ -11,6 +11,3 @@ export * from "./python-client.js";
 export * from "./python-errors.js";
 export * from "./python-sidecar.js";
 export * from "./python-source.js";
-export * from "./android-device-manager.js";
-export * from "./android-spider-bridge-client.js";
-export * from "./android-spider-parsers.js";

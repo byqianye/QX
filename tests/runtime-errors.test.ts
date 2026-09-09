@@ -10,7 +10,7 @@ describe("runtime error normalization", () => {
       path: "C:\\Users\\user\\spider-cache\\artifact.jar",
     });
     const details = normalizeRuntimeError(error, {
-      runtimeKind: "android-dex",
+      runtimeKind: "jvm",
       siteKey: "flash",
       sourceName: "Flash source",
       artifactUrl: "https://example.test/spider.jar",
@@ -25,7 +25,7 @@ describe("runtime error normalization", () => {
       syscall: "open",
       missingPath: "C:\\Users\\user\\spider-cache\\artifact.jar",
       siteKey: "flash",
-      runtime: "android-dex",
+      runtime: "jvm",
       artifactUrl: "https://example.test/spider.jar",
       artifactPath: "C:\\Users\\user\\spider-cache\\artifact.jar",
       workingDirectory: "C:\\Program Files\\QX影视",
@@ -39,10 +39,10 @@ describe("runtime error normalization", () => {
     const error = Object.assign(new Error("spawn host ENOENT"), {
       code: "ENOENT",
       syscall: "spawn",
-      path: "C:\\Program Files\\QX影视\\resources\\android-spider-host.exe",
+      path: "C:\\Program Files\\QX影视\\resources\\jvm-spider-host.exe",
     });
     const details = normalizeRuntimeError(error, {
-      runtimeKind: "android-dex",
+      runtimeKind: "jvm",
       rootCause: "runtime_host_missing",
     });
     expect(details.code).toBe("runtime_host_missing");

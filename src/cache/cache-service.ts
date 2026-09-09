@@ -34,7 +34,6 @@ export const CACHE_TTL_MS: Readonly<Record<CacheType, number>> = {
   search: 10 * 60 * 1_000,
   detail: 24 * 60 * 60 * 1_000,
   subtitle: 24 * 60 * 60 * 1_000,
-  epg: 5 * 60 * 1_000,
   "parser-metadata": 24 * 60 * 60 * 1_000,
   temporary: 5 * 60 * 1_000,
 };

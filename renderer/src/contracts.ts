@@ -116,6 +116,22 @@ export interface SourceSessionPayload {
   headers?: Record<string, string>;
 }
 
+/** Engine labels emitted by the Rust SourceSession capability contract. */
+export type SourceCapabilityEngine =
+  | "http"
+  | "http-adapter"
+  | "http-appget"
+  | "http-appqi"
+  | "http-auto"
+  | "http-html"
+  | "http-html-json"
+  | "http-json"
+  | "http-json-html"
+  | "http-json-multipart"
+  | "http-push"
+  | "native"
+  | "quickjs";
+
 export interface SourceCapabilities {
   home: boolean;
   category: boolean;
@@ -125,7 +141,7 @@ export interface SourceCapabilities {
   localProxy: boolean;
   filters: boolean;
   pagination: boolean;
-  engine: "http" | "native" | "quickjs";
+  engine: SourceCapabilityEngine;
 }
 
 export interface SourceSessionSnapshot {
@@ -159,6 +175,7 @@ export interface PlaybackSourceResolvePayload {
   currentSiteKey: string;
   currentVod: Record<string, unknown>;
   currentCatalog?: unknown;
+  currentPlayback?: boolean;
   sourceId: string;
   sessionId: string;
   sites: PlaybackSourceResolveSite[];
@@ -306,9 +323,10 @@ export interface PlaybackStartPayload {
   sourceId?: string;
   sourceApi: string;
   siteType?: 0 | 1 | 3 | 4;
-  engine?: "http" | "native" | "quickjs";
+  engine?: SourceCapabilityEngine;
   lineName: string;
   episodeId: string;
+  timeoutMs?: number;
   vipFlags?: string[];
   fallbackSubtitles?: unknown;
 }
@@ -386,28 +404,6 @@ export interface BusinessFeaturePayload {
 export interface BusinessFeatureSnapshot {
   schemaVersion: "v1";
   feature: BusinessFeaturePayload["feature"];
-  state: Record<string, unknown>;
-}
-
-export interface LivePayload {
-  action: string;
-  id?: string;
-  value: Record<string, unknown>;
-}
-
-export interface LiveSnapshot {
-  schemaVersion: "v1";
-  state: Record<string, unknown>;
-}
-
-export interface EpgPayload {
-  action: string;
-  id?: string;
-  value: Record<string, unknown>;
-}
-
-export interface EpgSnapshot {
-  schemaVersion: "v1";
   state: Record<string, unknown>;
 }
 

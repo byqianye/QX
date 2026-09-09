@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import Icon from "./Icon.vue";
 
+const appIcon = new URL("../../build/assets/qx-yingshi-mark.svg", import.meta.url).href;
+
 defineProps<{
   activePage: string;
   source: string;
@@ -12,10 +14,11 @@ defineProps<{
   pending: boolean;
   theme: "system" | "light" | "dark";
   followUpdates: number;
+  collapsed?: boolean;
 }>();
 
 const emit = defineEmits<{
-  navigate: [route: "home" | "category" | "history" | "favorites" | "follow" | "settings" | "live" | "local" | "downloads" | "sources"];
+  navigate: [route: "home" | "category" | "history" | "favorites" | "follow" | "settings" | "local" | "downloads" | "sources"];
   open: [];
   switch: [];
   close: [];
@@ -24,9 +27,16 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <aside class="app-sidebar" data-testid="app-sidebar" data-od-id="app-sidebar" aria-label="主导航">
+  <aside
+    class="app-sidebar"
+    data-testid="app-sidebar"
+    data-od-id="app-sidebar"
+    aria-label="主导航"
+    :aria-hidden="collapsed ? 'true' : undefined"
+    :inert="collapsed ? '' : undefined"
+  >
     <div class="sidebar-brand">
-      <span class="brand-mark" aria-hidden="true">Q</span>
+      <img class="brand-mark brand-mark-image" :src="appIcon" alt="QX影视" />
       <div>
         <strong>QX 影视</strong>
         <span>媒体工作台</span>
@@ -40,6 +50,8 @@ const emit = defineEmits<{
         :class="{ selected: activePage === 'home' }"
         type="button"
         data-action="home"
+        aria-label="点播首页"
+        title="点播首页"
         :disabled="pending"
         @click="emit('navigate', 'home')"
       >
@@ -51,20 +63,12 @@ const emit = defineEmits<{
         :class="{ selected: activePage === 'category' }"
         type="button"
         data-action="category"
+        aria-label="分类浏览"
+        title="分类浏览"
         :disabled="pending"
         @click="emit('navigate', 'category')"
       >
         <Icon name="grid" /><span>分类浏览</span>
-      </button>
-      <button
-        class="sidebar-nav-item"
-        :class="{ selected: activePage === 'live' }"
-        type="button"
-        data-action="live-sources"
-        :disabled="pending"
-        @click="emit('navigate', 'live')"
-      >
-        <Icon name="tv" /><span>直播源</span>
       </button>
       <button
         v-if="localAvailable !== false"
@@ -72,6 +76,8 @@ const emit = defineEmits<{
         :class="{ selected: activePage === 'local' }"
         type="button"
         data-action="local-media"
+        aria-label="本地媒体"
+        title="本地媒体"
         :disabled="pending"
         @click="emit('navigate', 'local')"
       >
@@ -83,6 +89,8 @@ const emit = defineEmits<{
         :class="{ selected: activePage === 'history' }"
         type="button"
         data-action="history"
+        aria-label="历史记录"
+        title="历史记录"
         :disabled="pending"
         @click="emit('navigate', 'history')"
       >
@@ -93,6 +101,8 @@ const emit = defineEmits<{
         :class="{ selected: activePage === 'favorites' }"
         type="button"
         data-action="favorites"
+        aria-label="收藏"
+        title="收藏"
         :disabled="pending"
         @click="emit('navigate', 'favorites')"
       >
@@ -103,6 +113,8 @@ const emit = defineEmits<{
         :class="{ selected: activePage === 'follow' }"
         type="button"
         data-action="follow"
+        aria-label="追更"
+        title="追更"
         :disabled="pending"
         @click="emit('navigate', 'follow')"
       >
@@ -113,6 +125,8 @@ const emit = defineEmits<{
         :class="{ selected: activePage === 'downloads' }"
         type="button"
         data-action="downloads"
+        aria-label="下载"
+        title="下载"
         :disabled="pending"
         @click="emit('navigate', 'downloads')"
       >
@@ -128,6 +142,8 @@ const emit = defineEmits<{
       class="sidebar-source"
       data-testid="sidebar-source"
       data-action="sidebar-source-status"
+      :aria-label="`当前来源：${sourceName ?? '未选择来源'}`"
+      :title="`当前来源：${sourceName ?? '未选择来源'}`"
       :disabled="pending"
       @click="emit('navigate', 'sources')"
     >
@@ -144,6 +160,8 @@ const emit = defineEmits<{
         :class="{ selected: activePage === 'sources' }"
         type="button"
         data-action="sources"
+        aria-label="来源中心"
+        title="来源中心"
         :disabled="pending"
         @click="emit('navigate', 'sources')"
       >
@@ -157,6 +175,8 @@ const emit = defineEmits<{
         :class="{ selected: activePage === 'settings' }"
         type="button"
         data-action="settings"
+        aria-label="设置"
+        title="设置"
         @click="emit('navigate', 'settings')"
       >
         <Icon name="settings" /><span>设置</span>
@@ -167,6 +187,7 @@ const emit = defineEmits<{
         data-action="theme-toggle"
         :aria-label="theme === 'dark' ? '切换浅色' : '切换深色'"
         @click="emit('theme', theme === 'dark' ? 'light' : 'dark')"
+        :title="theme === 'dark' ? '切换浅色' : '切换深色'"
       >
         <Icon :name="theme === 'dark' ? 'sun' : 'moon'" />
         <span>{{ theme === "system" ? "跟随系统" : (theme === "dark" ? "浅色主题" : "深色主题") }}</span>
@@ -175,6 +196,8 @@ const emit = defineEmits<{
         class="sidebar-nav-item"
         type="button"
         data-action="close"
+        aria-label="关闭连接"
+        title="关闭连接"
         :disabled="pending"
         @click="emit('close')"
       >

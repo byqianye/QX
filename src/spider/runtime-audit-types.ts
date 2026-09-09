@@ -5,7 +5,6 @@ export type SiteRuntimeAuditKind =
   | "cms-xml"
   | "native"
   | "javascript"
-  | "android-dex"
   | "jvm-jar"
   | "python"
   | "unknown";

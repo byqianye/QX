@@ -23,7 +23,6 @@ export interface FongMiConfig {
   spider?: string;
   sites: readonly FongMiSiteConfig[];
   parses: readonly unknown[];
-  lives: readonly unknown[];
 }
 
 export function normalizeFongMiConfig(config: TvBoxConfig, sourceUrl?: string): FongMiConfig {
@@ -38,7 +37,6 @@ export function normalizeFongMiConfig(config: TvBoxConfig, sourceUrl?: string): 
     ...(spider ? { spider } : {}),
     sites,
     parses: Array.isArray(config.parses) ? [...config.parses] : [],
-    lives: Array.isArray(config.lives) ? [...config.lives] : [],
   };
 }
 

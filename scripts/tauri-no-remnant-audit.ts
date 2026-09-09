@@ -12,13 +12,17 @@ const files = [
   "src-tauri/src/native_sources.rs",
   "src-tauri/src/runtime_capability.rs",
   "src-tauri/src/jianpian.rs",
-  "src-tauri/src/live_core.rs",
-  "src-tauri/src/epg_core.rs",
   "src-tauri/src/desktop_services.rs",
   "src-tauri/src/component_manager.rs",
   "src-tauri/src/quickjs_bridge.rs",
   "src-tauri/src/quickjs_sidecar.rs",
   "src-tauri/src/mpv_bridge.rs",
+];
+const removedBoundaryFiles = [
+  "renderer/src/LiveSourcesView.vue",
+  "renderer/src/EpgSourcesView.vue",
+  "src-tauri/src/live_core.rs",
+  "src-tauri/src/epg_core.rs",
 ];
 const forbidden = [
   { label: "Android/JVM/DEX execution", pattern: /DexClassLoader|dalvik|JNIEnv|android\.app|java\.lang|jvm-native/iu },
@@ -37,6 +41,10 @@ for (const relative of files) {
   for (const rule of forbidden) {
     if (rule.pattern.test(text)) failures.push(`${rule.label}: ${relative}`);
   }
+}
+
+for (const relative of removedBoundaryFiles) {
+  if (existsSync(join(root, relative))) failures.push(`removed live boundary still exists: ${relative}`);
 }
 
 const rendererApi = readFileSync(join(root, "renderer/src/api.ts"), "utf8");

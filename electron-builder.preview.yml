@@ -13,10 +13,6 @@ extraResources:
     to: electron-runtime
   - from: build/assets/qx-yingshi.ico
     to: brand/qx-yingshi.ico
-  - from: android-spider-host/app/build/outputs/apk/debug/app-debug.apk
-    to: android-host/android-spider-host.apk
-  - from: build/android-runtime-manifest.json
-    to: android-host/android-runtime-manifest.json
 win:
   icon: build/assets/qx-yingshi.ico
   target:

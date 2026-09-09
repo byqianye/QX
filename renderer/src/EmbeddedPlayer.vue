@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import Hls from "hls.js";
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import type Hls from "hls.js";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import PlayerControls from "./PlayerControls.vue";
 import SubtitleTrackPanel from "./SubtitleTrackPanel.vue";
@@ -19,8 +19,10 @@ import {
 } from "../../src/subtitles.js";
 import type { PlaybackMediaEvent } from "../../src/desktop/playback.js";
 import type { DanmakuUiState } from "../../src/danmaku/danmaku-types.js";
+import { PlaybackProgressWatchdog } from "./playback-recovery.js";
 
-const PLAYBACK_STARTUP_TIMEOUT_MS = 10_000;
+const PLAYER_CONTROLS_HIDE_DELAY_MS = 2_500;
+const HLS_MAX_BUFFER_SIZE_BYTES = 48 * 1000 * 1000;
 
 interface QualityOption {
   id: string;
@@ -31,25 +33,31 @@ type ShakaPlayer = import("shaka-player").default.Player;
 type ShakaVariantTrack = ReturnType<ShakaPlayer["getVariantTracks"]>[number];
 type ShakaTextTrack = ReturnType<ShakaPlayer["getTextTracks"]>[number];
 
-const windowWithHls = window as Window & {
-  Hls?: typeof Hls;
-};
-windowWithHls.Hls ??= Hls;
-
-const props = defineProps<{ state: PlayerState; sessionId?: string | null; detachable?: boolean; danmaku?: DanmakuUiState }>();
+const props = withDefaults(defineProps<{
+  state: PlayerState;
+  sessionId?: string | null;
+  playbackKey?: string | null;
+  detachable?: boolean;
+  danmaku?: DanmakuUiState;
+}>(), { detachable: true });
 const emit = defineEmits<{
   sync: [value: PlayerMediaSync];
   detach: [];
   stop: [];
 }>();
 
+const playerStage = ref<HTMLElement | null>(null);
 const video = ref<HTMLVideoElement | null>(null);
 const localStatus = ref(props.state.status);
 const localError = ref<string | null>(props.state.error?.message ?? null);
+const fullscreenActive = ref(false);
+const fullscreenError = ref<string | null>(null);
 let localErrorCode: string | null = props.state.error?.code ?? null;
 const currentTime = ref(props.state.currentTime);
 const duration = ref(props.state.duration);
+const localVolume = ref(normalizeVolume(props.state.volume));
 const muted = ref(props.state.muted);
+let lastNonZeroVolume = localVolume.value > 0 ? localVolume.value : 1;
 let hls: Hls | null = null;
 let shakaPlayer: ShakaPlayer | null = null;
 const qualityOptions = ref<QualityOption[]>([]);
@@ -71,14 +79,40 @@ const subtitlePosition = ref<"bottom" | "top">("bottom");
 const subtitleBackground = ref<"none" | "box" | "shadow">("shadow");
 const subtitleLoading = ref(false);
 const subtitleError = ref<string | null>(null);
+const previewUrl = computed(() => {
+  const source = props.state.source;
+  const progressive = source?.mediaType === "mp4" || (source ? /\.(?:mp4|webm)(?:$|[?#])/iu.test(source.url) : false);
+  if (!source || !progressive || isHls(source.url) || isDash(source.url)) return null;
+  return source.url;
+});
 const subtitleUrls = new SubtitleObjectUrlRegistry();
 let localSubtitleSequence = 0;
 let subtitleLoadGeneration = 0;
-let startupTimer: ReturnType<typeof setTimeout> | undefined;
+let startupTimer: ReturnType<typeof setInterval> | undefined;
+let controlsHideTimer: ReturnType<typeof setTimeout> | undefined;
 let firstFrameReported = false;
+let sourceLoadGeneration = 0;
+let lastTimeupdateSyncAt = 0;
+let deferredSubtitleTrackId: string | null = null;
+const controlsVisible = ref(true);
+const playbackRate = ref(props.state.playbackRate ?? 1);
 
-watch(() => props.state.source?.url, () => {
-  void nextTick(() => loadSource());
+function setPlaybackRate(value: number): void {
+  if (![0.5, 0.75, 1, 1.25, 1.5, 2].includes(value)) return;
+  playbackRate.value = value;
+  if (video.value) video.value.playbackRate = value;
+  emitSync();
+}
+
+
+const sourcePlaybackKey = computed(() => {
+  const source = props.state.source;
+  if (!source) return "";
+  return `${props.playbackKey ?? props.sessionId ?? ""}|${source.url}`;
+});
+
+watch(sourcePlaybackKey, () => {
+  void nextTick(() => { void loadSource(); });
 }, { flush: "post" });
 
 watch(
@@ -91,7 +125,10 @@ watch(
 );
 
 watch(() => props.state.volume, (volume) => {
-  if (video.value) video.value.volume = volume;
+  const normalized = normalizeVolume(volume);
+  localVolume.value = normalized;
+  if (normalized > 0) lastNonZeroVolume = normalized;
+  if (video.value) video.value.volume = normalized;
 });
 
 watch(() => props.state.muted, (mutedValue) => {
@@ -112,12 +149,21 @@ watch(() => props.state.error?.code, (code) => {
 });
 
 onMounted(() => {
+  document.addEventListener("fullscreenchange", handleFullscreenChange);
+  document.addEventListener("fullscreenerror", handleFullscreenError);
+  handleFullscreenChange();
   void loadSource();
 });
 
 onBeforeUnmount(() => {
-  emitSync(localStatus.value);
+  document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  document.removeEventListener("fullscreenerror", handleFullscreenError);
+  if (document.fullscreenElement === playerStage.value) void document.exitFullscreen?.().catch(() => undefined);
+  // A resolving placeholder has no media progress to save. Sending idle here
+  // would replace the failed playback request with a successful sync envelope.
+  if (props.state.source) emitSync(localStatus.value);
   clearStartupTimer();
+  clearControlsHideTimer();
   cleanups.splice(0).forEach((cleanup) => cleanup());
   destroyHls();
   destroyShaka();
@@ -132,9 +178,10 @@ onBeforeUnmount(() => {
   }
 });
 
-function loadSource(): void {
+async function loadSource(): Promise<void> {
   const element = video.value;
   if (!element) return;
+  const generation = ++sourceLoadGeneration;
   cleanups.splice(0).forEach((cleanup) => cleanup());
   clearStartupTimer();
   destroyHls();
@@ -142,8 +189,10 @@ function loadSource(): void {
   clearQualityOptions();
   shakaTextTracks.clear();
   clearSubtitleResources();
+  keepControlsVisible();
   positionRestored = false;
   resumeRequested = false;
+  lastTimeupdateSyncAt = 0;
   element.pause();
   element.removeAttribute("src");
   element.load();
@@ -154,53 +203,114 @@ function loadSource(): void {
     localStatus.value = props.state.status;
     return;
   }
-  element.volume = props.state.volume;
+  localVolume.value = normalizeVolume(props.state.volume);
+  if (localVolume.value > 0) lastNonZeroVolume = localVolume.value;
+  element.volume = localVolume.value;
   element.muted = props.state.muted;
+  playbackRate.value = props.state.playbackRate ?? playbackRate.value;
+  element.playbackRate = playbackRate.value;
   // LocalProxy uses a dynamic localhost port, so opt the media element into
   // CORS before HLS.js attaches its MediaSource buffer.
   element.crossOrigin = "anonymous";
   localStatus.value = "loading";
   firstFrameReported = false;
-  startupTimer = setTimeout(() => {
-    if (firstFrameReported || !video.value) return;
+  const watchdog = new PlaybackProgressWatchdog(performance.now() - Math.max(0, Date.now() - (props.state.startedAt ?? Date.now())));
+  let playingIntent = !props.state.resumePaused && ["resolving", "loading", "playing"].includes(props.state.status);
+  startupTimer = setInterval(() => {
+    if (!video.value || generation !== sourceLoadGeneration) return;
+    const failure = watchdog.check(performance.now(), playingIntent, element.seeking);
+    if (!failure) return;
     localStatus.value = "error";
-    localErrorCode = "PLAYBACK_STARTUP_TIMEOUT";
-    localError.value = "起播超时";
-    emitSync("error", { type: "startup-timeout", reason: "起播超时" });
-  }, PLAYBACK_STARTUP_TIMEOUT_MS);
-  if (source.mediaType === "dash" || isDash(source.url) || source.drm) {
+    keepControlsVisible();
+    localErrorCode = failure === "stalled" ? "PLAYBACK_STALLED" : "PLAYBACK_STARTUP_TIMEOUT";
+    localError.value = failure === "stalled" ? "播放停滞，正在恢复" : "起播超时";
+    emitSync("error", failure === "stalled" ? { type: "fatal-error", code: localErrorCode } : { type: "startup-timeout", reason: "起播超时" });
+  }, 500);
+  const decodedFrame = (position: number): void => {
+    watchdog.progress(performance.now(), position, !firstFrameReported);
+    if (firstFrameReported) return;
+    firstFrameReported = true;
+    emitSync(localStatus.value, { type: "first-frame" });
+  };
+  if (typeof element.requestVideoFrameCallback === "function") {
+    let frameId = 0;
+    const frame: VideoFrameRequestCallback = (_now, metadata) => {
+      if (generation !== sourceLoadGeneration) return;
+      decodedFrame(metadata.mediaTime);
+      frameId = element.requestVideoFrameCallback(frame);
+    };
+    frameId = element.requestVideoFrameCallback(frame);
+    cleanups.push(() => element.cancelVideoFrameCallback(frameId));
+  }
+  listen(element, "play", () => { playingIntent = true; });
+  listen(element, "playing", () => {
+    localStatus.value = "playing";
+    localError.value = null;
+    localErrorCode = null;
+    if (deferredSubtitleTrackId && subtitleEnabled.value) {
+      deferredSubtitleTrackId = null;
+      void loadSelectedSubtitle();
+    }
+    scheduleControlsHide();
+    emitSync("playing");
+  });
+  const loadsThroughShaka = source.mediaType === "dash" || isDash(source.url) || source.drm;
+  if (loadsThroughShaka) {
     void loadWithShaka(element, source);
-  } else if ((source.mediaType === "hls" || isHls(source.url)) && Hls.isSupported()) {
-    hls = new Hls({ enableWorker: false });
-    hls.on(Hls.Events.MANIFEST_PARSED, () => {
-      if (!hls) return;
-      const levels = hls.levels.map((level, index) => ({
-        id: String(index),
-        label: qualityLabel(level.height, level.bitrate, index),
-      }));
-      setQualityOptions(levels);
-    });
-    hls.on(Hls.Events.ERROR, (_event, data) => {
-      const status = typeof data.response?.code === "number" ? data.response.code : undefined;
-      if (status !== undefined) emitSync(localStatus.value, { type: "http-status", status });
-      const details = String(data.details ?? "");
-      if (!data.fatal) {
-        if (/manifest|playlist|levelload|level_load/i.test(details)) {
-          emitSync(localStatus.value, { type: "playlist-refresh-failure", reason: details || "播放列表刷新失败" });
-        } else if (/network|disconnect|timeout/i.test(details)) {
-          emitSync(localStatus.value, { type: "disconnect", reason: details || "播放器连接断开" });
-        } else if (/frag|segment|buffer/i.test(details)) {
-          emitSync(localStatus.value, { type: "segment-failure", reason: details || "分片失败" });
+  } else if (source.mediaType === "hls" || isHls(source.url)) {
+    const hlsModule = await import("hls.js");
+    const HlsPlayer = hlsModule.default;
+    if (generation !== sourceLoadGeneration || !video.value) return;
+    if (!HlsPlayer.isSupported()) {
+      element.src = source.url;
+      element.load();
+    } else {
+      hls = new HlsPlayer({
+        enableWorker: true,
+        lowLatencyMode: false,
+        startFragPrefetch: true,
+        maxBufferLength: 30,
+        // Keep in-memory HLS media buffering bounded; media segments are not persisted by the app.
+        maxBufferSize: HLS_MAX_BUFFER_SIZE_BYTES,
+        maxMaxBufferLength: 60,
+        backBufferLength: 30,
+        maxBufferHole: 0.5,
+        capLevelToPlayerSize: true,
+        ...(Number.isFinite(props.state.currentTime) && props.state.currentTime > 0
+          ? { startPosition: props.state.currentTime }
+          : {}),
+      });
+      hls.on(HlsPlayer.Events.MANIFEST_PARSED, () => {
+        if (!hls) return;
+        const levels = hls.levels.map((level, index) => ({
+          id: String(index),
+          label: qualityLabel(level.height, level.bitrate, index),
+        }));
+        setQualityOptions(levels);
+      });
+      hls.on(HlsPlayer.Events.ERROR, (_event, data) => {
+        const status = typeof data.response?.code === "number" ? data.response.code : undefined;
+        if (status !== undefined) emitSync(localStatus.value, { type: "http-status", status });
+        const details = String(data.details ?? "");
+        if (!data.fatal) {
+          if (/manifest|playlist|levelload|level_load/i.test(details)) {
+            emitSync(localStatus.value, { type: "playlist-refresh-failure", reason: details || "播放列表刷新失败" });
+          } else if (/network|disconnect|timeout/i.test(details)) {
+            emitSync(localStatus.value, { type: "disconnect", reason: details || "播放器连接断开" });
+          } else if (/frag|segment|buffer/i.test(details)) {
+            emitSync(localStatus.value, { type: "segment-failure", reason: details || "分片失败" });
+          }
+          return;
         }
-        return;
-      }
-      localStatus.value = "error";
-      localErrorCode = "HLS_ERROR";
-      localError.value = "HLS 播放失败";
-      emitSync("error", { type: "fatal-error", code: "HLS_ERROR" });
-    });
-    hls.loadSource(source.url);
-    hls.attachMedia(element);
+        localStatus.value = "error";
+        keepControlsVisible();
+        localErrorCode = `HLS_${details.replace(/[^a-z0-9_-]/gi, "").slice(0, 80).toUpperCase() || "ERROR"}`;
+        localError.value = "HLS 播放失败";
+        emitSync("error", { type: "fatal-error", code: localErrorCode });
+      });
+      hls.loadSource(source.url);
+      hls.attachMedia(element);
+    }
   } else {
     element.src = source.url;
     element.load();
@@ -220,54 +330,87 @@ function loadSource(): void {
   listen(element, "loadedmetadata", restorePosition);
   listen(element, "durationchange", restorePosition);
   listen(element, "canplay", resumeIfNeeded);
-  listen(element, "waiting", () => emitSync(localStatus.value, { type: "buffer-start" }));
+  listen(element, "waiting", () => {
+    keepControlsVisible();
+    emitSync(localStatus.value, { type: "buffer-start" });
+  });
   listen(element, "canplay", () => emitSync(localStatus.value, { type: "buffer-end" }));
   listen(element, "timeupdate", () => {
+    if (typeof element.requestVideoFrameCallback !== "function" && element.getVideoPlaybackQuality?.().totalVideoFrames > 0) decodedFrame(element.currentTime);
     currentTime.value = element.currentTime;
     duration.value = Number.isFinite(element.duration) ? element.duration : duration.value;
+    const now = performance.now();
+    if (now - lastTimeupdateSyncAt >= 250) {
+      lastTimeupdateSyncAt = now;
+      emitSync();
+    }
+  });
+  listen(element, "volumechange", () => {
+    localVolume.value = element.volume;
+    if (element.volume > 0) lastNonZeroVolume = element.volume;
+    muted.value = element.muted;
     emitSync();
   });
-  listen(element, "playing", () => {
-    localStatus.value = "playing";
-    localError.value = null;
-    localErrorCode = null;
-    clearStartupTimer();
-    const event: PlaybackMediaEvent | undefined = firstFrameReported ? undefined : { type: "first-frame" };
-    firstFrameReported = true;
-    emitSync("playing", event);
-  });
   listen(element, "pause", () => {
+    playingIntent = false;
     if (!element.ended) {
       localStatus.value = "paused";
+      keepControlsVisible();
       emitSync("paused", { type: "user-pause" });
     }
   });
   listen(element, "seeking", () => emitSync(localStatus.value, { type: "seek" }));
-  listen(element, "ended", () => { localStatus.value = "ended"; emitSync("ended", { type: "completion" }); });
+  listen(element, "ended", () => {
+    playingIntent = false;
+    localStatus.value = "ended";
+    keepControlsVisible();
+    emitSync("ended", { type: "completion" });
+  });
   listen(element, "error", () => {
     localStatus.value = "error";
+    keepControlsVisible();
     localErrorCode ??= "HTML_VIDEO_ERROR";
     localError.value = "播放失败";
     emitSync("error", { type: "fatal-error", code: localErrorCode ?? "HTML_VIDEO_ERROR" });
   });
-  resumeIfNeeded();
+  if (!loadsThroughShaka) resumeIfNeeded();
 }
 
 function resumeIfNeeded(): void {
   const element = video.value;
-  if (!element || resumeRequested || props.state.status !== "playing") return;
+  if (!element || resumeRequested || !props.state.source) return;
+  if (props.state.resumePaused) { localStatus.value = "paused"; return; }
+  if (props.state.status !== "resolving"
+    && props.state.status !== "loading"
+    && props.state.status !== "playing") return;
   resumeRequested = true;
-  void element.play().catch((error: unknown) => {
-    resumeRequested = false;
+  try {
+    const result = element.play();
+    if (result && typeof result.catch === "function") void result.catch(handleInitialPlayError);
+  } catch (error) {
+    handleInitialPlayError(error);
+  }
+}
+
+function handleInitialPlayError(error: unknown): void {
     localStatus.value = "error";
+    keepControlsVisible();
     localErrorCode = "HTML_VIDEO_PLAY_ERROR";
     localError.value = error instanceof Error ? error.message : "播放恢复失败";
     emitSync("error", { type: "fatal-error", code: localErrorCode ?? "HTML_VIDEO_PLAY_ERROR" });
-  });
 }
 
 function setVolume(value: number): void {
-  if (video.value) video.value.volume = value;
+  const normalized = normalizeVolume(value);
+  localVolume.value = normalized;
+  if (normalized > 0) lastNonZeroVolume = normalized;
+  if (video.value) {
+    video.value.volume = normalized;
+    if (normalized > 0 && video.value.muted) video.value.muted = false;
+    muted.value = video.value.muted;
+  } else if (normalized > 0) {
+    muted.value = false;
+  }
   emitSync();
 }
 
@@ -280,8 +423,20 @@ function setSeek(value: number): void {
 }
 
 function toggleMute(): void {
-  muted.value = !muted.value;
-  if (video.value) video.value.muted = muted.value;
+  const element = video.value;
+  const silent = muted.value || localVolume.value <= 0;
+  if (silent) {
+    if (localVolume.value <= 0) {
+      localVolume.value = lastNonZeroVolume;
+      if (element) element.volume = lastNonZeroVolume;
+    }
+    muted.value = false;
+    if (element) element.muted = false;
+  } else {
+    if (localVolume.value > 0) lastNonZeroVolume = localVolume.value;
+    muted.value = true;
+    if (element) element.muted = true;
+  }
   emitSync();
 }
 
@@ -297,6 +452,7 @@ function stopPlayback(): void {
     video.value.load();
   }
   localStatus.value = "stopped";
+  keepControlsVisible();
   localErrorCode = null;
   localError.value = null;
   emit("stop");
@@ -315,14 +471,41 @@ function emitSync(status = localStatus.value, event?: PlaybackMediaEvent): void 
     duration: element && Number.isFinite(element.duration) ? element.duration : duration.value,
     volume: element?.volume ?? props.state.volume,
     muted: element?.muted ?? muted.value,
+    playbackRate: element?.playbackRate ?? playbackRate.value,
     ...(event ? { event: { ...event, at: event.at ?? Date.now() } } : {}),
     ...(error ? { error } : {}),
   });
 }
 
 function clearStartupTimer(): void {
-  if (startupTimer !== undefined) clearTimeout(startupTimer);
+  if (startupTimer !== undefined) clearInterval(startupTimer);
   startupTimer = undefined;
+}
+
+function clearControlsHideTimer(): void {
+  if (controlsHideTimer !== undefined) clearTimeout(controlsHideTimer);
+  controlsHideTimer = undefined;
+}
+
+function keepControlsVisible(): void {
+  clearControlsHideTimer();
+  controlsVisible.value = true;
+}
+
+function scheduleControlsHide(): void {
+  clearControlsHideTimer();
+  controlsVisible.value = true;
+  if (localStatus.value !== "playing") return;
+  controlsHideTimer = setTimeout(() => {
+    controlsHideTimer = undefined;
+    const stage = playerStage.value;
+    const focusInside = stage !== null && document.activeElement !== null && stage.contains(document.activeElement);
+    if (localStatus.value === "playing" && !focusInside) controlsVisible.value = false;
+  }, PLAYER_CONTROLS_HIDE_DELAY_MS);
+}
+
+function showControls(): void {
+  scheduleControlsHide();
 }
 
 function formatTime(value: number): string {
@@ -377,6 +560,7 @@ async function loadWithShaka(element: HTMLVideoElement, source: NonNullable<Play
     player.addEventListener("error", (event: Event) => {
       const detail = (event as CustomEvent<{ code?: unknown }>).detail;
       localStatus.value = "error";
+      keepControlsVisible();
       localErrorCode = "SHAKA_ERROR";
       if (detail && typeof detail.code === "number") {
         shakaErrorCode = detail.code;
@@ -395,6 +579,19 @@ async function loadWithShaka(element: HTMLVideoElement, source: NonNullable<Play
         },
       });
     }
+    player.configure({
+      streaming: {
+        bufferingGoal: 30,
+        rebufferingGoal: 5,
+        bufferBehind: 30,
+        retryParameters: {
+          maxAttempts: 4,
+          baseDelay: 500,
+          backoffFactor: 2,
+          fuzzFactor: 0.5,
+        },
+      },
+    });
     await player.load(source.url);
     const tracks = player.getVariantTracks();
     shakaTracks = new Map(tracks.map((track) => [String(track.id), track]));
@@ -431,6 +628,7 @@ async function loadWithShaka(element: HTMLVideoElement, source: NonNullable<Play
       : null;
     if (shakaErrorCode === null && caughtErrorCode !== null) shakaErrorCode = caughtErrorCode;
     localStatus.value = "error";
+    keepControlsVisible();
     localErrorCode = shakaErrorCode !== null
       ? `SHAKA_ERROR_${shakaErrorCode}`
       : error instanceof Error && error.message === "SHAKA_BROWSER_UNSUPPORTED"
@@ -478,7 +676,11 @@ function resetSubtitleCatalog(): void {
   selectedSubtitleId.value = defaultTrack?.id ?? null;
   subtitleEnabled.value = defaultTrack !== undefined;
   subtitleEncoding.value = "auto";
-  if (defaultTrack) void loadSelectedSubtitle();
+  deferredSubtitleTrackId = null;
+  if (defaultTrack) {
+    if (defaultTrack.forced || firstFrameReported) void loadSelectedSubtitle();
+    else deferredSubtitleTrackId = defaultTrack.id;
+  }
 }
 
 function clearSubtitleResources(): void {
@@ -644,9 +846,41 @@ function isDash(url: string): boolean {
   return /\.mpd(?:$|[?#])/i.test(url);
 }
 
+function normalizeVolume(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 1;
+}
+
 function play(): void { void video.value?.play(); }
 function pause(): void { video.value?.pause(); }
-function fullscreen(): void { void video.value?.requestFullscreen?.(); }
+
+function handleFullscreenChange(): void {
+  fullscreenActive.value = document.fullscreenElement === playerStage.value;
+  if (fullscreenActive.value || document.fullscreenElement === null) fullscreenError.value = null;
+  keepControlsVisible();
+  if (fullscreenActive.value && localStatus.value === "playing") scheduleControlsHide();
+}
+
+function handleFullscreenError(): void {
+  fullscreenActive.value = false;
+  fullscreenError.value = "全屏切换失败，请重试。";
+  keepControlsVisible();
+}
+
+async function fullscreen(): Promise<void> {
+  const stage = playerStage.value;
+  if (!stage) return;
+  fullscreenError.value = null;
+  try {
+    if (document.fullscreenElement === stage) {
+      await document.exitFullscreen?.();
+      return;
+    }
+    if (!stage.requestFullscreen) throw new Error("FULLSCREEN_UNAVAILABLE");
+    await stage.requestFullscreen();
+  } catch {
+    handleFullscreenError();
+  }
+}
 
 function statusLabel(state: PlayerState, status: string, error: string | null): string {
   if (error) return error;
@@ -691,10 +925,20 @@ function parserStatusLabel(
     :data-subtitle-font-size="subtitleFontSize"
     :style="{ '--subtitle-font-size': subtitleFontSize }"
   >
-    <strong>内嵌播放器</strong>
     <template v-if="props.state.source">
-      <div class="player-video-stage">
-        <video ref="video" data-testid="embedded-player" playsinline controls preload="metadata">
+      <div
+        ref="playerStage"
+        data-testid="embedded-player-stage"
+        data-aspect-ratio="16:9"
+        :data-fullscreen="fullscreenActive"
+        class="player-video-stage"
+        :class="{ 'is-controls-hidden': !controlsVisible }"
+        @pointermove="showControls"
+        @pointerleave="scheduleControlsHide"
+        @focusin="keepControlsVisible"
+        @focusout="scheduleControlsHide"
+      >
+        <video ref="video" data-testid="embedded-player" playsinline preload="auto" aria-label="视频播放器" @loadedmetadata="setPlaybackRate(playbackRate)">
           <track
             v-for="subtitle in subtitleSources"
             :key="subtitle.id"
@@ -707,12 +951,65 @@ function parserStatusLabel(
             :default="subtitle.forced || subtitle.id === selectedSubtitleId"
           >
         </video>
+        <div
+          v-if="localStatus === 'loading' || localStatus === 'resolving'"
+          class="player-stage-status"
+          data-testid="player-loading-overlay"
+          aria-live="polite"
+        >
+          <span class="loading-bar" aria-hidden="true"></span>
+          <span>正在准备首帧</span>
+        </div>
+        <div
+          v-else-if="localStatus === 'error' && localError"
+          class="player-stage-status player-stage-error"
+          data-testid="player-error-overlay"
+          role="alert"
+        >
+          <span>{{ localError }}</span>
+          <button type="button" data-action="player-inline-retry" @click.stop="loadSource">重试</button>
+        </div>
+        <p v-if="fullscreenError" class="player-fullscreen-error" data-testid="player-fullscreen-error" role="alert">{{ fullscreenError }}</p>
         <DanmakuOverlay
           v-if="props.danmaku"
           :state="props.danmaku"
           :current-time="currentTime"
         />
-      </div>
+        <div
+          data-testid="player-controls-overlay"
+          class="player-controls-overlay"
+          @pointerenter="keepControlsVisible"
+          @focusin="keepControlsVisible"
+          @focusout="scheduleControlsHide"
+        >
+          <PlayerControls
+            :status="localStatus"
+            :current-time="currentTime"
+            :duration="duration"
+            :volume="localVolume"
+            :muted="muted"
+            :fullscreen="fullscreenActive"
+            :preview-url="previewUrl"
+            :detachable="props.detachable !== false"
+            @play="play"
+            @pause="pause"
+            @resume="play"
+            @stop="stopPlayback"
+            @detach="emit('detach')"
+            @reload="loadSource"
+            @seek="setSeek"
+            @volume="setVolume"
+            @mute="toggleMute"
+            :quality-options="qualityOptions"
+            :quality-id="selectedQualityId"
+            @quality="selectQuality"
+            @fullscreen="fullscreen"
+            :playback-rate="playbackRate"
+            @rate="setPlaybackRate"
+          >
+            <template #settings>
+              <details class="player-subtitle-settings">
+                <summary>字幕设置</summary>
       <SubtitleTrackPanel
         :tracks="subtitleTracks"
         :enabled="subtitleEnabled"
@@ -731,41 +1028,34 @@ function parserStatusLabel(
         @background="subtitleBackground = $event"
         @local-file="addLocalSubtitle"
       />
-      <PlayerControls
-        :current-time="currentTime"
-        :duration="duration"
-        :volume="props.state.volume"
-        :muted="muted"
-        :detachable="props.detachable !== false"
-        @play="play"
-        @pause="pause"
-        @resume="play"
-        @stop="stopPlayback"
-        @detach="emit('detach')"
-        @reload="loadSource"
-        @seek="setSeek"
-        @volume="setVolume"
-        @mute="toggleMute"
-        :quality-options="qualityOptions"
-        :quality-id="selectedQualityId"
-        @quality="selectQuality"
-        @fullscreen="fullscreen"
-      />
+              </details>
+            </template>
+          </PlayerControls>
+        </div>
+      </div>
+
     </template>
-    <p data-testid="player-status">{{ statusLabel(props.state, localStatus, localError) }}</p>
-    <p
-      v-if="props.state.parse && props.state.parse.status !== 'idle'"
-      data-testid="parser-status"
-      class="meta"
-    >{{ parserStatusLabel(props.state.parse.status, props.state.parse.parserId) }}</p>
-    <details v-if="props.state.parse && props.state.parse.attempts.length > 0" data-testid="parser-diagnostics">
-      <summary>解析尝试（{{ props.state.parse.attempts.length }}）</summary>
-      <ul>
-        <li v-for="attempt in props.state.parse.attempts" :key="`${attempt.parserId}-${attempt.elapsedMs}`">
-          {{ attempt.parserId }} · {{ attempt.status }} · {{ attempt.elapsedMs }}ms
-        </li>
-      </ul>
+    <div v-if="!props.state.source" class="player-preparing" role="status">
+      <span>{{ statusLabel(props.state, localStatus, localError) }}</span>
+    </div>
+    <details class="player-metadata">
+      <summary>播放详情</summary>
+      <p data-testid="player-status" class="player-status-meta">{{ statusLabel(props.state, localStatus, localError) }}</p>
+      <p
+        v-if="props.state.parse && props.state.parse.status !== 'idle'"
+        data-testid="parser-status"
+        class="player-parser-meta"
+      >{{ parserStatusLabel(props.state.parse.status, props.state.parse.parserId) }}</p>
+      <details v-if="props.state.parse && props.state.parse.attempts.length > 0" data-testid="parser-diagnostics" class="player-parser-diagnostics">
+        <summary>解析尝试（{{ props.state.parse.attempts.length }}）</summary>
+        <ul>
+          <li v-for="attempt in props.state.parse.attempts" :key="`${attempt.parserId}-${attempt.elapsedMs}`">
+            {{ attempt.parserId }} · {{ attempt.status }} · {{ attempt.elapsedMs }}ms
+          </li>
+        </ul>
+      </details>
+
+      <p v-if="localError" class="player-error player-error-meta" data-testid="player-error">{{ localError }} <code>{{ localErrorCode }}</code></p>
     </details>
-    <p v-if="localError" class="player-error" data-testid="player-error">{{ localError }}</p>
   </section>
 </template>

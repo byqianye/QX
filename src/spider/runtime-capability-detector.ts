@@ -71,22 +71,10 @@ export class RuntimeCapabilityDetector {
       const inspection = inspected.inspection;
       if (!inspection) return unsupported("unknown", "invalid_jar");
       if (inspection.runtimeRequirement === "android-dex") {
-        return {
-          ...supported("android-dex", "android_dex_artifact_ready", {
-            home: false,
-            category: false,
-            search: true,
-            detail: true,
-            player: true,
-          }),
-          artifact: inspection,
-        };
+        return { ...unsupported("unknown", "unsupported_artifact_runtime"), artifact: inspection };
       }
       if (inspection.runtimeRequirement === "mixed") {
-        return {
-          ...unsupported("android-dex", "mixed_spider_runtime_not_available"),
-          artifact: inspection,
-        };
+        return { ...unsupported("unknown", "unsupported_artifact_runtime"), artifact: inspection };
       }
       if (inspection.runtimeRequirement === "jvm") {
         return {

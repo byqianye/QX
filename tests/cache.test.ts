@@ -104,7 +104,7 @@ describe("cache management", () => {
 
     expect(service.uiState().byType.map((item) => item.type)).toEqual([
       "poster", "backdrop", "source-config", "home", "category", "search", "detail",
-      "subtitle", "epg", "parser-metadata", "temporary",
+      "subtitle", "parser-metadata", "temporary",
     ]);
     expect(service.clear("images")).toBe(2);
     expect(service.clear("search")).toBe(1);

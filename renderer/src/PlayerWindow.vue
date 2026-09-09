@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import EmbeddedPlayer from "./EmbeddedPlayer.vue";
+import WindowTitlebar from "./WindowTitlebar.vue";
 import { RendererApi } from "./api.js";
 import { isTauriRuntime, requestPlayerWindow } from "./tauri-rpc.js";
 import {
@@ -14,6 +15,7 @@ import {
 const api = new RendererApi();
 const state = ref<RendererState>(createRendererState());
 const pending = ref<string | null>(null);
+const theme = ref("dark");
 let syncTimer: ReturnType<typeof setTimeout> | undefined;
 let latestSync: PlayerMediaSync | null = null;
 
@@ -25,6 +27,7 @@ onMounted(() => {
     void requestPlayerWindow({ action: "snapshot", value: {} }).then((snapshot) => {
       const value = snapshot.state as { player?: RendererState["playback"]["player"]; session?: RendererState["playback"]["session"] };
       if (value.player) state.value.playback.player = value.player;
+      theme.value = snapshot.state.theme === "light" ? "light" : "dark";
       state.value.playback.session = value.session ?? null;
     }).catch(() => undefined);
   } else {
@@ -50,24 +53,40 @@ async function request(operation: string, call: () => ReturnType<RendererApi["ge
 }
 
 function returnToMain(): void {
+  void returnToMainAfterFlush();
+}
+
+async function returnToMainAfterFlush(): Promise<void> {
+  await flushSync();
   if (isTauriRuntime()) {
-    void requestPlayerWindow({ action: "attach", value: {} }).then(() => undefined).catch(() => undefined);
+    await requestPlayerWindow({ action: "attach", value: { notifyMain: true } }).then(() => undefined).catch(() => undefined);
   } else {
-    void request("attach", () => api.post("/api/player/attach"));
+    await request("attach", () => api.post("/api/player/attach"));
   }
 }
 
 function stop(): void {
+  void stopAfterFlush();
+}
+
+async function stopAfterFlush(): Promise<void> {
+  await flushSync();
   if (isTauriRuntime()) {
-    void requestPlayerWindow({ action: "stop", value: {} }).then(() => undefined).catch(() => undefined);
+    await requestPlayerWindow({ action: "stop", value: {} }).then(() => undefined).catch(() => undefined);
   } else {
-    void request("stop", () => api.post("/api/player/stop"));
+    await request("stop", () => api.post("/api/player/stop"));
   }
 }
 
 function sync(value: PlayerMediaSync): void {
   latestSync = value;
   if (syncTimer !== undefined) clearTimeout(syncTimer);
+  const eventType = value.event?.type;
+  if (value.status === "error" || value.status === "paused" || value.status === "ended" || eventType === "first-frame" || eventType === "startup-timeout" || eventType === "user-pause" || eventType === "completion") {
+    syncTimer = undefined;
+    void flushSync();
+    return;
+  }
   syncTimer = setTimeout(() => {
     syncTimer = undefined;
     void flushSync();
@@ -92,11 +111,11 @@ async function flushSync(): Promise<void> {
 </script>
 
 <template>
-  <main class="player-window-shell" data-testid="player-window" :data-pending="pending ?? ''">
+  <main class="player-window-shell" :data-theme="theme" data-testid="player-window" :data-pending="pending ?? ''">
+    <WindowTitlebar />
     <header class="panel player-window-header">
       <span class="section-kicker">独立播放窗口</span>
       <h1>{{ session?.media.title ?? "QX 影视播放" }}</h1>
-      <p class="meta">当前线路与选集保持在同一个 Playback Session 中。</p>
     </header>
 
     <section v-if="active" class="panel player-window-stage">

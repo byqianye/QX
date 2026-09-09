@@ -58,9 +58,5 @@ describe("unified app diagnostics", () => {
       code: "PARSE_FAILED",
       causeCode: "MEDIA_PARSE_REQUIRED",
     });
-    expect(toAppError({ code: "ANDROID_RUNTIME_NOT_READY", message: "运行环境未就绪" })).toMatchObject({
-      code: "RUNTIME_REQUIRED",
-      causeCode: "ANDROID_RUNTIME_NOT_READY",
-    });
   });
 });

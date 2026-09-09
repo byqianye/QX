@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { computed } from "vue";
 
 const ingestConfigCatalog = vi.fn();
 const requestConfigCatalogMaintenance = vi.fn();
@@ -8,8 +9,6 @@ const requestComponentManager = vi.fn();
 const requestCast = vi.fn();
 const requestPush = vi.fn();
 const requestDesktopService = vi.fn();
-const requestLive = vi.fn();
-const requestEpg = vi.fn();
 const requestSourceSession = vi.fn();
 const requestPlaybackFallback = vi.fn();
 const requestPlaybackProxy = vi.fn();
@@ -31,8 +30,6 @@ vi.mock("../renderer/src/tauri-rpc.js", () => ({
   requestCast,
   requestPush,
   requestDesktopService,
-  requestLive,
-  requestEpg,
   requestSourceSession,
   requestPlaybackFallback,
   requestPlaybackProxy,
@@ -53,7 +50,7 @@ describe("Tauri renderer vertical slice", () => {
         const state = {
           mode: payload.mode ?? "prompt", status: "idle", trigger: null, reason: null,
           current: null, next: null, attempts: 0, maxAttempts: payload.maxAttempts ?? 4,
-          tried: [], startedAt: 1_000, deadlineAt: 46_000,
+          tried: [], startedAt: null, deadlineAt: null,
           candidates: payload.candidates ?? [],
         };
         fallbackSessions.set(payload.sessionId, state);
@@ -67,6 +64,7 @@ describe("Tauri renderer vertical slice", () => {
       } else if (payload.action === "trigger") {
         if (!["user-pause", "seek", "single-buffer", "short-fluctuation"].includes(payload.trigger)) {
           state.trigger = payload.trigger;
+          if (state.startedAt === null) { state.startedAt = Date.now(); state.deadlineAt = state.startedAt + 45_000; }
           state.reason = payload.reason;
           const next = state.candidates.find((candidate: any) => !state.tried.includes(candidate.id));
           if (state.mode === "off") state.status = "disabled";
@@ -96,25 +94,7 @@ describe("Tauri renderer vertical slice", () => {
         return { state, decision: { kind: "none" } };
       }
       const candidate = state.status === "prompt" ? state.next : state.status === "trying" ? state.current : undefined;
-      return { state, decision: { kind: state.status === "prompt" ? "prompt" : "none", ...(candidate ? { candidate } : {}) } };
-    });
-    requestLive.mockResolvedValue({
-      schemaVersion: "v1",
-      state: {
-        live: {
-          sources: [], preview: null, loading: false, error: null,
-          catalog: { groups: [], channels: [], recent: [] }, session: null, player: null,
-          epg: { sources: [], preview: null, loading: false, error: null, retention: { pastRetentionMs: 21600000, futureRetentionMs: 604800000 }, mappings: [], timeline: null },
-          smartChannels: [], smartSuggestions: [], activeSmartChannel: null, health: null,
-          failover: { mode: "ask", status: "idle", trigger: null, reason: null, current: null, next: null, attempts: 0, maxAttempts: 3, tried: [], startedAt: null, deadlineAt: null, cooldownUntil: null, manualOverrideUntil: null },
-        },
-      },
-    });
-    requestEpg.mockResolvedValue({
-      schemaVersion: "v1",
-      state: {
-        epg: { sources: [], preview: null, loading: false, error: null, retention: { pastRetentionMs: 21600000, futureRetentionMs: 604800000 }, mappings: [], timeline: null },
-      },
+      return { state, decision: { kind: state.status === "prompt" ? "prompt" : state.status === "trying" ? "attempt" : "none", ...(candidate ? { candidate } : {}) } };
     });
     requestCast.mockResolvedValue({
       schemaVersion: "v1",
@@ -192,11 +172,11 @@ describe("Tauri renderer vertical slice", () => {
           vod_id: "movie-1",
           vod_name: "Movie",
           vod_play_from: "main",
-          vod_play_url: "Episode$https://media.example.test/movie.m3u8|1|Movie",
+          vod_play_url: "第01集$https://media.example.test/movie.m3u8|1|Movie",
         },
         score: 1,
         playable: true,
-        lines: { lines: [{ index: 0, name: "main", protocol: "HLS", episodes: [{ index: 0, name: "Episode", id: "https://media.example.test/movie.m3u8" }] }] },
+        lines: { lines: [{ index: 0, name: "main", protocol: "HLS", episodes: [{ index: 0, name: "第01集", id: "https://media.example.test/movie.m3u8" }] }] },
         hasPlayFrom: true,
         hasPlayUrl: true,
       }, {
@@ -206,11 +186,11 @@ describe("Tauri renderer vertical slice", () => {
           vod_id: "movie-1",
           vod_name: "Movie",
           vod_play_from: "main",
-          vod_play_url: "Episode$https://media.example.test/alternate.m3u8|1|Movie",
+          vod_play_url: "第01集$https://media.example.test/alternate.m3u8|1|Movie",
         },
         score: 0.9,
         playable: true,
-        lines: { lines: [{ index: 0, name: "main", protocol: "HLS", episodes: [{ index: 0, name: "Episode", id: "https://media.example.test/alternate.m3u8" }] }] },
+        lines: { lines: [{ index: 0, name: "main", protocol: "HLS", episodes: [{ index: 0, name: "第01集", id: "https://media.example.test/alternate.m3u8" }] }] },
         hasPlayFrom: true,
         hasPlayUrl: true,
       }],
@@ -235,6 +215,20 @@ describe("Tauri renderer vertical slice", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("preserves the AppRJ player handoff fields in episode ids", async () => {
+    const { playbackCatalog } = await import("../renderer/src/tauri-renderer-api.js");
+    const playerId = "https://api.nbyjson.top:7788/api/?key=fixture&url=|opaque-target|fixture-ua|Fixture|1";
+
+    expect(playbackCatalog({
+      vod_play_from: "main",
+      vod_play_url: `Episode$${playerId}`,
+    }, "csp_AppRJ")?.lines[0]?.episodes[0]?.id).toBe(playerId);
+    expect(playbackCatalog({
+      vod_play_from: "main",
+      vod_play_url: "Episode$https://media.example.test/movie.m3u8|1|Movie",
+    }, "csp_Jianpian")?.lines[0]?.episodes[0]?.id).toBe("https://media.example.test/movie.m3u8");
   });
 
   it("keeps local configuration files on the preview and trust boundary", async () => {
@@ -279,6 +273,176 @@ describe("Tauri renderer vertical slice", () => {
       sourceKind: "file",
       raw: expect.stringContaining("local-site"),
     });
+  });
+
+  it("publishes a fast source before a slow source finishes and retries failed sources on the next query", async () => {
+    let releaseSlow!: (value: any) => void;
+    let slow = new Promise((resolve) => { releaseSlow = resolve; });
+    let failThird = true;
+    const sessions = new Map<string, string>();
+    ingestConfigCatalog.mockResolvedValue({ source: "inline:progress", sourceKind: "json", siteCount: 3, sites: ["fast", "slow", "retry"].map(key => ({ key, name: key, api: `https://${key}.example.test/api`, siteType: 1 })) });
+    requestBusinessData.mockResolvedValue({ found: false });
+    requestBusinessFeature.mockResolvedValue({ state: {} });
+    requestSourceSession.mockImplementation(async (payload: any) => {
+      if (payload.action === "open") sessions.set(payload.sessionId, payload.siteKey);
+      const key = sessions.get(payload.sessionId) ?? "fast";
+      const session = { sessionId: payload.sessionId, sourceId: key, siteKey: key, state: "ready", availabilityReason: null, capabilities: { engine: "http", home: true, search: true, detail: true, playback: true } };
+      if (payload.method === "search" && key === "slow") await slow;
+      if (payload.method === "search" && key === "retry" && failThird) throw new Error("SOURCE_SESSION_TIMEOUT");
+      return { session, result: payload.action === "call" ? { list: [{ vod_id: key, vod_name: `${key} movie` }] } : null };
+    });
+    const { TauriRendererApi } = await import("../renderer/src/tauri-renderer-api.js");
+    const api = new TauriRendererApi();
+    await api.post("/api/import/load", { input: '{"sites":[]}' });
+    await api.post("/api/import/confirm");
+    const updates: any[] = [];
+    const searching = api.post("/api/search", { key: "movie" }, { onProgress: (update: any) => updates.push(structuredClone(update)) });
+    await vi.waitFor(() => expect(updates.some(update => update.state?.items?.some((item: any) => item.__qx_source_key === "fast"))).toBe(true));
+    expect(updates.at(-1).state.searchProgress.status).toBe("running");
+    const detail = await api.post("/api/detail", { siteKey: "fast", vodId: "fast" });
+    expect(detail.state?.detail?.vod_id).toBe("fast");
+    releaseSlow(null);
+    const first = await searching;
+    expect(first.state?.page).toBe("detail");
+    expect(first.state?.detail?.vod_id).toBe("fast");
+    expect(first.state?.items.map(item => item.__qx_source_key)).toContain("slow");
+    expect(first.state?.searchProgress?.sources.find((source: any) => source.key === "retry")?.status).toBe("failed");
+    failThird = false;
+    slow = Promise.resolve(null);
+    const second = await api.post("/api/search", { key: "movie again" });
+    expect(new Set(second.state?.items.map((item: any) => item.__qx_source_key))).toEqual(new Set(["fast", "slow", "retry"]));
+  });
+
+  it("cancels a hanging home request and ignores its late response after switching sources", async () => {
+    const sessions = new Map<string, string>();
+    let hang = false;
+    let release!: (value: any) => void;
+    const delayed = new Promise(resolve => { release = resolve; });
+    ingestConfigCatalog.mockResolvedValue({ source: "inline:cancel-home", sourceKind: "json", sites: ["old", "new"].map(key => ({ key, name: key, api: `https://${key}.example.test/api`, siteType: 1 })) });
+    requestBusinessData.mockResolvedValue({ found: false });
+    requestBusinessFeature.mockResolvedValue({ state: {} });
+    requestSourceSession.mockImplementation(async (payload: any) => {
+      if (payload.action === "open") sessions.set(payload.sessionId, payload.siteKey);
+      const key = sessions.get(payload.sessionId) ?? "old";
+      const session = { sessionId: payload.sessionId, sourceId: key, siteKey: key, state: "ready", availabilityReason: null, capabilities: { engine: "http", home: true, search: true, detail: true, playback: true } };
+      if (hang && key === "old" && payload.method === "home") await delayed;
+      return { session, result: payload.method === "home" ? { list: [{ vod_id: key }] } : null };
+    });
+    const { TauriRendererApi } = await import("../renderer/src/tauri-renderer-api.js");
+    const api = new TauriRendererApi();
+    await api.post("/api/import/load", { input: '{"sites":[]}' });
+    await api.post("/api/import/confirm");
+    hang = true;
+    const old = api.post("/api/home").catch(error => error as Error);
+    const switched = await api.post("/api/import/select", { siteKey: "new" });
+    expect(await old).toMatchObject({ name: "AbortError" });
+    expect(switched.state?.items).toEqual([{ vod_id: "new" }]);
+    release(null);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const current = await api.getState();
+    expect(current.import?.selectedSiteKey).toBe("new");
+    expect(current.state?.items).toEqual([{ vod_id: "new" }]);
+    expect(requestSourceSession).toHaveBeenCalledWith(expect.objectContaining({ action: "cancel" }));
+  });
+
+  it("keeps the full built-in catalog when a default remote refresh fails", async () => {
+    requestBusinessData.mockResolvedValue({
+      schemaVersion: "v1",
+      entity: "view_state",
+      id: "renderer",
+      found: false,
+      recordCount: 0,
+    });
+    requestBusinessFeature.mockResolvedValue({ schemaVersion: "v1", feature: "history", state: {} });
+    const remoteSnapshot = {
+      schemaVersion: "v1" as const,
+      source: "http://xn--z7x900a.net/",
+      sourceKind: "url" as const,
+      versionHash: "fallback-hash",
+      siteCount: 1,
+      usedCache: false,
+      validVersionCount: 1,
+      warningCode: null,
+      sites: [{ key: "荐片", name: "荐片", api: "csp_Jianpian", siteType: 3 as const, ext: "https://api.ztcgi.com" }],
+    };
+    ingestConfigCatalog.mockImplementation(async (payload: { fetchRemote?: boolean; raw: string }) => {
+      if (payload.fetchRemote) throw new Error("InvalidConfig: remote response body could not be decoded");
+      const sites = JSON.parse(payload.raw).sites.map((site: any) => ({ ...site, siteType: site.type }));
+      return { ...remoteSnapshot, sites, siteCount: sites.length };
+    });
+
+    const { TauriRendererApi } = await import("../renderer/src/tauri-renderer-api.js");
+    const api = new TauriRendererApi();
+    const loaded = await api.post("/api/import/load", { input: "http://xn--z7x900a.net/" });
+
+    expect(loaded.import).toMatchObject({
+      source: "http://xn--z7x900a.net/",
+      status: "confirmation_required",
+      selectedSiteKey: "光盘",
+      warning: expect.stringContaining("内置完整来源列表"),
+    });
+    expect(loaded.import?.sites).toHaveLength(39);
+    expect(ingestConfigCatalog).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      source: "http://xn--z7x900a.net/",
+      sourceKind: "url",
+      fetchRemote: false,
+      raw: expect.stringContaining('"csp_Jianpian"'),
+    }));
+  });
+
+  it.each([false, true])("opens only the fixed default and repairs the old one-source cache (failure=%s)", async (failDefault) => {
+    const source = "http://xn--z7x900a.net/";
+    requestBusinessData.mockResolvedValue({ found: true, value: { configSource: source, siteKey: "荐片" } });
+    requestBusinessFeature.mockResolvedValue({ state: {} });
+    const cached = {
+      schemaVersion: "v1", source, sourceKind: "url", versionHash: "old-fallback", siteCount: 1,
+      sites: [{ key: "荐片", name: "荐片", api: "csp_Jianpian", siteType: 3, ext: "https://api.ztcgi.com" }],
+    };
+    requestConfigCatalogMaintenance.mockImplementation(async (payload: any) => payload.action === "history"
+      ? { activeVersionHash: "old-fallback", versions: [] } : cached);
+    ingestConfigCatalog.mockImplementation(async (payload: any) => {
+      const sites = JSON.parse(payload.raw).sites.map((site: any) => ({ ...site, siteType: site.type }));
+      return { ...cached, sites, siteCount: sites.length };
+    });
+    let activeKey = "";
+    requestSourceSession.mockImplementation(async (payload: any) => {
+      if (payload.action === "open") activeKey = payload.siteKey;
+      if (failDefault && activeKey === "光盘" && payload.method === "home") throw new Error("SOURCE_SESSION_REQUEST_FAILED");
+      return {
+        session: { sessionId: payload.sessionId, sourceId: "source", siteKey: activeKey, api: "csp_AppQi", state: "ready", availabilityReason: null,
+          capabilities: { engine: "native", home: true, category: true, search: true, detail: true, playback: true } },
+        result: payload.method === "home" ? { list: [{ vod_id: "home", vod_name: "推荐" }] } : null,
+      };
+    });
+    const { TauriRendererApi } = await import("../renderer/src/tauri-renderer-api.js");
+    const api = new TauriRendererApi();
+    const restored = await api.getState();
+    expect(restored.import?.sites).toHaveLength(39);
+    expect(restored.import?.selectedSiteKey).toBe("光盘");
+    expect(restored.state?.page).toBe("home");
+    expect(ingestConfigCatalog).toHaveBeenCalledOnce();
+    expect(ingestConfigCatalog).toHaveBeenCalledWith(expect.objectContaining({ source, fetchRemote: false }));
+    expect(requestSourceSession.mock.calls.filter(([p]) => p.action === "open").map(([p]) => p.siteKey)).toEqual(["光盘"]);
+    expect(requestSourceSession.mock.calls.filter(([p]) => p.method === "home")).toHaveLength(1);
+    if (failDefault) {
+      const switched = await api.post("/api/import/select", { siteKey: "干饭" });
+      expect(switched.import?.selectedSiteKey).toBe("干饭");
+      expect(switched.state?.items).toEqual([{ vod_id: "home", vod_name: "推荐" }]);
+    }
+  });
+
+  it("bootstraps the default catalog locally without a configuration network request", async () => {
+    requestBusinessData.mockResolvedValue({ found: false });
+    requestBusinessFeature.mockResolvedValue({ state: {} });
+    ingestConfigCatalog.mockImplementation(async (payload: any) => ({
+      source: payload.source, sourceKind: "url", sites: JSON.parse(payload.raw).sites.map((site: any) => ({ ...site, siteType: site.type })),
+    }));
+    const { TauriRendererApi } = await import("../renderer/src/tauri-renderer-api.js");
+    const result = await new TauriRendererApi().post("/api/import/load", { input: "http://xn--z7x900a.net/", bootstrapDefault: true });
+    expect(result.import?.sites).toHaveLength(39);
+    expect(result.import?.selectedSiteKey).toBe("光盘");
+    expect(ingestConfigCatalog).toHaveBeenCalledOnce();
+    expect(ingestConfigCatalog).toHaveBeenCalledWith(expect.objectContaining({ fetchRemote: false }));
   });
 
   it("exposes Rust config history and activates a version without restoring trust", async () => {
@@ -719,7 +883,7 @@ describe("Tauri renderer vertical slice", () => {
       },
       method: payload.method ?? null,
       result: payload.method === "detail"
-        ? { list: [{ vod_id: "movie-1", vod_name: "Movie", vod_play_from: "main", vod_play_url: "Episode$https://media.example.test/movie.m3u8|1|Movie" }] }
+        ? { list: [{ vod_id: "movie-1", vod_name: "Movie", vod_play_from: "main", vod_play_url: "第01集$https://media.example.test/movie.m3u8#第03集$https://media.example.test/episode-3.m3u8#第02集$https://media.example.test/episode-2.m3u8#第02集v2$https://media.example.test/episode-2-v2.m3u8" }] }
         : payload.method === "player"
           ? {
               parse: parserMode,
@@ -786,7 +950,13 @@ describe("Tauri renderer vertical slice", () => {
     expect(home.state?.categories).toEqual([{ id: "movie", name: "Movie" }]);
     expect(home.state?.filters).toEqual([{ id: "year", name: "Year", options: [{ id: "2026", name: "2026" }] }]);
 
+    requestSourceSession.mockClear();
     await api.post("/api/import/select", { siteKey: "alternate" });
+    expect(requestBusinessData).toHaveBeenLastCalledWith(expect.objectContaining({
+      action: "upsert",
+      entity: "view_state",
+      value: expect.objectContaining({ siteKey: "alternate" }),
+    }));
     expect(requestSourceSession).toHaveBeenCalledWith(expect.objectContaining({
       action: "open",
       siteKey: "alternate",
@@ -796,7 +966,7 @@ describe("Tauri renderer vertical slice", () => {
       .map(([payload]) => payload as { action?: string; siteKey?: string; sourceId?: string })
       .find((payload) => payload.action === "open" && payload.siteKey === "alternate");
     expect(alternateOpen).toBeDefined();
-    expect(alternateOpen).not.toHaveProperty("sourceId");
+    expect(alternateOpen).toHaveProperty("sourceId", "site:alternate");
     expect(requestSourceSession.mock.calls.findIndex(([payload]) => (payload as { action?: string }).action === "close"))
       .toBeLessThan(requestSourceSession.mock.calls.findIndex(([payload]) => {
         const value = payload as { action?: string; siteKey?: string };
@@ -805,6 +975,12 @@ describe("Tauri renderer vertical slice", () => {
 
     const detail = await api.post("/api/detail", { vodId: "movie-1" });
     expect(detail.state?.playbackCatalog?.lines[0]?.episodes[0]?.id).toBe("https://media.example.test/movie.m3u8");
+    expect(detail.state?.playbackCatalog?.lines[0]?.episodes.map((episode) => episode.name)).toEqual([
+      "第01集",
+      "第02集",
+      "第02集v2",
+      "第03集",
+    ]);
 
     const sources = await api.post("/api/playback-sources/search");
     expect(sources.state?.playbackSources?.candidates).toEqual(expect.arrayContaining([
@@ -814,13 +990,15 @@ describe("Tauri renderer vertical slice", () => {
     expect(requestPlaybackSources).toHaveBeenCalledWith(expect.objectContaining({
       sourceId: "inline:tauri",
       currentSiteKey: "alternate",
+      currentPlayback: true,
     }));
+    await api.post("/api/player/fallback/mode", { mode: "prompt" });
     await api.post("/api/playback-sources/select", { siteKey: "jianpian", vodId: "movie-1" });
     const jianpianReopen = requestSourceSession.mock.calls
       .map(([payload]) => payload as { action?: string; siteKey?: string; sourceId?: string })
       .find((payload, index) => index > 0 && payload.action === "open" && payload.siteKey === "jianpian");
     expect(jianpianReopen).toBeDefined();
-    expect(jianpianReopen).not.toHaveProperty("sourceId");
+    expect(jianpianReopen).toHaveProperty("sourceId", "site:jianpian");
 
     const player = await api.post("/api/player", { lineIndex: 0, episodeIndex: 0 });
     expect(player.state?.player.source?.url).toContain("/__qx_playback/token");
@@ -835,6 +1013,7 @@ describe("Tauri renderer vertical slice", () => {
       format: "vtt",
       default: true,
     })]);
+    await api.post("/api/player/fallback/mode", { mode: "prompt" });
     const failed = await api.post("/api/player/sync", {
       status: "error",
       error: "HLS_SEGMENT_FAILED",
@@ -910,7 +1089,7 @@ describe("Tauri renderer vertical slice", () => {
   });
 
   it("leaves the config workspace usable when the selected source is unavailable after confirmation", async () => {
-    const source = "http://xn--z7x900a.net/";
+    const source = "https://source.example.test/unavailable-config.json";
     ingestConfigCatalog.mockResolvedValue({
       schemaVersion: "v1",
       source,
@@ -982,7 +1161,220 @@ describe("Tauri renderer vertical slice", () => {
       siteKey: "豆瓣",
     }));
     const openPayload = requestSourceSession.mock.calls.find(([payload]) => payload.action === "open")?.[0];
-    expect(openPayload).not.toHaveProperty("sourceId");
+    expect(openPayload).toHaveProperty("sourceId", "site:豆瓣");
+  });
+
+  it("aggregates search results across configured sources and keeps the source on detail navigation", async () => {
+    ingestConfigCatalog.mockResolvedValue({
+      schemaVersion: "v1",
+      source: "inline:multi-search",
+      sourceKind: "json",
+      versionHash: "multi-search-hash",
+      siteCount: 2,
+      usedCache: false,
+      validVersionCount: 1,
+      sites: [
+        { key: "source-a", name: "来源 A", api: "https://a.example.test/api", siteType: 1 },
+        { key: "source-b", name: "来源 B", api: "https://b.example.test/api", siteType: 1 },
+      ],
+    });
+    requestBusinessData.mockResolvedValue({
+      schemaVersion: "v1", entity: "view_state", id: "renderer", found: false, value: null, recordCount: 0,
+    });
+    requestBusinessFeature.mockImplementation(async (payload: { feature: string }) => ({
+      schemaVersion: "v1",
+      feature: payload.feature,
+      state: payload.feature === "history"
+        ? { history: { items: [], paused: false } }
+        : payload.feature === "favorites"
+          ? { favorites: { items: [], groups: [], defaultGroupId: "default" } }
+          : { follow: { items: [], checking: false, updateCount: 0 } },
+    }));
+    const probeSites = new Map<string, string>();
+    requestSourceSession.mockImplementation(async (payload: { action: string; method?: string; siteKey?: string; api?: string; sessionId?: string }) => {
+      const siteKey = payload.siteKey ?? probeSites.get(payload.sessionId ?? "") ?? "source-a";
+      const api = payload.api ?? `https://${siteKey}.example.test/api`;
+      const session = {
+        sessionId: "test-session",
+        sourceId: `backend-${siteKey}`,
+        siteKey,
+        api,
+        siteType: 1 as const,
+        state: payload.action === "close" ? "closed" as const : "ready" as const,
+        capabilities: {
+          home: true, category: true, search: true, detail: siteKey !== "source-b", playback: siteKey !== "source-b",
+          localProxy: false, filters: true, pagination: true, engine: "http" as const,
+        },
+      };
+      if (payload.action === "open" && payload.sessionId) probeSites.set(payload.sessionId, siteKey);
+      if (payload.method === "detail") return {
+        session,
+        method: "detail",
+        result: {
+          list: [{
+            vod_id: `${siteKey}-detail`,
+            vod_name: `${siteKey} detail`,
+            vod_content: "<p><span style=\"font-family: &quot;Helvetica Neue&quot;&quot;>简介内容&nbsp;&amp; 更多</span></p>",
+          }],
+        },
+        cancelled: false,
+      };
+      if (payload.method === "search") return { session, method: "search", result: { list: [{ vod_id: `${siteKey}-search`, vod_name: `${siteKey} result` }] }, cancelled: false };
+      if (payload.method === "home") return { session, method: "home", result: { list: [] }, cancelled: false };
+      return { session, method: payload.method ?? null, result: null, cancelled: false };
+    });
+
+    const { TauriRendererApi } = await import("../renderer/src/tauri-renderer-api.js");
+    const api = new TauriRendererApi();
+    await api.post("/api/import/load", { input: "{\"sites\":[]}" });
+    await api.post("/api/import/select", { siteKey: "source-b" });
+    const search = await api.post("/api/search", { key: "关键词", page: 1, quick: false });
+
+    expect(search.state?.items.map((item) => item.__qx_source_key)).toEqual(["source-b", "source-a"]);
+    expect(search.state?.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ vod_id: "source-a-search", __qx_source_key: "source-a", __qx_source_name: "来源 A", __qx_detail_available: true }),
+      expect.objectContaining({ vod_id: "source-b-search", __qx_source_key: "source-b", __qx_source_name: "来源 B", __qx_detail_available: false }),
+    ]));
+
+    const detail = await api.post("/api/detail", { vodId: "source-b-search", siteKey: "source-b" });
+    expect(detail.state?.detail).toMatchObject({
+      vod_id: "source-b-detail",
+      vod_content: "简介内容 & 更多",
+    });
+    expect(requestSourceSession).toHaveBeenCalledWith(expect.objectContaining({ action: "open", siteKey: "source-b" }));
+  });
+
+  it("rechecks failed source availability for each query within the six-second source budget", async () => {
+    ingestConfigCatalog.mockResolvedValue({
+      schemaVersion: "v1",
+      source: "inline:availability-cache",
+      sourceKind: "json",
+      versionHash: "availability-cache-hash",
+      siteCount: 3,
+      usedCache: false,
+      validVersionCount: 1,
+      sites: [
+        { key: "source-a", name: "来源 A", api: "https://a.example.test/api", siteType: 1 },
+        { key: "source-b", name: "不可用来源", api: "https://b.example.test/api", siteType: 1 },
+        { key: "source-c", name: "来源 C", api: "https://c.example.test/api", siteType: 1 },
+      ],
+    });
+    requestBusinessData.mockResolvedValue({ found: false, value: null, recordCount: 0 });
+    requestBusinessFeature.mockResolvedValue({ state: {} });
+    const sessionSites = new Map<string, string>();
+    const available = new Set(["source-a", "source-c"]);
+    requestSourceSession.mockImplementation(async (payload: { action: string; method?: string; siteKey?: string; sessionId?: string }) => {
+      const siteKey = payload.siteKey ?? sessionSites.get(payload.sessionId ?? "") ?? "source-a";
+      const session = {
+        sessionId: payload.sessionId ?? "session",
+        sourceId: `backend-${siteKey}`,
+        siteKey,
+        api: `https://${siteKey}.example.test/api`,
+        siteType: 1 as const,
+        state: payload.action === "close" ? "closed" as const : "ready" as const,
+        availabilityReason: available.has(siteKey) ? null : "SOURCE_UNAVAILABLE",
+        capabilities: {
+          home: true, category: true, search: true, detail: true, playback: true,
+          localProxy: false, filters: true, pagination: true, engine: "http" as const,
+        },
+      };
+      if (payload.action === "open" && payload.sessionId) sessionSites.set(payload.sessionId, siteKey);
+      if (payload.method === "home") return { session, method: "home", result: { list: [] }, cancelled: false };
+      if (payload.method === "search") return { session, method: "search", result: { list: [{ vod_id: `${siteKey}-result`, vod_name: siteKey }] }, cancelled: false };
+      return { session, method: payload.method ?? null, result: null, cancelled: false };
+    });
+
+    const { TauriRendererApi } = await import("../renderer/src/tauri-renderer-api.js");
+    const api = new TauriRendererApi();
+    await api.post("/api/import/load", { input: JSON.stringify({ sites: [
+      { key: "source-a", name: "来源 A", api: "https://a.example.test/api", type: 1 },
+      { key: "source-b", name: "不可用来源", api: "https://b.example.test/api", type: 1 },
+      { key: "source-c", name: "来源 C", api: "https://c.example.test/api", type: 1 },
+    ] }) });
+    await api.post("/api/import/confirm");
+    const first = await api.post("/api/search", { key: "第一次", page: 1 });
+    const second = await api.post("/api/search", { key: "第二次", page: 1 });
+
+    expect(first.state?.items.map((item) => item.__qx_source_key)).toEqual(expect.arrayContaining(["source-a", "source-c"]));
+    expect(second.state?.items.map((item) => item.__qx_source_key)).toEqual(expect.arrayContaining(["source-a", "source-c"]));
+    expect(requestSourceSession.mock.calls.filter(([payload]) => payload.action === "open" && payload.siteKey === "source-b")).toHaveLength(2);
+    expect(requestSourceSession.mock.calls.filter(([payload]) => payload.action === "open" && payload.siteKey === "source-c")).toHaveLength(2);
+    // confirm 5s-probes preferred then reopens a long-lived session (probe always closed), plus two searches.
+    expect(requestSourceSession.mock.calls.filter(([payload]) => payload.action === "open" && payload.siteKey === "source-a")).toHaveLength(4);
+    expect(requestSourceSession.mock.calls.filter(([payload]) => payload.method === "search" && sessionSites.get(payload.sessionId) === "source-b")).toHaveLength(0);
+    expect(requestSourceSession.mock.calls
+      .filter(([payload]) => payload.action === "open" && payload.siteKey === "source-b")
+      .every(([payload]) => payload.timeoutMs > 0 && payload.timeoutMs <= 6_000)).toBe(true);
+    expect(requestSourceSession.mock.calls
+      .filter(([payload]) => payload.method === "search")
+      .every(([payload]) => payload.timeoutMs > 0 && payload.timeoutMs <= 6_000)).toBe(true);
+  });
+
+  it("cancels an obsolete search before its responses can replace the latest query", async () => {
+    ingestConfigCatalog.mockResolvedValue({
+      schemaVersion: "v1",
+      source: "inline:concurrent-availability",
+      sourceKind: "json",
+      versionHash: "concurrent-availability-hash",
+      siteCount: 2,
+      usedCache: false,
+      validVersionCount: 1,
+      sites: [
+        { key: "source-a", name: "来源 A", api: "https://a.example.test/api", siteType: 1 },
+        { key: "source-b", name: "不可用来源", api: "https://b.example.test/api", siteType: 1 },
+      ],
+    });
+    requestBusinessData.mockResolvedValue({ found: false, value: null, recordCount: 0 });
+    requestBusinessFeature.mockResolvedValue({ state: {} });
+    const sessionSites = new Map<string, string>();
+    requestSourceSession.mockImplementation(async (payload: { action: string; method?: string; siteKey?: string; sessionId?: string; params?: { key?: string } }) => {
+      const siteKey = payload.siteKey ?? sessionSites.get(payload.sessionId ?? "") ?? "source-a";
+      const available = siteKey === "source-a";
+      const session = {
+        sessionId: payload.sessionId ?? "session",
+        sourceId: `backend-${siteKey}`,
+        siteKey,
+        api: `https://${siteKey}.example.test/api`,
+        siteType: 1 as const,
+        state: payload.action === "close" ? "closed" as const : "ready" as const,
+        availabilityReason: available ? null : "SOURCE_UNAVAILABLE",
+        capabilities: {
+          home: true, category: true, search: true, detail: true, playback: true,
+          localProxy: false, filters: true, pagination: true, engine: "http" as const,
+        },
+      };
+      if (payload.action === "open" && payload.sessionId) sessionSites.set(payload.sessionId, siteKey);
+      if (payload.method === "home") return { session, method: "home", result: { list: [] }, cancelled: false };
+      if (payload.method === "search") {
+        return {
+          session,
+          method: "search",
+          result: { list: [{ vod_id: `${siteKey}-${payload.params?.key ?? ""}`, vod_name: siteKey }] },
+          cancelled: false,
+        };
+      }
+      return { session, method: payload.method ?? null, result: null, cancelled: false };
+    });
+
+    const { TauriRendererApi } = await import("../renderer/src/tauri-renderer-api.js");
+    const api = new TauriRendererApi();
+    await api.post("/api/import/load", { input: JSON.stringify({ sites: [
+      { key: "source-a", name: "来源 A", api: "https://a.example.test/api", type: 1 },
+      { key: "source-b", name: "不可用来源", api: "https://b.example.test/api", type: 1 },
+    ] }) });
+    await api.post("/api/import/confirm");
+
+    const [first, second] = await Promise.all([
+      api.post("/api/search", { key: "第一次", page: 1 }).catch(error => error as Error),
+      api.post("/api/search", { key: "第二次", page: 1 }),
+    ]);
+
+    expect(first).toMatchObject({ name: "AbortError" });
+    expect(second.state?.items).toEqual([expect.objectContaining({ vod_id: "source-a-第二次" })]);
+    expect(requestSourceSession.mock.calls.filter(([payload]) => payload.action === "open" && payload.siteKey === "source-b")).toHaveLength(2);
+    expect(requestSourceSession.mock.calls.filter(([payload]) => payload.method === "search" && sessionSites.get(payload.sessionId) === "source-a")).toHaveLength(1);
+    expect(requestSourceSession).toHaveBeenCalledWith(expect.objectContaining({ action: "cancel" }));
+    expect((await api.getState()).state?.items).toEqual(second.state?.items);
   });
 
   it("plays a direct HTTP episode from a standard CMS without a player RPC", async () => {
@@ -1044,6 +1436,7 @@ describe("Tauri renderer vertical slice", () => {
         fallback: { mode: "prompt", status: "idle", trigger: null, reason: null, current: null, next: null, attempts: 0, maxAttempts: 3, tried: [], startedAt: null, deadlineAt: null, cooldownUntil: null, manualOverrideUntil: null },
       },
     });
+    await api.post("/api/player/fallback/mode", { mode: "prompt" });
     const failed = await api.post("/api/player/sync", {
       status: "error",
       error: "PLAYBACK_STARTUP_TIMEOUT",
@@ -1121,6 +1514,383 @@ describe("Tauri renderer vertical slice", () => {
     expect(restored.import?.selectedSiteKey).toBe("source-a");
     expect(restored.state?.items).toEqual([{ vod_id: "stable-1", vod_name: "Still available" }]);
     expect(restored.state?.sidecarRunning).toBe(true);
+  });
+
+  it("restores the previously trusted config source on a fresh Tauri renderer start", async () => {
+    const source = "https://source.example.test/config.json";
+    const session = {
+      sessionId: "restored-session",
+      sourceId: source,
+      siteKey: "remembered-site",
+      api: "https://source.example.test/api",
+      siteType: 1,
+      state: "ready" as const,
+      availabilityReason: null,
+      capabilities: {
+        home: true, category: true, search: true, detail: true, playback: true,
+        localProxy: false, filters: true, pagination: true, engine: "http" as const,
+      },
+    };
+    requestBusinessData.mockResolvedValue({
+      schemaVersion: "v1",
+      entity: "view_state",
+      id: "renderer",
+      found: true,
+      value: { configSource: source, siteKey: "remembered-site", navigation: "home" },
+      recordCount: 1,
+    });
+    requestBusinessFeature.mockResolvedValue({ state: {} });
+    requestCast.mockResolvedValue({ state: { cast: {} } });
+    requestPush.mockResolvedValue({ state: { push: {} } });
+    requestDesktopService.mockResolvedValue({ state: {} });
+    requestConfigCatalogMaintenance.mockImplementation(async (payload: { action: "history" | "activate" }) => payload.action === "history"
+      ? {
+          schemaVersion: "v1",
+          source,
+          activeVersionHash: "remembered-version",
+          versions: [{ versionHash: "remembered-version", sourceKind: "url", siteCount: 1, createdAt: 1, active: true }],
+        }
+      : {
+          schemaVersion: "v1",
+          source,
+          sourceKind: "url",
+          versionHash: "remembered-version",
+          siteCount: 2,
+          usedCache: true,
+          validVersionCount: 1,
+          sites: [
+            { key: "first-site", name: "First", api: "https://first.example.test/api", siteType: 1 },
+            { key: "remembered-site", name: "Remembered", api: session.api, siteType: 1 },
+          ],
+        });
+    requestSourceSession.mockImplementation(async (payload: { action: string; method?: string }) => ({
+      session,
+      method: payload.method ?? null,
+      result: payload.method === "home" ? { list: [{ vod_id: "restored-media", vod_name: "Restored media" }] } : null,
+      cancelled: false,
+    }));
+
+    const { TauriRendererApi } = await import("../renderer/src/tauri-renderer-api.js");
+    const api = new TauriRendererApi();
+    const restored = await api.getState();
+
+    expect(restored.import).toMatchObject({ status: "ready", trusted: true, sessionReady: true, selectedSiteKey: "remembered-site" });
+    expect(restored.state).toMatchObject({ page: "home", items: [{ vod_id: "restored-media" }] });
+    expect(requestSourceSession).toHaveBeenCalledWith(expect.objectContaining({ action: "open", siteKey: "remembered-site" }));
+    expect(requestConfigCatalogMaintenance).toHaveBeenNthCalledWith(1, { action: "history", source });
+    expect(requestConfigCatalogMaintenance).toHaveBeenNthCalledWith(2, { action: "activate", source, versionHash: "remembered-version" });
+  });
+
+  it("opens Jianpian by default without probing every source for latency", async () => {
+    const source = "https://source.example.test/config.json";
+    requestBusinessData.mockResolvedValue({
+      schemaVersion: "v1",
+      entity: "view_state",
+      id: "renderer",
+      found: true,
+      value: { configSource: source, navigation: "home" },
+      recordCount: 1,
+    });
+    requestBusinessFeature.mockResolvedValue({ state: {} });
+    requestCast.mockResolvedValue({ state: { cast: {} } });
+    requestPush.mockResolvedValue({ state: { push: {} } });
+    requestDesktopService.mockResolvedValue({ state: {} });
+    requestConfigCatalogMaintenance.mockImplementation(async (payload: { action: "history" | "activate" }) => payload.action === "history"
+      ? {
+          schemaVersion: "v1",
+          source,
+          activeVersionHash: "default-version",
+          versions: [{ versionHash: "default-version", sourceKind: "url", siteCount: 2, createdAt: 1, active: true }],
+        }
+      : {
+          schemaVersion: "v1",
+          source,
+          sourceKind: "url",
+          versionHash: "default-version",
+          siteCount: 2,
+          usedCache: true,
+          validVersionCount: 1,
+          sites: [
+            { key: "alternate", name: "更快来源", api: "https://alternate.example.test/api", siteType: 1 },
+            { key: "jianpian", name: "荐片", api: "csp_Jianpian", siteType: 3, ext: "https://api.example.test" },
+          ],
+        });
+    requestSourceSession.mockImplementation(async (payload: { action: string; method?: string; siteKey?: string; api?: string }) => {
+      const siteKey = payload.siteKey ?? "jianpian";
+      const session = {
+        sessionId: "default-session",
+        sourceId: `backend-${siteKey}`,
+        siteKey,
+        api: payload.api ?? (siteKey === "jianpian" ? "csp_Jianpian" : "https://alternate.example.test/api"),
+        siteType: siteKey === "jianpian" ? 3 as const : 1 as const,
+        state: payload.action === "close" ? "closed" as const : "ready" as const,
+        availabilityReason: null,
+        capabilities: {
+          home: true, category: true, search: true, detail: true, playback: true,
+          localProxy: false, filters: true, pagination: true, engine: siteKey === "jianpian" ? "native" as const : "http" as const,
+        },
+      };
+      return {
+        session,
+        method: payload.method ?? null,
+        result: payload.method === "home" ? { list: [{ vod_id: "jianpian-home", vod_name: "荐片首页" }] } : null,
+        cancelled: false,
+      };
+    });
+
+    const { TauriRendererApi } = await import("../renderer/src/tauri-renderer-api.js");
+    const api = new TauriRendererApi();
+    const restored = await api.getState();
+
+    expect(restored.import).toMatchObject({ status: "ready", trusted: true, sessionReady: true, selectedSiteKey: "jianpian" });
+    expect(restored.state).toMatchObject({ page: "home", items: [{ vod_id: "jianpian-home" }] });
+    expect(requestSourceSession).toHaveBeenCalledWith(expect.objectContaining({ action: "open", siteKey: "jianpian" }));
+    expect(requestSourceSession).not.toHaveBeenCalledWith(expect.objectContaining({ action: "open", siteKey: "alternate" }));
+    const searched = await api.post("/api/search", { key: "后台可用源探测" });
+    expect(requestSourceSession).toHaveBeenCalledWith(expect.objectContaining({ action: "open", siteKey: "alternate" }));
+    expect(searched.state?.page).toBe("search");
+  });
+
+  it("falls back from a dead remembered 肥猫 site to 荐片 without substituting a public mirror", async () => {
+    const source = "https://source.example.test/config.json";
+    requestBusinessData.mockResolvedValue({
+      schemaVersion: "v1",
+      entity: "view_state",
+      id: "renderer",
+      found: true,
+      value: { configSource: source, siteKey: "肥猫", navigation: "home" },
+      recordCount: 1,
+    });
+    requestBusinessFeature.mockResolvedValue({ state: {} });
+    requestCast.mockResolvedValue({ state: { cast: {} } });
+    requestPush.mockResolvedValue({ state: { push: {} } });
+    requestDesktopService.mockResolvedValue({ state: {} });
+    requestConfigCatalogMaintenance.mockImplementation(async (payload: { action: "history" | "activate" }) => payload.action === "history"
+      ? {
+          schemaVersion: "v1",
+          source,
+          activeVersionHash: "feimao-version",
+          versions: [{ versionHash: "feimao-version", sourceKind: "url", siteCount: 2, createdAt: 1, active: true }],
+        }
+      : {
+          schemaVersion: "v1",
+          source,
+          sourceKind: "url",
+          versionHash: "feimao-version",
+          siteCount: 2,
+          usedCache: true,
+          validVersionCount: 1,
+          sites: [
+            { key: "肥猫", name: "肥猫", api: "csp_AppGet", siteType: 3, ext: "https://cms140.yhg.one/api.php/getappapi.index/initV119" },
+            { key: "jianpian", name: "荐片", api: "csp_Jianpian", siteType: 3, ext: "https://api.example.test" },
+          ],
+        });
+    const sessionSites = new Map<string, string>();
+    requestSourceSession.mockImplementation(async (payload: { action: string; method?: string; siteKey?: string; api?: string; sessionId?: string }) => {
+      const siteKey = payload.siteKey ?? sessionSites.get(payload.sessionId ?? "") ?? "肥猫";
+      if (payload.action === "open" && payload.sessionId) sessionSites.set(payload.sessionId, siteKey);
+      if (siteKey === "肥猫") {
+        throw new Error("APPGET_HTTP_FAILED");
+      }
+      const session = {
+        sessionId: payload.sessionId ?? "jianpian-session",
+        sourceId: `backend-${siteKey}`,
+        siteKey,
+        api: payload.api ?? "csp_Jianpian",
+        siteType: 3 as const,
+        state: payload.action === "close" ? "closed" as const : "ready" as const,
+        availabilityReason: null,
+        capabilities: {
+          home: true, category: true, search: true, detail: true, playback: true,
+          localProxy: false, filters: true, pagination: true, engine: "native" as const,
+        },
+      };
+      return {
+        session,
+        method: payload.method ?? null,
+        result: payload.method === "home" ? { list: [{ vod_id: "jianpian-home", vod_name: "荐片首页" }] } : null,
+        cancelled: false,
+      };
+    });
+
+    const { TauriRendererApi } = await import("../renderer/src/tauri-renderer-api.js");
+    const api = new TauriRendererApi();
+    const restored = await api.getState();
+
+    expect(restored.import).toMatchObject({
+      status: "ready",
+      trusted: true,
+      sessionReady: true,
+      selectedSiteKey: "jianpian",
+      warning: "肥猫主站暂不可达，已切换到可用来源。",
+    });
+    expect(restored.state).toMatchObject({
+      page: "home",
+      items: [{ vod_id: "jianpian-home" }],
+      warning: "肥猫主站暂不可达，已切换到可用来源。",
+    });
+    expect(requestSourceSession).toHaveBeenCalledWith(expect.objectContaining({ action: "open", siteKey: "jianpian" }));
+    expect(requestSourceSession).not.toHaveBeenCalledWith(expect.objectContaining({
+      siteKey: expect.stringMatching(/bind\.315999|app7\.555618|tvboxo/i),
+    }));
+    expect(requestBusinessData).toHaveBeenCalledWith(expect.objectContaining({
+      action: "upsert",
+      entity: "view_state",
+      value: expect.objectContaining({ siteKey: "jianpian" }),
+    }));
+
+    const feimaoOpensBeforeSearch = requestSourceSession.mock.calls.filter(
+      ([payload]) => payload.action === "open" && payload.siteKey === "肥猫",
+    ).length;
+    expect(feimaoOpensBeforeSearch).toBeGreaterThan(0);
+    const searched = await api.post("/api/search", { key: "跳过死源" });
+    expect(searched.state?.page).toBe("search");
+    expect(requestSourceSession.mock.calls.filter(
+      ([payload]) => payload.action === "open" && payload.siteKey === "肥猫",
+    )).toHaveLength(feimaoOpensBeforeSearch + 1);
+    expect(requestSourceSession).toHaveBeenCalledWith(expect.objectContaining({ action: "open", siteKey: "jianpian" }));
+  });
+
+  it("falls back from a dead first site to the next live site with a generic warning", async () => {
+    ingestConfigCatalog.mockResolvedValue({
+      schemaVersion: "v1",
+      source: "inline:dead-first",
+      sourceKind: "json",
+      versionHash: "dead-first-hash",
+      siteCount: 2,
+      usedCache: false,
+      validVersionCount: 1,
+      sites: [
+        { key: "source-dead", name: "失效来源", api: "https://dead.example.test/api", siteType: 1 },
+        { key: "source-live", name: "可用来源", api: "https://live.example.test/api", siteType: 1 },
+      ],
+    });
+    requestBusinessData.mockResolvedValue({ found: false, value: null, recordCount: 0 });
+    requestBusinessFeature.mockResolvedValue({ state: {} });
+    const sessionSites = new Map<string, string>();
+    requestSourceSession.mockImplementation(async (payload: { action: string; method?: string; siteKey?: string; sessionId?: string }) => {
+      const siteKey = payload.siteKey ?? sessionSites.get(payload.sessionId ?? "") ?? "source-dead";
+      if (payload.action === "open" && payload.sessionId) sessionSites.set(payload.sessionId, siteKey);
+      if (siteKey === "source-dead") throw new Error("SOURCE_UNAVAILABLE");
+      const session = {
+        sessionId: payload.sessionId ?? "live-session",
+        sourceId: `backend-${siteKey}`,
+        siteKey,
+        api: `https://${siteKey}.example.test/api`,
+        siteType: 1 as const,
+        state: payload.action === "close" ? "closed" as const : "ready" as const,
+        availabilityReason: null,
+        capabilities: {
+          home: true, category: true, search: true, detail: true, playback: true,
+          localProxy: false, filters: true, pagination: true, engine: "http" as const,
+        },
+      };
+      return {
+        session,
+        method: payload.method ?? null,
+        result: payload.method === "home" ? { list: [{ vod_id: "live-home", vod_name: "可用首页" }] } : null,
+        cancelled: false,
+      };
+    });
+
+    const { TauriRendererApi } = await import("../renderer/src/tauri-renderer-api.js");
+    const api = new TauriRendererApi();
+    await api.post("/api/import/load", { input: JSON.stringify({ sites: [
+      { key: "source-dead", name: "失效来源", api: "https://dead.example.test/api", type: 1 },
+      { key: "source-live", name: "可用来源", api: "https://live.example.test/api", type: 1 },
+    ] }) });
+    const confirmed = await api.post("/api/import/confirm");
+
+    expect(confirmed.import).toMatchObject({
+      status: "ready",
+      trusted: true,
+      sessionReady: true,
+      selectedSiteKey: "source-live",
+      warning: "当前来源暂不可用，已切换到可用来源。",
+    });
+    expect(confirmed.state).toMatchObject({
+      page: "home",
+      items: [{ vod_id: "live-home" }],
+      warning: "当前来源暂不可用，已切换到可用来源。",
+    });
+    expect(requestSourceSession).toHaveBeenCalledWith(expect.objectContaining({ action: "open", siteKey: "source-live" }));
+    expect(requestBusinessData).toHaveBeenCalledWith(expect.objectContaining({
+      action: "upsert",
+      entity: "view_state",
+      value: expect.objectContaining({ siteKey: "source-live" }),
+    }));
+
+    const deadOpensBeforeSearch = requestSourceSession.mock.calls.filter(
+      ([payload]) => payload.action === "open" && payload.siteKey === "source-dead",
+    ).length;
+    expect(deadOpensBeforeSearch).toBeGreaterThan(0);
+    await api.post("/api/search", { key: "跳过首页死源" });
+    expect(requestSourceSession.mock.calls.filter(
+      ([payload]) => payload.action === "open" && payload.siteKey === "source-dead",
+    )).toHaveLength(deadOpensBeforeSearch + 1);
+  });
+
+  it("routes the fixed TuXiaoBei JavaScript catalog entry through the Rust HTTP session", async () => {
+    const apiUrl = "https://gh-proxy.net/https://raw.githubusercontent.com/fantaiying7/EXT/refs/heads/main/drpy2.min.js";
+    const ext = "https://gh-proxy.net/https://raw.githubusercontent.com/fantaiying7/EXT/refs/heads/main/%E5%85%94%E5%B0%8F%E8%B4%9D.js";
+    ingestConfigCatalog.mockResolvedValue({
+      schemaVersion: "v1",
+      source: "inline:tauri",
+      sourceKind: "json",
+      versionHash: "tuxiaobei-hash",
+      siteCount: 1,
+      usedCache: false,
+      validVersionCount: 1,
+      sites: [{ key: "儿童", name: "儿童", api: apiUrl, siteType: 3, ext }],
+    });
+    requestBusinessData.mockResolvedValue({
+      schemaVersion: "v1",
+      entity: "view_state",
+      id: "renderer",
+      found: false,
+      value: null,
+      recordCount: 0,
+    });
+    requestBusinessFeature.mockImplementation(async (payload: { feature: string }) => ({
+      schemaVersion: "v1",
+      feature: payload.feature,
+      state: payload.feature === "history"
+        ? { history: { items: [], paused: false } }
+        : payload.feature === "favorites"
+          ? { favorites: { items: [], groups: [], defaultGroupId: "default" } }
+          : { follow: { items: [], checking: false, updateCount: 0 } },
+    }));
+    requestSourceSession.mockImplementation(async (payload: { action: string; method?: string }) => {
+      const session = {
+        sessionId: "renderer-session",
+        sourceId: "site:儿童",
+        siteKey: "儿童",
+        api: apiUrl,
+        siteType: 3,
+        state: payload.action === "close" ? "closed" : "ready",
+        availabilityReason: null,
+        capabilities: { home: true, category: true, search: true, detail: true, playback: true, localProxy: false, filters: false, pagination: true, engine: "http-json-jsonp-html" },
+      };
+      const result = payload.method === "home"
+        ? { list: [{ vod_id: "https://www.tuxiaobei.com/play/2384", vod_name: "江南style" }] }
+        : payload.method === "detail"
+          ? { list: [{ vod_id: "https://www.tuxiaobei.com/play/2384", vod_name: "江南style", vod_play_from: "兔小贝", vod_play_url: "正片$https://www.tuxiaobei.com/play/2384" }] }
+          : null;
+      return { session, method: payload.method ?? null, result, cancelled: payload.action === "close" };
+    });
+
+    const { RendererApi } = await import("../renderer/src/api.js");
+    const api = new RendererApi();
+    await api.post("/api/import/load", {
+      input: JSON.stringify({ sites: [{ key: "儿童", name: "儿童", type: 3, api: apiUrl, ext }] }),
+    });
+    const home = await api.post("/api/import/confirm");
+    expect(home.state?.items).toEqual([{ vod_id: "https://www.tuxiaobei.com/play/2384", vod_name: "江南style" }]);
+    const detail = await api.post("/api/detail", { vodId: "https://www.tuxiaobei.com/play/2384" });
+    expect(detail.state?.playbackCatalog?.lines[0]?.episodes[0]?.id).toBe("https://www.tuxiaobei.com/play/2384");
+    expect(requestSourceSession).toHaveBeenCalledWith(expect.objectContaining({ action: "open", siteKey: "儿童", api: apiUrl, ext }));
+    expect(requestSourceSession).toHaveBeenCalledWith(expect.objectContaining({ action: "call", method: "detail" }));
+    expect(requestQuickJsSession).not.toHaveBeenCalled();
   });
 
   it("routes a JavaScript source through the Tauri QuickJS sidecar", async () => {
@@ -1213,6 +1983,156 @@ describe("Tauri renderer vertical slice", () => {
     expect(requestSourceSession).not.toHaveBeenCalled();
   });
 
+  it.each(["single error", "duplicate errors", "parser failure", "cancel during trigger", "late stop", "late progress"] as const)("keeps playback fallback on the same episode: %s", async (scenario) => {
+    ingestConfigCatalog.mockResolvedValue({
+      schemaVersion: "v1",
+      source: "inline:tauri",
+      sourceKind: "json",
+      versionHash: "fallback-hash",
+      siteCount: 1,
+      usedCache: false,
+      validVersionCount: 1,
+      sites: [{ key: "native-site", name: "Native", api: "csp_Jianpian", siteType: 3, ext: "https://api.example.test" }],
+    });
+    requestBusinessData.mockResolvedValue({
+      schemaVersion: "v1",
+      entity: "view_state",
+      id: "renderer",
+      found: false,
+      value: null,
+      recordCount: 0,
+    });
+    requestBusinessFeature.mockImplementation(async (payload: { feature: string }) => ({
+      schemaVersion: "v1",
+      feature: payload.feature,
+      state: payload.feature === "history"
+        ? { history: { items: [], paused: false } }
+        : payload.feature === "favorites"
+          ? { favorites: { items: [], groups: [], defaultGroupId: "default" } }
+          : { follow: { items: [], checking: false, updateCount: 0 } },
+    }));
+    requestSourceSession.mockImplementation(async (payload: { action: string; method?: string; sessionId?: string }) => ({
+      session: {
+        sessionId: payload.sessionId ?? "fallback-session",
+        sourceId: "fallback-source",
+        siteKey: "native-site",
+        api: "csp_Jianpian",
+        siteType: 3,
+        state: "ready",
+        availabilityReason: null,
+        capabilities: { home: true, category: true, search: true, detail: true, playback: true, localProxy: false, filters: true, pagination: true, engine: "native" },
+      },
+      method: payload.method ?? null,
+      result: payload.method === "detail"
+        ? {
+            list: [{
+              vod_id: "movie-1",
+              vod_name: "Movie",
+              vod_play_from: "优选一号$$$优选二号$$$优选八号",
+              vod_play_url: [
+                "第01集$https://media.example.test/main-1.m3u8#第02集$https://media.example.test/main-2.m3u8#第03集$https://media.example.test/main-3.m3u8",
+                "第01集$https://media.example.test/backup-1.m3u8#第02集$https://media.example.test/backup-2.m3u8#第03集$https://media.example.test/backup-3.m3u8",
+                "第01集$https://media.example.test/eight-1.m3u8#第02集$https://media.example.test/eight-2.m3u8#第03集$https://media.example.test/eight-3.m3u8",
+              ].join("$$$"),
+            }],
+          }
+        : payload.method === "player"
+          ? { parse: 0, url: "https://media.example.test/resolved.m3u8", header: {} }
+          : { list: [{ vod_id: "movie-1", vod_name: "Movie" }] },
+      cancelled: false,
+    }));
+
+    const { RendererApi } = await import("../renderer/src/api.js");
+    const api = new RendererApi();
+    await api.post("/api/import/load", {
+      input: JSON.stringify({ sites: [{ key: "native-site", name: "Native", type: 3, api: "csp_Jianpian", ext: "https://api.example.test" }] }),
+    });
+    await api.post("/api/import/confirm");
+    await api.post("/api/detail", { vodId: "movie-1" });
+    await api.post("/api/player", { lineIndex: 0, episodeIndex: 1 });
+
+    const begin = requestPlaybackFallback.mock.calls
+      .map(([payload]) => payload as { action?: string; candidates?: Array<Record<string, unknown>> })
+      .filter((payload) => payload.action === "begin")
+      .at(-1);
+    expect(begin?.candidates).toEqual([
+      expect.objectContaining({ id: "line:1:episode:1", label: "优选二号 · 第02集", kind: "same-content" }),
+      expect.objectContaining({ id: "line:2:episode:1", label: "优选八号 · 第02集", kind: "same-content" }),
+    ]);
+    const failure = { status: "error", currentTime: 82, volume: 0.4, muted: true, playbackRate: 1.5, event: { type: "fatal-error" } };
+    const startsBefore = requestPlaybackStart.mock.calls.length;
+    if (scenario === "late stop" || scenario === "late progress") {
+      let release!: () => void;
+      const held = new Promise<void>(resolve => { release = resolve; });
+      let entered!: () => void;
+      const pending = new Promise<void>(resolve => { entered = resolve; });
+      let hold = true;
+      if (scenario === "late stop") {
+        const original = requestPlaybackProxy.getMockImplementation()!;
+        requestPlaybackProxy.mockImplementation(async (payload: any) => {
+          if (payload.action === "close" && hold) { hold = false; entered(); await held; }
+          return original(payload);
+        });
+      } else {
+        const original = requestDesktopService.getMockImplementation()!;
+        requestDesktopService.mockImplementation(async (payload: any) => {
+          if (payload.action === "player-sync" && hold) {
+            hold = false; entered(); await held;
+            return { state: { player: { status: "playing", currentTime: 999 } } };
+          }
+          return original(payload);
+        });
+      }
+      const old = scenario === "late stop" ? api.post("/api/player/stop")
+        : api.post("/api/player/sync", { status: "playing", currentTime: 999 });
+      await pending;
+      const newer = await api.post("/api/player", { lineIndex: 0, episodeIndex: 2 });
+      release();
+      await old;
+      const state = await api.getState();
+      expect(state.state?.playbackSession?.id).toBe(newer.state?.playbackSession?.id);
+      expect(state.state?.playbackSelection?.episodeIndex).toBe(2);
+      expect(state.state?.player).toMatchObject({ status: "loading", currentTime: 0 });
+      expect(state.state?.player?.source).not.toBeNull();
+      return;
+    }
+    if (scenario === "parser failure") requestPlaybackStart.mockRejectedValueOnce(new Error("PLAYBACK_UPSTREAM_CONNECT_FAILED"));
+    if (scenario === "cancel during trigger") {
+      const original = requestPlaybackFallback.getMockImplementation()!;
+      let release!: () => void;
+      const held = new Promise<void>(resolve => { release = resolve; });
+      let triggered!: () => void;
+      const entered = new Promise<void>(resolve => { triggered = resolve; });
+      requestPlaybackFallback.mockImplementation(async (payload: any) => {
+        const result = await original(payload);
+        if (payload.action === "trigger") { triggered(); await held; }
+        return result;
+      });
+      const recovering = api.post("/api/player/sync", failure);
+      await entered;
+      await api.post("/api/player/fallback/cancel");
+      release();
+      await recovering;
+      expect(requestPlaybackStart.mock.calls.length).toBe(startsBefore);
+      expect((await api.getState()).state?.fallback?.status).toBe("cancelled");
+      return;
+    }
+    const recovering = api.post("/api/player/sync", failure);
+    if (scenario === "duplicate errors") {
+      await Promise.all([api.post("/api/player/sync", failure), api.post("/api/player/sync", failure)]);
+    }
+    const recovered = await recovering;
+    expect(recovered.state?.fallback?.status).toBe("trying");
+    expect(recovered.state?.player).toMatchObject({ currentTime: 82, volume: 0.4, muted: true, playbackRate: 1.5 });
+    expect(requestPlaybackStart.mock.calls.length - startsBefore).toBe(scenario === "parser failure" ? 2 : 1);
+    expect(requestPlaybackStart.mock.calls.at(-1)?.[0].episodeId).toContain(scenario === "parser failure" ? "eight-2" : "backup-2");
+    expect(recovered.state?.playbackSelection).toEqual({ lineIndex: scenario === "parser failure" ? 2 : 1, episodeIndex: 1 });
+    const playing = await api.post("/api/player/sync", { status: "playing", currentTime: 82 });
+    expect(playing.state?.fallback?.status).toBe("trying");
+    const decoded = await api.post("/api/player/sync", { status: "playing", currentTime: 82.2, event: { type: "first-frame" } });
+    expect(decoded.state?.fallback?.status).toBe("recovered");
+  });
+
   it("persists Tauri history, favorites and follow through the Rust feature RPC", async () => {
     ingestConfigCatalog.mockResolvedValue({
       schemaVersion: "v1",
@@ -1260,10 +2180,10 @@ describe("Tauri renderer vertical slice", () => {
       }
       return { schemaVersion: "v1", feature, state: { [feature]: states[feature as keyof typeof states] } };
     });
-    requestSourceSession.mockImplementation(async (payload: { action: string; method?: string }) => ({
+    requestSourceSession.mockImplementation(async (payload: { action: string; method?: string; sessionId?: string; sourceId?: string }) => ({
       session: {
-        sessionId: "feature-session",
-        sourceId: "inline:tauri",
+        sessionId: payload.sessionId ?? "feature-session",
+        sourceId: payload.sourceId ?? payload.sessionId ?? "feature-session",
         siteKey: "native-site",
         api: "csp_Jianpian",
         siteType: 3,
@@ -1273,7 +2193,7 @@ describe("Tauri renderer vertical slice", () => {
       },
       method: payload.method ?? null,
       result: payload.method === "detail"
-        ? { list: [{ vod_id: "movie-1", vod_name: "Movie", vod_play_from: "main", vod_play_url: "Episode$https://media.example.test/movie.m3u8" }] }
+        ? { list: [{ vod_id: "movie-1", vod_name: "Movie", vod_play_from: "main$$$backup", vod_play_url: "Episode$https://media.example.test/movie.m3u8$$$Backup$https://media.example.test/movie-backup.m3u8" }] }
         : payload.method === "player"
           ? { parse: 0, url: "https://media.example.test/movie.m3u8", header: {} }
           : { list: [{ vod_id: "movie-1", vod_name: "Movie" }] },
@@ -1292,106 +2212,177 @@ describe("Tauri renderer vertical slice", () => {
       input: JSON.stringify({ sites: [{ key: "native-site", name: "Native", type: 3, api: "csp_Jianpian", ext: "https://api.example.test" }] }),
     });
     await api.post("/api/import/confirm");
+    expect(featureCalls.filter((payload) => payload.feature === "favorites" && payload.action === "snapshot").at(-1))
+      .toEqual(expect.objectContaining({ sourceId: expect.stringMatching(/^source:[0-9a-f]+$/) }));
+    expect(featureCalls.filter((payload) => payload.feature === "follow" && payload.action === "snapshot").at(-1))
+      .toEqual(expect.objectContaining({ sourceId: expect.stringMatching(/^source:[0-9a-f]+$/) }));
     await api.post("/api/detail", { vodId: "movie-1" });
-    await api.post("/api/favorites/toggle-detail");
-    await api.post("/api/follow/toggle-detail");
+    const favoriteEnvelope = await api.post("/api/favorites/toggle-detail");
+    expect(favoriteEnvelope.state?.favoriteDetail).toEqual(expect.objectContaining({ vodId: "movie-1" }));
+    expect(favoriteEnvelope.state?.favorites?.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ vodId: "movie-1" }),
+    ]));
+    expect(featureCalls.filter((payload) => payload.feature === "favorites" && payload.action === "snapshot").at(-1))
+      .toEqual(expect.objectContaining({ sourceId: expect.stringMatching(/^source:[0-9a-f]+$/) }));
+    const followEnvelope = await api.post("/api/follow/toggle-detail");
+    expect(followEnvelope.state?.followDetail).toEqual(expect.objectContaining({ vodId: "movie-1" }));
+    expect(followEnvelope.state?.follow?.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ vodId: "movie-1" }),
+    ]));
     await api.post("/api/player", { lineIndex: 0, episodeIndex: 0 });
-    const synced = await api.post("/api/player/sync", { currentTime: 12, duration: 120 });
+    const historyAtPlaybackStart = featureCalls.find((payload) => payload.feature === "history" && payload.action === "upsert");
+    expect(historyAtPlaybackStart).toBeUndefined();
+    await api.post("/api/player/sync", {
+      status: "paused",
+      currentTime: 3,
+      duration: 120,
+      event: { type: "user-pause" },
+    });
+    expect(featureCalls.find((payload) => payload.feature === "history" && payload.action === "upsert")).toBeUndefined();
+    const synced = await api.post("/api/player/sync", {
+      status: "playing",
+      currentTime: 12,
+      duration: 120,
+      volume: 0.35,
+      muted: true,
+      event: { type: "first-frame" },
+    });
 
     const favorite = featureCalls.find((payload) => payload.feature === "favorites" && payload.action === "toggle");
     const follow = featureCalls.find((payload) => payload.feature === "follow" && payload.action === "upsert");
     const history = featureCalls.find((payload) => payload.feature === "history" && payload.action === "upsert");
     expect((favorite?.value as Record<string, unknown>).sourceId).toMatch(/^source:[0-9a-f]+$/);
-    expect((favorite?.value as Record<string, unknown>).episodes).toEqual([
+    expect((favorite?.value as Record<string, unknown>).episodes).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: expect.not.stringContaining("http") }),
-    ]);
+      expect.objectContaining({ name: "Backup" }),
+    ]));
     expect((follow?.value as Record<string, unknown>).sourceId).toMatch(/^source:[0-9a-f]+$/);
     expect((history?.value as Record<string, unknown>).episodeId).not.toContain("http");
     expect(synced.state?.history).toBeDefined();
+
+    const savedHistory = states.history.items[0];
+    expect(savedHistory).toBeDefined();
+    if (!savedHistory) throw new Error("history was not persisted");
+    expect(savedHistory).toEqual(expect.objectContaining({ position: 12, duration: 120, episode: 1 }));
+    await api.post("/api/player/sync", {
+      status: "paused",
+      currentTime: 12,
+      duration: 120,
+      error: computed(() => "reactive player error"),
+    });
+    requestPlayerWindow.mockImplementationOnce(async (payload) => {
+      JSON.stringify(payload);
+      return { schemaVersion: "v1", state: {} };
+    });
+    await api.post("/api/player/open");
+    const playerOpen = requestPlayerWindow.mock.calls
+      .map(([payload]) => payload as Record<string, unknown>)
+      .find((payload) => payload.action === "open");
+    expect(playerOpen).toBeDefined();
+    expect(playerOpen?.value).toEqual(expect.objectContaining({
+      history: expect.objectContaining({
+        identity: savedHistory.identity,
+        sourceId: savedHistory.sourceId,
+        vodId: savedHistory.vodId,
+        episodeId: savedHistory.episodeId,
+        position: 12,
+        duration: 120,
+      }),
+    }));
+    expect((playerOpen?.value as Record<string, unknown> | undefined)?.history).not.toEqual(expect.objectContaining({
+      episodeId: expect.stringContaining("http"),
+    }));
+    const opened = await api.post("/api/history/open", { identity: savedHistory.identity });
+    expect(opened.state?.historyResume).toEqual(expect.objectContaining({
+      identity: savedHistory.identity,
+      position: 12,
+      lineIndex: 0,
+      episodeIndex: 0,
+      canResume: true,
+    }));
+    const favoriteOpened = await api.post("/api/favorites/open", { favoriteId: "favorite:1" });
+    expect(favoriteOpened.state?.historyResume).toEqual(expect.objectContaining({
+      identity: savedHistory.identity,
+      position: 12,
+      lineIndex: 0,
+      episodeIndex: 0,
+    }));
+    const followOpened = await api.post("/api/follow/open", { identity: String(states.follow.items[0]?.identity ?? "") });
+    expect(followOpened.state?.historyResume).toEqual(expect.objectContaining({
+      identity: savedHistory.identity,
+      position: 12,
+      lineIndex: 0,
+      episodeIndex: 0,
+    }));
+    const resumed = await api.post("/api/player", {
+      lineIndex: 0,
+      episodeIndex: 0,
+      resume: "continue",
+    });
+    expect(resumed.state?.player).toEqual(expect.objectContaining({ currentTime: 12, status: "loading" }));
+    expect(resumed.state?.player).toEqual(expect.objectContaining({ volume: 0.35, muted: true }));
+    const historyWritesBeforeSwitch = featureCalls.filter((payload) => payload.feature === "history" && payload.action === "upsert").length;
+    const switchedLine = await api.post("/api/player", { lineIndex: 1, episodeIndex: 0 });
+    expect(switchedLine.state?.player).toEqual(expect.objectContaining({ currentTime: 12, volume: 0.35, muted: true, status: "loading" }));
+    const historyAtResume = featureCalls.filter((payload) => payload.feature === "history" && payload.action === "upsert").at(-1);
+    expect(featureCalls.filter((payload) => payload.feature === "history" && payload.action === "upsert").length).toBe(historyWritesBeforeSwitch);
+    expect(historyAtResume?.value).toEqual(expect.objectContaining({ position: 12, duration: 120 }));
+    const completed = await api.post("/api/player/sync", {
+      status: "playing",
+      currentTime: 108,
+      duration: 120,
+    });
+    expect(completed.state?.history?.items?.[0]).toEqual(expect.objectContaining({
+      position: 108,
+      duration: 120,
+      completed: true,
+    }));
+    const paused = await api.post("/api/player/sync", {
+      status: "paused",
+      currentTime: 111,
+      duration: 120,
+      event: { type: "user-pause" },
+    });
+    expect(paused.state?.history?.items?.[0]).toEqual(expect.objectContaining({
+      position: 111,
+      duration: 120,
+      completed: true,
+    }));
+    const ended = await api.post("/api/player/sync", {
+      status: "ended",
+      currentTime: 120,
+      duration: 120,
+      event: { type: "completion" },
+    });
+    expect(ended.state?.history?.items?.[0]).toEqual(expect.objectContaining({
+      position: 120,
+      duration: 120,
+      completed: true,
+    }));
+    requestPlayerWindow.mockResolvedValueOnce({
+      schemaVersion: "v1",
+      state: {
+        player: {
+          status: "paused",
+          currentTime: 42,
+          duration: 120,
+          volume: 0.2,
+          muted: false,
+          error: null,
+        },
+      },
+    });
+    const attached = await api.post("/api/player/attach");
+    expect(attached.state).toMatchObject({
+      playerHost: "embedded",
+      player: {
+        status: "paused",
+        currentTime: 42,
+        duration: 120,
+        volume: 0.2,
+        muted: false,
+      },
+    });
   });
 
-  it("routes live source and playback actions through the Rust live RPC and proxy", async () => {
-    ingestConfigCatalog.mockResolvedValue({
-      schemaVersion: "v1", source: "inline:tauri", sourceKind: "json", versionHash: "live-hash",
-      siteCount: 1, usedCache: false, validVersionCount: 1,
-      sites: [{ key: "native-site", name: "Native", api: "csp_Jianpian", siteType: 3 }],
-    });
-    requestBusinessData.mockResolvedValue({ schemaVersion: "v1", entity: "view_state", id: "renderer", found: false, value: null, recordCount: 0 });
-    const liveState: Record<string, unknown> = {
-      sources: [], preview: null, loading: false, error: null,
-      catalog: { groups: [], channels: [], recent: [] }, session: null, player: null,
-      epg: { sources: [], preview: null, loading: false, error: null, retention: { pastRetentionMs: 21600000, futureRetentionMs: 604800000 }, mappings: [], timeline: null },
-      smartChannels: [], smartSuggestions: [], activeSmartChannel: null, health: null,
-      failover: { mode: "ask", status: "idle", trigger: null, reason: null, current: null, next: null, attempts: 0, maxAttempts: 3, tried: [], startedAt: null, deadlineAt: null, cooldownUntil: null, manualOverrideUntil: null },
-    };
-    requestLive.mockImplementation(async (payload: { action: string }) => {
-      if (payload.action === "preview") liveState.preview = { id: "preview-1", source: { id: "pending:preview-1" }, channelNames: ["News"], issues: [], stats: { channelCount: 1, groupCount: 1, streamCount: 1, invalidCount: 0, protocolCounts: {}, addedCount: 1, removedCount: 0, changedCount: 0 } };
-      if (payload.action === "apply") {
-        liveState.sources = [{ id: "source-1", name: "Fixture", type: "m3u-file", location: "fixture", enabled: true, refreshMode: "manual", channelCount: 1, groupCount: 1, streamCount: 1 }];
-        liveState.preview = null;
-        liveState.catalog = { groups: [{ id: "News", name: "News", channelCount: 1 }], channels: [{ id: "channel-1", sourceId: "source-1", sourceName: "Fixture", name: "News", group: "News", logo: null, channelNumber: null, streamCount: 1, streams: [{ id: "channel-1:stream:0", label: "线路 1", protocol: "HLS", status: "ready", health: null }], epgStatus: "unmapped", currentProgramme: null, nextProgramme: null, health: null }], recent: [] };
-      }
-      if (payload.action === "play") {
-        liveState.session = { sessionId: "live-session", sourceId: "source-1", channelId: "channel-1", streamId: "channel-1:stream:0", smartChannelId: null, smartMemberId: null, state: "loading", backend: "hls-js", startedAt: Date.now(), firstFrameAt: null, error: null, generation: 1 };
-        liveState.player = { status: "loading", source: { parse: 0, url: "https://media.example.test/live.m3u8", headers: {} }, currentTime: 0, duration: 0, volume: 1, muted: false, fullscreen: false, error: null };
-      }
-      if (payload.action === "stop") { liveState.session = null; liveState.player = null; }
-      return { schemaVersion: "v1", state: { live: { ...liveState } } };
-    });
-    requestPlaybackProxy.mockImplementation(async (payload: { action: string }) => payload.action === "start"
-      ? { sessionId: "live-session", proxyUrl: "http://127.0.0.1:43123/__qx_playback/live", mediaType: "hls", state: "ready" }
-      : { sessionId: "live-session", proxyUrl: null, mediaType: "unknown", state: "closed" });
-
-    const { RendererApi } = await import("../renderer/src/api.js");
-    const api = new RendererApi();
-    await api.post("/api/import/load", { input: JSON.stringify({ sites: [{ key: "native-site", name: "Native", type: 3, api: "csp_Jianpian" }] }) });
-    await api.post("/api/live/source/preview", { name: "Fixture", type: "m3u-file", content: "#EXTM3U" });
-    await api.post("/api/live/source/apply", { previewId: "preview-1" });
-    const playing = await api.post("/api/live/play", { channelId: "channel-1" });
-    expect(playing.state?.live?.player).toEqual(expect.objectContaining({ source: expect.objectContaining({ url: expect.stringContaining("__qx_playback/live") }) }));
-    await api.post("/api/live/stop");
-    expect(requestLive).toHaveBeenCalledWith(expect.objectContaining({ action: "preview" }));
-    expect(requestLive).toHaveBeenCalledWith(expect.objectContaining({ action: "play" }));
-    expect(requestPlaybackProxy).toHaveBeenCalledWith(expect.objectContaining({ action: "start" }));
-    expect(requestPlaybackProxy).toHaveBeenCalledWith(expect.objectContaining({ action: "close" }));
-  });
-
-  it("routes XMLTV preview, apply, mapping and timeline through the Rust EPG RPC", async () => {
-    ingestConfigCatalog.mockResolvedValue({
-      schemaVersion: "v1", source: "inline:tauri", sourceKind: "json", versionHash: "epg-hash",
-      siteCount: 1, usedCache: false, validVersionCount: 1,
-      sites: [{ key: "native-site", name: "Native", api: "csp_Jianpian", siteType: 3 }],
-    });
-    requestBusinessData.mockResolvedValue({ schemaVersion: "v1", entity: "view_state", id: "renderer", found: false, value: null, recordCount: 0 });
-    const epgState: Record<string, unknown> = {
-      sources: [], preview: null, loading: false, error: null,
-      retention: { pastRetentionMs: 21600000, futureRetentionMs: 604800000 }, mappings: [], timeline: null,
-    };
-    requestEpg.mockImplementation(async (payload: { action: string }) => {
-      if (payload.action === "preview") epgState.preview = { id: "epg-preview-1", source: { id: "pending:epg-preview-1" }, channelNames: ["News"], issues: [], stats: { channelCount: 1, programmeCount: 1, invalidCount: 0 } };
-      if (payload.action === "apply") epgState.sources = [{ id: "epg-1", name: "Fixture EPG", type: "fixture", location: "fixture", enabled: true, channelCount: 1, programmeCount: 1 }];
-      if (payload.action === "mapping-confirm") epgState.mappings = [{ id: "map-1", liveChannelId: "channel-1", epgSourceId: "epg-1", epgChannelId: "epg-1:channel:news", status: "mapped" }];
-      if (payload.action === "timeline") epgState.timeline = { liveChannelId: "channel-1", items: [{ title: "Morning" }] };
-      return { schemaVersion: "v1", state: { epg: { ...epgState } } };
-    });
-
-    const { RendererApi } = await import("../renderer/src/api.js");
-    const api = new RendererApi();
-    await api.post("/api/import/load", { input: JSON.stringify({ sites: [{ key: "native-site", name: "Native", type: 3, api: "csp_Jianpian" }] }) });
-    await api.post("/api/epg/source/preview", { name: "Fixture EPG", type: "fixture", content: "<tv/>" });
-    await api.post("/api/epg/source/apply", { previewId: "epg-preview-1" });
-    await api.post("/api/epg/mapping/confirm", { liveChannelId: "channel-1", epgSourceId: "epg-1", epgChannelId: "epg-1:channel:news" });
-    const timeline = await api.post("/api/epg/timeline", { liveChannelId: "channel-1" });
-    expect(timeline.state?.live?.epg?.sources).toHaveLength(1);
-    expect(timeline.state?.live?.epg?.mappings).toHaveLength(1);
-    expect(requestEpg).toHaveBeenCalledWith(expect.objectContaining({ action: "preview" }));
-    expect(requestEpg).toHaveBeenCalledWith(expect.objectContaining({ action: "mapping-confirm" }));
-    expect(requestEpg).toHaveBeenCalledWith(expect.objectContaining({ action: "timeline" }));
-    await api.post("/api/cache/clear", { scope: "all" });
-    await api.post("/api/local-media/drop", { paths: ["C:/fixture/movie.mp4"] });
-    await api.post("/api/downloads/refresh");
-    expect(requestDesktopService).toHaveBeenCalledWith({ action: "cache-clear", value: { scope: "all" } });
-    expect(requestDesktopService).toHaveBeenCalledWith({ action: "local-drop", value: { paths: ["C:/fixture/movie.mp4"] } });
-    expect(requestDesktopService).toHaveBeenCalledWith({ action: "download-refresh", value: {} });
-  });
 });

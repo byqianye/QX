@@ -19,11 +19,11 @@ describe("csp_Douban JVM feasibility boundary", () => {
     expect(resolveCspTargetClass(site.api)).toBe("com.github.catvod.spider.Douban");
   });
 
-  it("distinguishes Android DEX jars from JVM class jars", () => {
+  it("distinguishes JVM class jars from unknown archives", () => {
     const zipMagic = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 
-    expect(identifyJarArtifact(Buffer.concat([zipMagic, Buffer.from("/classes.dex")]))).toBe("android-dex-jar");
     expect(identifyJarArtifact(Buffer.concat([zipMagic, Buffer.from("/com/example/Spider.class")]))).toBe("jvm-jar");
+    expect(identifyJarArtifact(Buffer.concat([zipMagic, Buffer.from("/classes.dex")]))).toBe("unknown");
     expect(identifyJarArtifact(Buffer.from("not-a-jar"))).toBe("unknown");
   });
 });

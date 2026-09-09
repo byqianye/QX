@@ -6,7 +6,6 @@ verification/
 src-tauri/target/
 src-tauri/quickjs-sidecar/target/
 src-tauri/gen/
-/build/android-runtime-manifest.json
 *.log
 .env
 .env.*

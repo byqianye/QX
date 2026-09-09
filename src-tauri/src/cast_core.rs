@@ -1049,13 +1049,14 @@ fn error_message(error: &CastError) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_support::bind_loopback_tcp;
     use super::{
         build_soap_envelope, parse_device_description, validate_media_url, CastPayload, CastState,
         AV_TRANSPORT_TYPE, MEDIA_RENDERER_ST,
     };
     use serde_json::json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::{TcpListener, UdpSocket};
+    use tokio::net::UdpSocket;
 
     #[test]
     fn parses_avtransport_device_description_without_external_entities() {
@@ -1108,9 +1109,7 @@ mod tests {
 
     #[tokio::test]
     async fn completes_local_ssdp_description_and_soap_playback_chain() {
-        let http = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("HTTP listener");
+        let http = bind_loopback_tcp().await.expect("HTTP listener");
         let http_address = http.local_addr().expect("HTTP address");
         let ssdp = UdpSocket::bind("127.0.0.1:0").await.expect("SSDP listener");
         let ssdp_address = ssdp.local_addr().expect("SSDP address");

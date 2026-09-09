@@ -20,7 +20,6 @@ const labels: Record<CacheType, string> = {
   search: "Search",
   detail: "Detail",
   subtitle: "Subtitle",
-  epg: "EPG",
   "parser-metadata": "Parser metadata",
   temporary: "Temporary",
 };

@@ -425,9 +425,6 @@ export class WebControlService {
         this.writeJson(response, request, { detail: await this.backend.detail(id) });
         return;
       }
-      case "/api/live-channels":
-        this.writeJson(response, request, { live: await this.backend.liveChannels() });
-        return;
       case "/api/downloads":
         this.writeJson(response, request, { downloads: await this.backend.downloads() });
         return;
@@ -486,15 +483,6 @@ export class WebControlService {
         });
         this.writeJson(response, request, { nowPlaying: (await this.afterMutation()).nowPlaying });
         return;
-      case "/api/live-channel": {
-        ensureKeys(body, ["channelId", "streamId"]);
-        const input = { channelId: requiredString(body.channelId, "channelId", 256) };
-        if (body.streamId !== undefined) Object.assign(input, { streamId: requiredString(body.streamId, "streamId", 256) });
-        await this.backend.playLive(input);
-        const state = await this.afterMutation();
-        this.writeJson(response, request, { live: state.live, nowPlaying: state.nowPlaying });
-        return;
-      }
       case "/api/push": {
         ensureKeys(body, ["url", "title"]);
         const url = requiredString(body.url, "url", 2_048);

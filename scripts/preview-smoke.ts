@@ -7,11 +7,9 @@ const projectRoot = resolve(import.meta.dirname, "..");
 const executable = resolve(projectRoot, process.argv[2] ?? "release/preview/win-unpacked/QX影视.exe");
 const isPortable = /Portable.*\.exe$/iu.test(executable);
 const resourcesPath = isPortable ? "portable-self-extracted" : join(dirname(executable), "resources");
-const hostApkPath = join(resourcesPath, "android-host", "android-spider-host.apk");
 if (!existsSync(executable)) throw new Error(`Preview executable is missing: ${executable}`);
 if (!isPortable) {
   if (!existsSync(join(resourcesPath, "app.asar"))) throw new Error("Preview app.asar is missing");
-  if (!existsSync(hostApkPath)) throw new Error(`Packaged Android Host APK is missing: ${hostApkPath}`);
 }
 
 const workDirectory = mkdtempSync(join(tmpdir(), "qx-preview-smoke-"));
@@ -27,7 +25,6 @@ try {
     status: "PASS",
     executable,
     resourcesPath,
-    hostApkPath,
     cwd: workDirectory,
     stdout: result.stdout.slice(-2_000),
     stderr: result.stderr.slice(-2_000),

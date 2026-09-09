@@ -78,3 +78,5 @@ Spike 19 的下一步不是给 Douban 增加播放，而是二选一：
 
 1. 为真实 JVM-native 播放 Spider 增加配置和适配；或
 2. 为 `csp_YGP` 这类 Android DEX Spider 单独做 Emulator/DEX 运行时评估。
+
+补充状态（2026-08-17）：`csp_YGP` 已根据公开 `www.6huo.com` HTML 合同移入独立 Rust 适配器，不加载或执行原 Android DEX。Rust 适配只接受固定的电影/预告数字路径，并从播放页脚本提取明确 `.mp4` 直链；这不改变本 Spike 关于 JVM-native 与 Android DEX 运行时隔离的结论。

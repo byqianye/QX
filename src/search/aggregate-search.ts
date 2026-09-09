@@ -41,6 +41,7 @@ export interface AggregateSearchOptions {
   quick?: boolean;
   timeoutMs?: number;
   sourceIds?: readonly string[];
+  preferredSourceId?: string | null;
   health?: SourceHealthRegistry;
   onUpdate?: (snapshot: AggregateSearchSnapshot) => void;
 }
@@ -75,6 +76,7 @@ export class AggregateSearchCoordinator {
     this.cancel();
     const generation = ++this.generation;
     const sourceFilter = options.sourceIds ? new Set(options.sourceIds) : null;
+    const preferredSourceId = options.preferredSourceId?.trim() || null;
     const selected = this.sources.filter((source) => sourceFilter?.has(source.id) ?? true);
     const stats: AggregateSourceStat[] = this.sources.map((source) => ({
       id: source.id,
@@ -92,7 +94,7 @@ export class AggregateSearchCoordinator {
     const run: SearchRun = {
       generation,
       cancelled: false,
-      snapshot: makeSnapshot(query, generation, "running", 0, selected.filter((source) => source.enabled !== false).length, groups, stats),
+      snapshot: makeSnapshot(query, generation, "running", 0, selected.filter((source) => source.enabled !== false).length, groups, stats, preferredSourceId),
     };
     this.active = run;
     this.snapshotValue = run.snapshot;
@@ -116,7 +118,7 @@ export class AggregateSearchCoordinator {
         stat.status = "success";
         stat.count = page.items.length;
         stat.elapsedMs = Date.now() - startedAt;
-        for (const item of page.items) addItem(groups, item, source.id);
+        for (const item of page.items) addItem(groups, item, source.id, preferredSourceId);
       } catch (error) {
         if (run.cancelled || this.active !== run) return;
         stat.status = error instanceof SearchTimeoutError ? "timeout" : "error";
@@ -132,6 +134,7 @@ export class AggregateSearchCoordinator {
           runnable.length,
           groups,
           stats,
+          preferredSourceId,
         );
         this.snapshotValue = run.snapshot;
         emit(run, options.onUpdate);
@@ -144,7 +147,7 @@ export class AggregateSearchCoordinator {
         status: "cancelled",
       });
     }
-    run.snapshot = makeSnapshot(query, generation, "complete", runnable.length, runnable.length, groups, stats);
+    run.snapshot = makeSnapshot(query, generation, "complete", runnable.length, runnable.length, groups, stats, preferredSourceId);
     this.snapshotValue = run.snapshot;
     this.active = undefined;
     emit(run, options.onUpdate);
@@ -165,7 +168,12 @@ class SearchTimeoutError extends Error {
   }
 }
 
-function addItem(groups: Map<string, AggregateSearchGroup>, item: Vod, sourceId: string): void {
+function addItem(
+  groups: Map<string, AggregateSearchGroup>,
+  item: Vod,
+  sourceId: string,
+  preferredSourceId: string | null,
+): void {
   const key = dedupeKey(item, sourceId, groups.size);
   const existing = groups.get(key);
   if (!existing) {
@@ -180,10 +188,14 @@ function addItem(groups: Map<string, AggregateSearchGroup>, item: Vod, sourceId:
   const sourceIds = existing.sourceIds.includes(sourceId)
     ? existing.sourceIds
     : [...existing.sourceIds, sourceId];
+  const orderedSourceIds = sourceId === preferredSourceId
+    ? [sourceId, ...sourceIds.filter((id) => id !== sourceId)]
+    : sourceIds;
   groups.set(key, {
     ...existing,
-    items: [...existing.items, item],
-    sourceIds,
+    name: sourceId === preferredSourceId ? item.name : existing.name,
+    items: sourceId === preferredSourceId ? [item, ...existing.items] : [...existing.items, item],
+    sourceIds: orderedSourceIds,
   });
 }
 
@@ -230,14 +242,22 @@ function makeSnapshot(
   total: number,
   groups: Map<string, AggregateSearchGroup>,
   stats: readonly AggregateSourceStat[],
+  preferredSourceId: string | null,
 ): AggregateSearchSnapshot {
+  const orderedGroups = [...groups.values()]
+    .map((group, index) => ({ group, index }))
+    .sort((left, right) => {
+      const leftPriority = preferredSourceId && left.group.sourceIds.includes(preferredSourceId) ? 0 : 1;
+      const rightPriority = preferredSourceId && right.group.sourceIds.includes(preferredSourceId) ? 0 : 1;
+      return leftPriority - rightPriority || left.index - right.index;
+    });
   return {
     query,
     generation,
     status,
     completed,
     total,
-    groups: [...groups.values()].map((group) => ({
+    groups: orderedGroups.map(({ group }) => ({
       ...group,
       items: [...group.items],
       sourceIds: [...group.sourceIds],

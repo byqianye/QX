@@ -42,7 +42,7 @@ const TITLES: Record<string, string> = {
   DATABASE_WRITE_FAILED: "数据库未能保存",
   LEGACY_MIGRATION_FAILED: "旧数据迁移失败",
   RENDERER_REQUEST_ERROR: "界面请求失败",
-  RUNTIME_REQUIRED: "需要 Android 兼容运行环境",
+  RUNTIME_REQUIRED: "当前来源暂不可用",
   AUTH_REQUIRED: "需要登录或授权",
   SOURCE_TIMEOUT: "来源请求超时",
   SOURCE_OFFLINE: "来源暂时不可用",
@@ -207,11 +207,10 @@ function normalizeCode(code: string): string {
 
 function publicSourceErrorCode(code: string): string {
   if (code === "SPIDER_AUTH_REQUIRED" || code === "MEDIA_AUTH_REQUIRED") return "AUTH_REQUIRED";
-  if (code.startsWith("ANDROID_RUNTIME_") || code === "WHPX_NOT_READY") return "RUNTIME_REQUIRED";
   if (code === "MEDIA_PARSE_REQUIRED" || code.startsWith("PARSE_")) return "PARSE_FAILED";
   if (code.startsWith("MEDIA_")) return "MEDIA_FAILED";
-  if (code === "SOURCE_TIMEOUT" || code.startsWith("LIVE_SOURCE_TIMEOUT")) return "SOURCE_TIMEOUT";
-  if (code === "SOURCE_OFFLINE" || code.startsWith("LIVE_SOURCE_OFFLINE")) return "SOURCE_OFFLINE";
+  if (code === "SOURCE_TIMEOUT") return "SOURCE_TIMEOUT";
+  if (code === "SOURCE_OFFLINE") return "SOURCE_OFFLINE";
   return code;
 }
 

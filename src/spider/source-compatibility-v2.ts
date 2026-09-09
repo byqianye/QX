@@ -1,7 +1,6 @@
 import type { TvBoxConfig, TvBoxSite } from "../config/decoder.js";
 import { normalizeFongMiSite, serializeFongMiExt } from "../config/fongmi.js";
 import type { PlayerRequest, PlayerResult, Vod, VodDetail, VodPage } from "../source/media-source.js";
-import { expectedAndroidSpiderClass } from "./android-dex-runtime.js";
 import type { SpiderRuntimeKind } from "./runtime-types.js";
 
 export const SOURCE_COMPATIBILITY_STATUSES = [
@@ -10,7 +9,6 @@ export const SOURCE_COMPATIBILITY_STATUSES = [
   "SEARCH_ONLY",
   "AUTH_REQUIRED",
   "METADATA_ONLY",
-  "LIVE_ONLY",
   "NETDISK_ONLY",
   "MUSIC_ONLY",
   "EDUCATION_ONLY",
@@ -30,7 +28,7 @@ export type SourceCompatibilityStatus = typeof SOURCE_COMPATIBILITY_STATUSES[num
 export type SourcePhaseStatus = "PASS" | "EMPTY" | "FAIL" | "SKIPPED" | "UNKNOWN";
 export type SourceAuthProvider = "NONE" | "UC" | "ALIYUN" | "QUARK" | "BAIDU" | "OTHER" | "UNKNOWN";
 export type SourceProbeClassLoad = "PASS" | "FAIL" | "UNKNOWN";
-export type SourceCompatibilityCategory = "VOD" | "METADATA" | "LIVE" | "MUSIC" | "EDUCATION" | "NETDISK" | "UNKNOWN";
+export type SourceCompatibilityCategory = "VOD" | "METADATA" | "MUSIC" | "EDUCATION" | "NETDISK" | "UNKNOWN";
 export type SourceProbePlayback = "PASS" | "FAIL" | "NOT_ATTEMPTED";
 
 export interface SourceCompatibilityCapabilities {
@@ -42,7 +40,6 @@ export interface SourceCompatibilityCapabilities {
   requiresAuth: boolean;
   metadataOnly: boolean;
   vod: boolean;
-  live: boolean;
   music: boolean;
   education: boolean;
   netdisk: boolean;
@@ -295,12 +292,12 @@ export function detectCapabilities(site: TvBoxSite, categories: readonly string[
     ...(categories ?? []),
     ...(Array.isArray(site.categories) ? site.categories : []),
   ]);
-  const live = hasAny(text, ["直播", "live", "频道", "radio"]);
   const music = hasAny(text, ["音乐", "music", "kugou", "酷狗", "mv"]);
   const education = hasAny(text, ["教育", "课堂", "course", "lesson", "学习"]);
   const netdisk = hasAny(text, ["网盘", "云盘", "netdisk", "pansearch", "quark", "aliyun", "uc"]);
   const metadataOnly = hasAny(text, ["豆瓣", "douban", "预告", "metadata", "配置", "中心"]);
-  const vod = !live && !music && !education && !netdisk;
+  const excludedFromVod = hasAny(text, ["直播", "live", "频道", "radio"]);
+  const vod = !excludedFromVod && !music && !education && !netdisk;
   const requiresAuth = hasAny(text, ["uc", "夸克", "quark", "阿里", "aliyun", "baidu", "百度"]);
   const searchable = site.searchable !== 0 && site.searchable !== "0";
   return {
@@ -312,7 +309,6 @@ export function detectCapabilities(site: TvBoxSite, categories: readonly string[
     requiresAuth,
     metadataOnly,
     vod,
-    live,
     music,
     education,
     netdisk,
@@ -333,7 +329,6 @@ export function classifySourceCompatibility(input: {
   if (input.classLoad === "FAIL") return "CLASS_NOT_FOUND";
   if (input.runtime === "unsupported") return "RUNTIME_INCOMPATIBLE";
   if (input.capabilities.metadataOnly && !input.capabilities.vod) return "METADATA_ONLY";
-  if (input.capabilities.live && !input.capabilities.vod) return "LIVE_ONLY";
   if (input.capabilities.music && !input.capabilities.vod) return "MUSIC_ONLY";
   if (input.capabilities.education && !input.capabilities.vod) return "EDUCATION_ONLY";
   if (input.capabilities.netdisk && !input.capabilities.vod) return "NETDISK_ONLY";
@@ -349,7 +344,7 @@ export function classifySourceCompatibility(input: {
 }
 
 function baseRecord(site: TvBoxSite, normalized: ReturnType<typeof normalizeFongMiSite>, capabilities: SourceCompatibilityCapabilities): SourceCompatibilityRecord {
-  const runtime = normalized.type === 0 ? "cms-xml" : normalized.type === 1 || normalized.type === 4 ? "cms-json" : /^js:/iu.test(normalized.api) ? "javascript" : /^csp_/iu.test(normalized.api) ? "android-dex" : "unknown";
+  const runtime = normalized.type === 0 ? "cms-xml" : normalized.type === 1 || normalized.type === 4 ? "cms-json" : /^js:/iu.test(normalized.api) ? "javascript" : /^csp_/iu.test(normalized.api) ? "native" : "unknown";
   return {
     siteKey: normalized.key,
     siteName: normalized.name,
@@ -357,7 +352,6 @@ function baseRecord(site: TvBoxSite, normalized: ReturnType<typeof normalizeFong
     api: normalized.api,
     sourceCategory: categoryFor(capabilities),
     runtime,
-    ...(runtime === "android-dex" ? { resolvedClass: expectedAndroidSpiderClass(normalized.api) } : {}),
     searchable: normalized.searchable,
     quickSearch: normalized.quickSearch,
     filterable: normalized.filterable,
@@ -429,7 +423,6 @@ function phaseTimings(phases: Pick<SourceCompatibilityRecord, "init" | "home" | 
 
 function categoryFor(capabilities: SourceCompatibilityCapabilities): SourceCompatibilityCategory {
   if (capabilities.metadataOnly && !capabilities.vod) return "METADATA";
-  if (capabilities.live && !capabilities.vod) return "LIVE";
   if (capabilities.music && !capabilities.vod) return "MUSIC";
   if (capabilities.education && !capabilities.vod) return "EDUCATION";
   if (capabilities.netdisk && !capabilities.vod) return "NETDISK";

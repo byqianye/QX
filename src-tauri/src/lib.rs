@@ -2,17 +2,21 @@ use std::collections::BTreeMap;
 use std::fs;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindowBuilder};
 
+mod app_get;
+mod auto_http;
+mod bili;
 mod business_data;
 mod business_features;
 mod cast_core;
 mod component_manager;
 mod config_catalog;
 mod desktop_services;
-mod epg_core;
+mod first_aid;
 mod jianpian;
-mod live_core;
+mod legacy_http;
+mod misou;
 mod mpv_bridge;
 mod native_sources;
 mod playback_fallback;
@@ -21,11 +25,18 @@ mod playback_sources;
 mod playback_start;
 mod player_window;
 mod push_core;
+mod push_source;
 mod quickjs_bridge;
 mod quickjs_session;
 mod runtime_capability;
+mod source_converter;
+mod source_semantics;
 mod source_session;
+#[cfg(test)]
+mod source_benchmark;
 mod subtitles;
+#[cfg(test)]
+mod test_support;
 mod webview_sniffer;
 
 pub const BACKEND_RPC_VERSION: &str = "qx.backend.v1";
@@ -841,158 +852,6 @@ async fn backend_mpv(
 }
 
 #[tauri::command]
-fn backend_live(
-    app: AppHandle,
-    state: tauri::State<'_, live_core::LiveCoreState>,
-    request: BackendRequest,
-) -> Result<BackendResponse<live_core::LiveSnapshot>, BackendFailure> {
-    if request.version != BACKEND_RPC_VERSION {
-        return Err(failure(
-            &request,
-            BackendError {
-                category: BackendErrorCategory::InvalidConfig,
-                reason_code: "RPC_VERSION_UNSUPPORTED".to_string(),
-                retryable: false,
-                diagnostic_id: "rpc-invalid-version".to_string(),
-                safe_details: std::collections::BTreeMap::new(),
-            },
-        ));
-    }
-    let payload: live_core::LivePayload =
-        serde_json::from_value(request.payload.clone()).map_err(|error| {
-            failure(
-                &request,
-                BackendError {
-                    category: BackendErrorCategory::InvalidConfig,
-                    reason_code: "LIVE_PAYLOAD_INVALID".to_string(),
-                    retryable: false,
-                    diagnostic_id: "live-payload-invalid".to_string(),
-                    safe_details: [("message".to_string(), error.to_string())]
-                        .into_iter()
-                        .collect(),
-                },
-            )
-        })?;
-    let (_, database_path) = app_data_paths(&app).map_err(|error| failure(&request, error))?;
-    let snapshot = state.handle(&database_path, &payload).map_err(|error| {
-        let (category, reason_code, message, retryable) = match error {
-            live_core::LiveError::Invalid(message) => (
-                BackendErrorCategory::InvalidConfig,
-                "LIVE_INVALID",
-                message,
-                false,
-            ),
-            live_core::LiveError::Request(message) => (
-                BackendErrorCategory::SourceUnavailable,
-                "LIVE_SOURCE_REQUEST_FAILED",
-                message,
-                true,
-            ),
-            live_core::LiveError::Storage(message) => (
-                BackendErrorCategory::InvalidConfig,
-                "LIVE_STORAGE_FAILED",
-                message,
-                true,
-            ),
-        };
-        failure(
-            &request,
-            BackendError {
-                category,
-                reason_code: reason_code.to_string(),
-                retryable,
-                diagnostic_id: "live-core-error".to_string(),
-                safe_details: [("message".to_string(), message)].into_iter().collect(),
-            },
-        )
-    })?;
-    Ok(BackendResponse {
-        version: BACKEND_RPC_VERSION.to_string(),
-        request_id: request.request_id,
-        session_id: request.session_id,
-        sequence: request.sequence,
-        ok: true,
-        payload: snapshot,
-    })
-}
-
-#[tauri::command]
-fn backend_epg(
-    app: AppHandle,
-    state: tauri::State<'_, epg_core::EpgCoreState>,
-    request: BackendRequest,
-) -> Result<BackendResponse<epg_core::EpgSnapshot>, BackendFailure> {
-    if request.version != BACKEND_RPC_VERSION {
-        return Err(failure(
-            &request,
-            BackendError {
-                category: BackendErrorCategory::InvalidConfig,
-                reason_code: "RPC_VERSION_UNSUPPORTED".to_string(),
-                retryable: false,
-                diagnostic_id: "rpc-invalid-version".to_string(),
-                safe_details: std::collections::BTreeMap::new(),
-            },
-        ));
-    }
-    let payload: epg_core::EpgPayload =
-        serde_json::from_value(request.payload.clone()).map_err(|error| {
-            failure(
-                &request,
-                BackendError {
-                    category: BackendErrorCategory::InvalidConfig,
-                    reason_code: "EPG_PAYLOAD_INVALID".to_string(),
-                    retryable: false,
-                    diagnostic_id: "epg-payload-invalid".to_string(),
-                    safe_details: [("message".to_string(), error.to_string())]
-                        .into_iter()
-                        .collect(),
-                },
-            )
-        })?;
-    let (_, database_path) = app_data_paths(&app).map_err(|error| failure(&request, error))?;
-    let snapshot = state.handle(&database_path, &payload).map_err(|error| {
-        let (category, reason_code, message, retryable) = match error {
-            epg_core::EpgError::Invalid(message) => (
-                BackendErrorCategory::InvalidConfig,
-                "EPG_INVALID",
-                message,
-                false,
-            ),
-            epg_core::EpgError::Request(message) => (
-                BackendErrorCategory::SourceUnavailable,
-                "EPG_SOURCE_REQUEST_FAILED",
-                message,
-                true,
-            ),
-            epg_core::EpgError::Storage(message) => (
-                BackendErrorCategory::InvalidConfig,
-                "EPG_STORAGE_FAILED",
-                message,
-                true,
-            ),
-        };
-        failure(
-            &request,
-            BackendError {
-                category,
-                reason_code: reason_code.to_string(),
-                retryable,
-                diagnostic_id: "epg-core-error".to_string(),
-                safe_details: [("message".to_string(), message)].into_iter().collect(),
-            },
-        )
-    })?;
-    Ok(BackendResponse {
-        version: BACKEND_RPC_VERSION.to_string(),
-        request_id: request.request_id,
-        session_id: request.session_id,
-        sequence: request.sequence,
-        ok: true,
-        payload: snapshot,
-    })
-}
-
-#[tauri::command]
 async fn backend_cast(
     state: tauri::State<'_, cast_core::CastState>,
     request: BackendRequest,
@@ -1202,8 +1061,9 @@ async fn backend_desktop_services(
             payload.value["paths"] = serde_json::json!(paths);
         }
     }
-    let snapshot =
-        desktop_services::handle(&data_root, &database_path, &payload).map_err(|error| {
+    let snapshot = desktop_services::handle_async(data_root, database_path, payload)
+        .await
+        .map_err(|error| {
             let (category, reason_code, message, retryable) = match error {
                 desktop_services::DesktopServiceError::Invalid(message) => (
                     BackendErrorCategory::InvalidConfig,
@@ -1309,6 +1169,15 @@ async fn backend_player_window(
             },
         )
     })?;
+    if payload.action == "attach"
+        && payload
+            .value
+            .get("notifyMain")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+    {
+        let _ = app.emit_to("main", "qx-player-attached", &snapshot);
+    }
     Ok(BackendResponse {
         version: BACKEND_RPC_VERSION.to_string(),
         request_id: request.request_id,
@@ -1764,7 +1633,22 @@ fn failure(request: &BackendRequest, error: BackendError) -> BackendFailure {
 
 pub fn run() {
     tauri::Builder::default()
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                window.app_handle().state::<player_window::PlayerWindowState>().flush_on_exit(window.app_handle());
+                // The primary close action ends detached playback and all in-process workers too.
+                window.app_handle().exit(0);
+            }
+        })
         .setup(|app| {
+            let window_config = app
+                .config()
+                .app
+                .windows
+                .first()
+                .cloned()
+                .ok_or_else(|| "main window config is missing".to_string())?;
+            create_main_window(app, window_config)?;
             start_runtime_canary(app.handle().clone());
             if std::env::var("QX_TAURI_E2E").as_deref() == Ok("1") {
                 if let Ok(milliseconds) = std::env::var("QX_TAURI_E2E_EXIT_AFTER_MS")
@@ -1792,8 +1676,6 @@ pub fn run() {
             backend_runtime_capability,
             backend_playback_proxy,
             backend_mpv,
-            backend_live,
-            backend_epg,
             backend_cast,
             backend_push,
             backend_desktop_services,
@@ -1808,8 +1690,6 @@ pub fn run() {
         .manage(playback_fallback::PlaybackFallbackRegistry::default())
         .manage(playback_proxy::PlaybackProxyState::default())
         .manage(mpv_bridge::MpvState::default())
-        .manage(live_core::LiveCoreState::default())
-        .manage(epg_core::EpgCoreState::default())
         .manage(cast_core::CastState::default())
         .manage(push_core::PushState::default())
         .manage(player_window::PlayerWindowState::default())
@@ -1818,6 +1698,47 @@ pub fn run() {
         .manage(webview_sniffer::WebviewSnifferState::default())
         .run(tauri::generate_context!())
         .expect("error while running QX影视 Tauri application");
+}
+
+fn create_main_window(
+    app: &tauri::App,
+    window_config: tauri::utils::config::WindowConfig,
+) -> Result<(), String> {
+    let mut window_builder = WebviewWindowBuilder::from_config(app, &window_config)
+        .map_err(|error| error.to_string())?;
+    if std::env::var("QX_TAURI_E2E").as_deref() == Ok("1") {
+        if let Ok(path) = std::env::var("QX_TAURI_E2E_WEBVIEW_DATA_DIR") {
+            let path = std::path::PathBuf::from(path);
+            fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+            window_builder = window_builder.data_directory(path);
+        }
+        if let Ok(port) = std::env::var("QX_TAURI_E2E_CDP_PORT") {
+            let port = port
+                .parse::<u16>()
+                .map_err(|_| "QX_TAURI_E2E_CDP_PORT must be a valid TCP port".to_string())?;
+            let runner_arguments = std::env::var("QX_TAURI_E2E_WEBVIEW_ARGS").ok();
+            window_builder = window_builder
+                .additional_browser_args(&e2e_browser_arguments(port, runner_arguments.as_deref()));
+        }
+    }
+    window_builder
+        .build()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn e2e_browser_arguments(port: u16, runner_arguments: Option<&str>) -> String {
+    let mut arguments = format!(
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port={port}"
+    );
+    if let Some(runner_arguments) = runner_arguments
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        arguments.push(' ');
+        arguments.push_str(runner_arguments);
+    }
+    arguments
 }
 
 fn start_runtime_canary(app: AppHandle) {
@@ -1992,7 +1913,7 @@ async fn run_sniffer_runtime_canary(app: &AppHandle) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppSnapshot, BACKEND_EVENT_VERSION, BACKEND_RPC_VERSION};
+    use super::{e2e_browser_arguments, AppSnapshot, BACKEND_EVENT_VERSION, BACKEND_RPC_VERSION};
 
     #[test]
     fn contract_constants_are_stable() {
@@ -2007,5 +1928,14 @@ mod tests {
         })
         .expect("snapshot serializes");
         assert_eq!(value["databasePath"], "C:/data/qx-v1.sqlite3");
+    }
+
+    #[test]
+    fn e2e_browser_arguments_keep_runner_specific_flags() {
+        let arguments =
+            e2e_browser_arguments(9223, Some(" --disable-gpu --disable-gpu-compositing "));
+
+        assert!(arguments.contains("--remote-debugging-port=9223"));
+        assert!(arguments.ends_with("--disable-gpu --disable-gpu-compositing"));
     }
 }

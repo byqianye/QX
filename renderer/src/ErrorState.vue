@@ -17,7 +17,7 @@ const props = withDefaults(defineProps<{
   pending: false,
   showRetry: true,
   showSwitchLine: true,
-  showBack: true,
+  showBack: false,
   showSettings: true,
   showTechnical: true,
 });
@@ -40,7 +40,7 @@ const guidance = computed(() => {
   if (props.error.code === "PLAYBACK_UNAVAILABLE") return "当前线路暂时无法播放，可以选择其他线路。";
   if (props.error.source === "config") return "配置没有被应用，修正输入后可以重新导入。";
   if (props.error.source === "persistence") return "当前会话仍可继续使用，后续操作会再次尝试保存。";
-  return "应用保留了当前上下文，你可以重试、返回或切换来源。";
+  return "应用保留了当前上下文，你可以重试或切换来源。";
 });
 const displayMessage = computed(() => {
   const message = props.error.message.trim();

@@ -3140,6 +3140,7 @@ dependencies = [
  "base64 0.22.1",
  "cbc",
  "ed25519-dalek",
+ "futures-util",
  "md-5",
  "quick-xml",
  "reqwest",

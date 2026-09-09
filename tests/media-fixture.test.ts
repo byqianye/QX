@@ -69,61 +69,6 @@ describe("local media fixture server", () => {
     expect(await child.text()).toContain("#EXT-X-MAP");
   });
 
-  it("serves bounded live playback fixture channels A through E", async () => {
-    const source = await fetch(fixture.livePlaybackUrl);
-    const sourceBody = await source.text();
-    expect(source.status).toBe(200);
-    expect(sourceBody).toContain("Fixture Channel A");
-    expect(sourceBody).toContain("Fixture Channel E");
-
-    expect((await fetch(`${fixture.baseUrl}/live/channel-a.m3u8`)).status).toBe(200);
-    expect((await fetch(`${fixture.baseUrl}/live/channel-b.m3u8`)).status).toBe(403);
-    expect((await fetch(`${fixture.baseUrl}/live/channel-c.m3u8`)).status).toBe(500);
-    expect((await fetch(`${fixture.baseUrl}/live/channel-e-line1.m3u8`)).status).toBe(500);
-    expect((await fetch(`${fixture.baseUrl}/live/channel-e-line2.m3u8`)).status).toBe(200);
-  });
-
-  it("serves the finite failover fixture with a real A1 segment failure", async () => {
-    const sourceA = await fetch(fixture.liveFailoverUrl);
-    const sourceABody = await sourceA.text();
-    const a1PlaylistUrl = sourceABody.match(/https?:\/\/[^\s]+failover-a1\.m3u8/u)?.[0];
-    const sourceB = await fetch(fixture.liveFailoverBackupUrl);
-    const sourceBBody = await sourceB.text();
-    const backupPlaylistUrl = sourceBBody.match(/https?:\/\/[^\s]+channel-a\.m3u8/u)?.[0];
-    const sourceC = await fetch(fixture.liveFailoverBrokenUrl);
-    const sourceCBody = await sourceC.text();
-    const brokenPlaylistUrl = sourceCBody.match(/https?:\/\/[^\s]+failover-c\.m3u8/u)?.[0];
-
-    expect(sourceA.status).toBe(200);
-    expect(sourceB.status).toBe(200);
-    expect(sourceC.status).toBe(200);
-    expect(a1PlaylistUrl).toBeTruthy();
-    expect(backupPlaylistUrl).toBeTruthy();
-    expect(brokenPlaylistUrl).toBeTruthy();
-
-    const a1Playlist = await fetch(a1PlaylistUrl!);
-    const a1Body = await a1Playlist.text();
-    const segmentUrl = a1Body.match(/https?:\/\/[^\s]+failover-a1-segment-0\.m4s/u)?.[0];
-    expect(a1Playlist.status).toBe(200);
-    expect(a1Body).toContain("#EXT-X-MAP");
-    expect(segmentUrl).toBeTruthy();
-    expect((await fetch(segmentUrl!)).status).toBe(200);
-    expect((await fetch(segmentUrl!)).status).toBe(503);
-    expect((await fetch(new URL("failover-a1-segment-1.m4s", a1PlaylistUrl))).status).toBe(503);
-    expect((await fetch(backupPlaylistUrl!)).status).toBe(200);
-    expect((await fetch(brokenPlaylistUrl!)).status).toBe(500);
-  });
-
-  it("serves XMLTV with validators for EPG refresh tests", async () => {
-    const first = await fetch(fixture.epgUrl);
-    expect(first.status).toBe(200);
-    expect(first.headers.get("content-type")).toContain("application/xml");
-    expect(first.headers.get("etag")).toMatch(/^"g58-epg-v\d+"$/u);
-    expect(await first.text()).toContain("Fixture News Current");
-    const notModified = await fetch(fixture.epgUrl, { headers: { "if-none-match": first.headers.get("etag")! } });
-    expect(notModified.status).toBe(304);
-  });
-
   it("returns deterministic playerContent results for MP4, HLS and headered cases", async () => {
     const mp4 = await fetch(`${fixture.playerUrl}?id=direct-mp4`);
     const hls = await fetch(`${fixture.playerUrl}?id=direct-hls`);

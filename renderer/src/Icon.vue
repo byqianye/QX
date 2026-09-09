@@ -1,6 +1,6 @@
 <script setup lang="ts">
 withDefaults(defineProps<{
-  name: "home" | "grid" | "play" | "switch" | "source" | "settings" | "sun" | "moon" | "close" | "search" | "tv" | "folder" | "history" | "heart" | "bell" | "download";
+  name: "home" | "grid" | "play" | "switch" | "source" | "settings" | "sun" | "moon" | "close" | "search" | "tv" | "folder" | "history" | "heart" | "bell" | "download" | "panel" | "chevron-left" | "chevron-right" | "chevron-up" | "chevron-down";
   size?: number;
 }>(), {
   size: 18,
@@ -67,6 +67,14 @@ withDefaults(defineProps<{
       <path d="m7 11 5 5 5-5" />
       <path d="M4 20h16" />
     </template>
+    <template v-else-if="name === 'panel'">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16" />
+    </template>
+    <path v-else-if="name === 'chevron-left'" d="m14.5 5-7 7 7 7" />
+    <path v-else-if="name === 'chevron-right'" d="m9.5 5 7 7-7 7" />
+    <path v-else-if="name === 'chevron-up'" d="m5 14.5 7-7 7 7" />
+    <path v-else-if="name === 'chevron-down'" d="m5 9.5 7 7 7-7" />
     <template v-else>
       <circle cx="11" cy="11" r="7" />
       <path d="m20 20-3.5-3.5" />

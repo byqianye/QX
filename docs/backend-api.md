@@ -586,6 +586,8 @@ An accepted result contains `state.result.playback` with `{ sessionId, url, titl
 
 请求结构：`{ action, value }`。该命令返回统一的 `DesktopServiceSnapshot`，实际 `state` 为组合对象。
 
+命令入口为异步 IPC，但缓存、SQLite、文件和同步 HTTP 工作统一提交到 Tokio blocking worker，避免在异步运行时 worker 上创建或销毁阻塞客户端。
+
 | 功能 | action |
 | --- | --- |
 | 缓存/存储 | `cache-snapshot`、`cache-refresh`、`cache-clear`、`storage-refresh`、`storage-open`、`storage-switch` |

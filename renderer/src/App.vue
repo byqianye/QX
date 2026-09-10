@@ -594,7 +594,7 @@ function handleDetailClose(): void {
 }
 
 async function handleSwitch(): Promise<void> {
-  const switched = await request("switch", () => api.post("/api/switch"));
+  const switched = await request("switch", options => api.post("/api/switch", {}, options));
   if (switched && routerEnabled) await router.replace({ name: "home" });
 }
 
@@ -607,7 +607,7 @@ async function selectCoreSource(siteKey: string): Promise<void> {
       ? currentRoute.query.returnTo
       : "";
   const title = returnTo ? String(state.value.detail.detail?.vod_name ?? state.value.detail.detail?.title ?? "").trim() : "";
-  const selected = await request("select-source", () => api.post("/api/import/select", { siteKey }));
+  const selected = await request("select-source", options => api.post("/api/import/select", { siteKey }, options));
   if (!selected || !routerEnabled) return;
   if (title) {
     // Catalog IDs and episode indexes belong to one source. Re-search the

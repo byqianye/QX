@@ -203,7 +203,7 @@ export class TauriRendererApi {
 
   public async post(path: string, body: Record<string, unknown> = {}, options: RendererRequestOptions = {}): Promise<RendererEnvelope> {
     const lane = path === "/api/search" ? "search" : path === "/api/detail" ? "detail"
-      : ["/api/open", "/api/home", "/api/category", "/api/import/select", "/api/import/confirm", "/api/import/load", "/api/import/load-file"].includes(path) ? "connection" : null;
+      : ["/api/open", "/api/home", "/api/category", "/api/import/select", "/api/import/confirm", "/api/import/load", "/api/import/load-file", "/api/switch"].includes(path) ? "connection" : null;
     if (lane === "connection" || lane === "detail" || [
       "/api/player", "/api/player/stop", "/api/player/fallback/cancel", "/api/close", "/api/switch",
       "/api/detail/close", "/api/import/activate", "/api/import/cancel", "/api/requests/cancel",
@@ -247,7 +247,7 @@ export class TauriRendererApi {
       "/api/detail/close": () => this.closeDetail(),
       "/api/playback-sources/search": () => this.searchPlaybackSources(),
       "/api/playback-sources/select": (body) => this.selectPlaybackSource(body),
-      "/api/switch": () => this.switchSource(),
+      "/api/switch": () => this.switchSource(task),
       "/api/close": () => this.closeSource(),
       "/api/player": (body) => this.play(body, options),
       "/api/player/stop": () => this.stopPlayer(),
@@ -705,14 +705,14 @@ export class TauriRendererApi {
     return this.envelope();
   }
 
-  private async switchSource(): Promise<RendererEnvelope> {
+  private async switchSource(task?: RequestTask): Promise<RendererEnvelope> {
     const runtime = this.requireRuntime();
     const sites = runtime.import.sites.map(toSite);
     if (sites.length < 2) throw new Error("TAURI_SOURCE_SWITCH_UNAVAILABLE");
     const currentIndex = sites.findIndex((site) => site.key === runtime.selectedSite?.key);
     const next = sites[(currentIndex + 1 + sites.length) % sites.length];
     if (!next) throw new Error("TAURI_SOURCE_SWITCH_UNAVAILABLE");
-    return this.select(next.key);
+    return this.select(next.key, task);
   }
 
   private async closeSource(): Promise<RendererEnvelope> {

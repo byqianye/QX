@@ -1,6 +1,6 @@
 # QX影视项目状态台账
 
-更新时间：2026-09-09
+更新时间：2026-09-10
 
 这是项目唯一持续更新的状态文档。新对话先读这里；每次任务完成、阻塞或放弃都追加记录。
 
@@ -15,6 +15,31 @@
 | 默认源固定 | `verified`（配置路径） | `docs/reports/goals/G129-DEFAULT-SOURCE-REPORT.md` |
 | G130 三个独立稳定源和十分钟连续播放 | `in_progress` | `docs/reports/goals/G130-STABLE-PLAYBACK-REPORT.md` |
 | 最小 Tauri 安装包 | `blocked`（release 环境门禁） | 缺少 `QX_COMPONENT_PUBLIC_KEY_BASE64`、`QX_COMPONENT_MANIFEST_URL`、`QX_COMPONENT_SIGNATURE_URL` |
+
+### 2026-09-10：Tauri 来源切换取消链适配与测试包复验
+
+状态：`verified`
+
+范围：将 `/api/switch` 纳入现有 connection task，沿用 12 秒超时、请求取消和 Rust source session 清理；来源卡片选择同时透传页面的 `AbortSignal`。没有新增来源、依赖或运行时资源。
+
+修改文件：
+- `renderer/src/tauri-renderer-api.ts`
+- `renderer/src/App.vue`
+- `tests/tauri-renderer-api.test.ts`
+
+验证：
+- `npm run typecheck`：通过。
+- `npm run test:tauri-renderer`：37 项通过；新增用例确认切换目标的 home 请求会响应取消。移除 task 透传时该用例在 1 秒内按预期失败，说明回归覆盖了原问题。
+- `npx vitest run tests/v3-router.test.ts tests/cinema-ui.test.ts --reporter=dot`：51 项通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib source_session::tests -- --test-threads=1`：29 项通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib playback_proxy::tests -- --test-threads=1`：22 项通过，2 项忽略。
+- `npm run tauri:test-installer`：当前代码重新构建 release NSIS 测试包。
+- `QX_TAURI_TEST_E2E=1 npm run tauri:test-installer:e2e`：安装、首页、来源列表、卸载通过。
+- 该安装包隔离安装后执行 `光盘 → 肥猫` 来源切换，真实 HTTP、无 mock，目标首页正常；同一安装包搜索 `花开锦绣` 后运行 `光盘 / 专线 / 第 1 集`，首帧后连续播放约 21 秒，`1920×804`，`readyState=4`。
+
+证据：`artifacts/tauri-test-installer-e2e.json`、`artifacts/g143-guangpan-release-installed-20260910.json`。测试包：`release/test/QX影视-Test-Setup-0.9.0-rc.1-x64.exe`，SHA256 `3db33bc31baa21f591046a2cf68adaa758b49e21b659806982bedacb66239f35`，5,861,628 字节。
+
+未完成事项和风险：光盘上游仍会轮换分片 CDN，若返回 402/502 或不在安全边界内的重定向，播放器会按现有策略安全失败并进入回退；这属于源端可用性变化，不是安装器缺少 Rust 代码。正式签名 release 仍需真实 `QX_COMPONENT_*` 环境变量，G130 稳定播放门槛仍未完成。
 
 ## G130 当前未完成门槛
 

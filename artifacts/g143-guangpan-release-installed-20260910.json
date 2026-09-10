@@ -1,0 +1,251 @@
+{
+  "schemaVersion": "v1",
+  "evidenceType": "tauri-hls-20s-e2e",
+  "verified": true,
+  "realHttp": true,
+  "mockUsed": false,
+  "durationSeconds": 21.12,
+  "observedAt": "2026-09-10T13:24:27.846Z",
+  "package": "C:\\Users\\qiany\\AppData\\Local\\Temp\\qx-tauri-switch-installed-20260910\\qx-yingshi.exe",
+  "installer": "C:\\Users\\qiany\\Documents\\ChatGPT\\QX影视\\release\\test\\QX影视-Test-Setup-0.9.0-rc.1-x64.exe",
+  "installerSha256": "3db33bc31baa21f591046a2cf68adaa758b49e21b659806982bedacb66239f35",
+  "installerBytes": 5861628,
+  "source": {
+    "configUrl": "http://xn--z7x900a.net/",
+    "siteKey": "光盘",
+    "searchKey": "花开锦绣",
+    "detailId": null,
+    "homeTitle": null,
+    "lineIndex": 0,
+    "episodeIndex": 0
+  },
+  "observations": {
+    "homeCardCount": 262,
+    "homeFirstTitle": "恋爱演算法",
+    "homePosterLoaded": true,
+    "homePosterNaturalWidth": 270,
+    "homePosterNaturalHeight": 337,
+    "navigationMode": "search",
+    "nativeSearchAndDetail": true,
+    "tauriPlaybackProxy": false,
+    "firstFrameObserved": true,
+    "progressBeforeSeconds": 0,
+    "progressAfterSeconds": 21.12,
+    "durationSeconds": 2817.1300000000006,
+    "videoWidth": 1920,
+    "videoHeight": 804,
+    "readyState": 4,
+    "selectedLineIndex": "0",
+    "selectedLineName": "专线",
+    "selectedEpisodeIndex": "0",
+    "selectedEpisodeName": "1",
+    "mockUsed": false,
+    "continuousPlayback": {
+      "intentAt": 42532.40000000596,
+      "firstFrameAt": 44384.09999999404,
+      "frames": 527,
+      "firstTime": 0.08,
+      "lastTime": 21.12,
+      "maxFrameGapMs": 142,
+      "lastFrameAt": 65533,
+      "bufferCount": 0,
+      "bufferMs": 0,
+      "bufferingAt": null,
+      "ended": false,
+      "errors": [],
+      "samples": [
+        {
+          "elapsedMs": 171.7000000178814,
+          "time": 0.130223,
+          "frames": 5,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 1170.300000011921,
+          "time": 1.127923,
+          "frames": 31,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 2170.5999999940395,
+          "time": 2.128091,
+          "frames": 56,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 3170.5,
+          "time": 3.128524,
+          "frames": 81,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 4170.700000017881,
+          "time": 4.129078,
+          "frames": 106,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 5171.5999999940395,
+          "time": 5.130073,
+          "frames": 131,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 6171.0999999940395,
+          "time": 6.129676,
+          "frames": 156,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 7171.9000000059605,
+          "time": 7.128869,
+          "frames": 181,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 8171.5999999940395,
+          "time": 8.128314,
+          "frames": 206,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 9170.5,
+          "time": 9.128988,
+          "frames": 231,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 10170.09999999404,
+          "time": 10.128216,
+          "frames": 256,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 11170.90000000596,
+          "time": 11.129016,
+          "frames": 281,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 12170.700000017881,
+          "time": 12.128863,
+          "frames": 306,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 13170.800000011921,
+          "time": 13.129204,
+          "frames": 331,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 14170.40000000596,
+          "time": 14.12877,
+          "frames": 356,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 15170.800000011921,
+          "time": 15.129448,
+          "frames": 381,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 16170.200000017881,
+          "time": 16.128557,
+          "frames": 406,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 17170.30000001192,
+          "time": 17.128458,
+          "frames": 431,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 18170.20000001788,
+          "time": 18.128679,
+          "frames": 456,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 19171,
+          "time": 19.127704,
+          "frames": 481,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        },
+        {
+          "elapsedMs": 20171.5,
+          "time": 20.129727,
+          "frames": 506,
+          "dropped": 0,
+          "readyState": 4,
+          "paused": false,
+          "rate": 1
+        }
+      ]
+    },
+    "continuousFailures": [],
+    "requiredSeconds": 20
+  }
+}

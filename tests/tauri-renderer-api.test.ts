@@ -345,6 +345,40 @@ describe("Tauri renderer vertical slice", () => {
     expect(requestSourceSession).toHaveBeenCalledWith(expect.objectContaining({ action: "cancel" }));
   });
 
+  it("propagates cancellation through next-source switching", async () => {
+    const sessions = new Map<string, string>();
+    let hang = false;
+    let release!: (value: any) => void;
+    const delayed = new Promise(resolve => { release = resolve; });
+    ingestConfigCatalog.mockResolvedValue({ source: "inline:switch-cancel", sourceKind: "json", sites: ["old", "new"].map(key => ({ key, name: key, api: `https://${key}.example.test/api`, siteType: 1 })) });
+    requestBusinessData.mockResolvedValue({ found: false });
+    requestBusinessFeature.mockResolvedValue({ state: {} });
+    requestSourceSession.mockImplementation(async (payload: any) => {
+      if (payload.action === "open") sessions.set(payload.sessionId, payload.siteKey);
+      if (payload.action === "close") sessions.delete(payload.sessionId);
+      const key = sessions.get(payload.sessionId) ?? payload.siteKey ?? "old";
+      const session = { sessionId: payload.sessionId, sourceId: key, siteKey: key, state: payload.action === "close" ? "closed" : "ready", availabilityReason: null, capabilities: { engine: "http", home: true, search: true, detail: true, playback: true } };
+      if (hang && key === "new" && payload.method === "home") await delayed;
+      return { session, result: payload.method === "home" ? { list: [{ vod_id: key }] } : null };
+    });
+    const { TauriRendererApi } = await import("../renderer/src/tauri-renderer-api.js");
+    const api = new TauriRendererApi();
+    await api.post("/api/import/load", { input: '{"sites":[]}' });
+    await api.post("/api/import/confirm");
+    hang = true;
+    const controller = new AbortController();
+    const switching = api.post("/api/switch", {}, { signal: controller.signal }).catch(error => error as Error);
+    await vi.waitFor(() => expect(requestSourceSession.mock.calls.some(([payload]) => payload.action === "open" && payload.siteKey === "new")).toBe(true));
+    controller.abort();
+    const result = await Promise.race([
+      switching,
+      new Promise<Error>(resolve => setTimeout(() => resolve(new Error("switch did not cancel")), 1_000)),
+    ]);
+    expect(result).toMatchObject({ name: "AbortError" });
+    release(null);
+    await switching;
+  });
+
   it("keeps the full built-in catalog when a default remote refresh fails", async () => {
     requestBusinessData.mockResolvedValue({
       schemaVersion: "v1",
